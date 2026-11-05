@@ -1,0 +1,17 @@
+{
+  "name": "sarawat-pranarai-bot",
+  "version": "1.0.0",
+  "description": "Discord Bot Daemon for Pranarai School Student Inspectors",
+  "main": "bot.js",
+  "scripts": {
+    "start": "node bot.js",
+    "dev": "node --watch bot.js",
+    "setup": "node setup_server.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.46.1",
+    "discord.js": "^14.16.3",
+    "dotenv": "^16.4.5"
+  }
+}
