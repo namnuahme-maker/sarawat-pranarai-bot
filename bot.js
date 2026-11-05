@@ -1239,52 +1239,68 @@ client.on('messageCreate', async (message) => {
   }
 
   // ฟังก์ชันดักรับรูปโปรไฟล์ทำบัตรในห้อง #อัปโหลดรูปโปรไฟล์-ทำบัตร
-  if (PHOTO_CHANNEL_ID && message.channel.id === PHOTO_CHANNEL_ID) {
+  const isPhotoChannel = (PHOTO_CHANNEL_ID && message.channel.id === PHOTO_CHANNEL_ID) ||
+    (message.channel.id === '1567570866663989389') ||
+    (message.channel && message.channel.name && (
+      message.channel.name.includes('รูป') ||
+      message.channel.name.includes('photo') ||
+      message.channel.name.includes('ทำบัตร')
+    ));
+
+  if (isPhotoChannel && !message.author.bot) {
     if (message.attachments.size > 0) {
       const attachment = message.attachments.first();
-      if (attachment.contentType && attachment.contentType.startsWith('image/')) {
-        const { data: member } = await supabase
-          .from('members')
-          .select('*')
-          .eq('discord_id', message.author.id)
-          .single();
-
-        if (member) {
-          await supabase
+      const isImage = (attachment.contentType && attachment.contentType.startsWith('image/')) ||
+                      /\.(jpe?g|png|webp|gif|heic)$/i.test(attachment.name || attachment.url);
+      if (isImage) {
+        try {
+          const { data: member } = await supabase
             .from('members')
-            .update({ profile_image_url: attachment.url, updated_at: new Date() })
-            .eq('id', member.id);
+            .select('*')
+            .eq('discord_id', message.author.id)
+            .order('updated_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
 
-          const shiftLabel = getShiftLabel(member.duty_day);
-          const dutyTag = member.duty_id ? `\`[${member.duty_id}]\`` : '`[รออนุมัติ]`';
+          if (member) {
+            await supabase
+              .from('members')
+              .update({ profile_image_url: attachment.url, updated_at: new Date() })
+              .eq('id', member.id);
 
-          const successEmbed = new EmbedBuilder()
-            .setTitle('📸 บันทึกรูปทำบัตรสำเร็จ')
-            .setDescription(
-              `ชื่อ: ${member.first_name} ${member.last_name} (${member.nickname})\n` +
-              `ชั้น: ม.${member.grade_class} #${member.student_no}\n` +
-              `รหัสเวร: ${dutyTag}\n` +
-              `เวร: ${shiftLabel}\n` +
-              `รูปแบบ: บัตรประจำตัวแนวตั้ง (Portrait Standard)`
-            )
-            .setThumbnail(attachment.url)
-            .setColor('#2ECC71');
+            const shiftLabel = getShiftLabel(member.duty_day);
+            const dutyTag = member.duty_id ? `\`[${member.duty_id}]\`` : '`[รออนุมัติ]`';
 
-          const cardUrl = `${getBaseUrl()}/card?id=${member.id}`;
-          const actionRow = new ActionRowBuilder().addComponents(
-            new ButtonBuilder()
-              .setLabel('🪪 เปิดดูบัตรประจำตัวแนวตั้ง')
-              .setStyle(ButtonStyle.Link)
-              .setURL(cardUrl)
-          );
+            const successEmbed = new EmbedBuilder()
+              .setTitle('📸 บันทึกรูปทำบัตรสำเร็จ')
+              .setDescription(
+                `ชื่อ: ${member.first_name} ${member.last_name} (${member.nickname})\n` +
+                `ชั้น: ม.${member.grade_class} #${member.student_no}\n` +
+                `รหัสเวร: ${dutyTag}\n` +
+                `เวร: ${shiftLabel}\n` +
+                `รูปแบบ: บัตรประจำตัวแนวตั้ง (Portrait Standard)`
+              )
+              .setThumbnail(attachment.url)
+              .setColor('#2ECC71');
 
-          await message.reply({ embeds: [successEmbed], components: [actionRow] });
-          return;
-        } else {
-          await message.reply({
-            content: `⚠️ <@${message.author.id}> ไม่พบข้อมูลในระบบ: กรุณายืนยันตัวตนที่ห้อง **#🛡️│ยืนยันตัวตน** ก่อนส่งรูป`
-          });
-          return;
+            const cardUrl = `${getBaseUrl()}/card?id=${member.id}`;
+            const actionRow = new ActionRowBuilder().addComponents(
+              new ButtonBuilder()
+                .setLabel('🪪 เปิดดูบัตรประจำตัวแนวตั้ง')
+                .setStyle(ButtonStyle.Link)
+                .setURL(cardUrl)
+            );
+
+            await message.reply({ embeds: [successEmbed], components: [actionRow] }).catch(() => {});
+            return;
+          } else {
+            await message.reply({
+              content: `⚠️ <@${message.author.id}> ไม่พบข้อมูลในระบบ: กรุณายืนยันตัวตนที่ห้อง **#🛡️│ยืนยันตัวตน** ก่อนส่งรูป`
+            }).catch(() => {});
+            return;
+          }
+        } catch (err) {
+          console.error('[PHOTO UPLOAD ERROR]:', err);
         }
       }
     }
@@ -1932,7 +1948,7 @@ client.on('interactionCreate', async (interaction) => {
                    `• รหัสเวร: \`[${existingActive.duty_id || '-'}]\`\n` +
                    `• เวร: ${shiftLabel}\n` +
                    `• ตำแหน่ง: ${existingActive.shift_role === 'SHIFT_HEAD' ? 'หัวหน้าเวร' : (existingActive.shift_role === 'SHIFT_DEPUTY' ? 'รองหัวหน้าเวร' : 'สารวัตรประจำเวร')}\n\n` +
-                   `*(หากต้องการส่งรูปโปรไฟล์ทำบัตร ให้ไปที่ห้อง <#${PHOTO_CHANNEL_ID}> ได้เลยครับ)*`
+                   `*(หากต้องการส่งรูปโปรไฟล์ทำบัตร ให้ไปที่ห้อง <#${PHOTO_CHANNEL_ID || '1567570866663989389'}> ได้เลยครับ)*`
         });
         return;
       }
@@ -2391,7 +2407,7 @@ client.on('interactionCreate', async (interaction) => {
                   `ชื่อ: ${member.first_name} (${member.nickname})\n` +
                   `รหัส: [${dutyId}]\n` +
                   `เวร: ${shiftLabel}\n\n` +
-                  `ส่งรูปทำบัตรที่ห้อง: <#${PHOTO_CHANNEL_ID}>`
+                  `ส่งรูปทำบัตรที่ห้อง: <#${PHOTO_CHANNEL_ID || '1567570866663989389'}>`
                 )
                 .setColor('#2ECC71');
 
