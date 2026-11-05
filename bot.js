@@ -2222,36 +2222,48 @@ client.on('interactionCreate', async (interaction) => {
         components: []
       });
 
-      if (APPROVAL_CHANNEL_ID) {
-        const approvalChannel = await client.channels.fetch(APPROVAL_CHANNEL_ID).catch(() => null);
-        if (approvalChannel) {
-          const weekdayName = DAY_NAMES[weekday] || weekday;
-          const approvalEmbed = new EmbedBuilder()
-            .setTitle('📋 คำขอลงทะเบียนสารวัตรใหม่')
-            .setDescription(
-              `ชื่อ: ${member.first_name} ${member.last_name} (${member.nickname})\n` +
-              `ชั้น: ม.${member.grade_class} #${member.student_no}\n` +
-              `เบอร์: ${member.phone_number}\n` +
-              `เวรประจำวัน: ${weekdayName} (${weekday})\n` +
-              `สถานะเวรพิเศษ: ${isSpecial ? `⭐ **เป็นเวรพิเศษ** (รหัสผลัด: \`${effectiveDutyDay}\`)` : '❌ ไม่ได้เป็นเวรพิเศษ'}\n` +
-              `ผลัดเวรสุทธิ: **${shiftLabel}**\n` +
-              `ดิส: <@${interaction.user.id}>`
-            )
-            .setColor(isSpecial ? '#9B59B6' : '#F39C12');
+      // ค้นหาห้องอนุมัติ: 1. จาก APPROVAL_CHANNEL_ID 2. fallback ID 3. ค้นหาอัตโนมัติจากชื่อห้อง 'อนุมัติ' ใน Server
+      let approvalChannel = null;
+      const targetApprovalId = APPROVAL_CHANNEL_ID || '1567570916932722778';
+      approvalChannel = await client.channels.fetch(targetApprovalId).catch(() => null);
 
-          const actionRow = new ActionRowBuilder().addComponents(
-            new ButtonBuilder()
-              .setCustomId(`btn_approve_member_${member.id}`)
-              .setLabel('✅ อนุมัติ')
-              .setStyle(ButtonStyle.Success),
-            new ButtonBuilder()
-              .setCustomId(`btn_reject_member_${member.id}`)
-              .setLabel('❌ ปฏิเสธ')
-              .setStyle(ButtonStyle.Danger)
-          );
+      if (!approvalChannel && interaction.guild) {
+        approvalChannel = interaction.guild.channels.cache.find(c =>
+          c.isTextBased() && (c.name.includes('อนุมัติ') || c.name.toLowerCase().includes('approval'))
+        ) || null;
+      }
 
-          await approvalChannel.send({ embeds: [approvalEmbed], components: [actionRow] });
-        }
+      if (approvalChannel) {
+        const weekdayName = DAY_NAMES[weekday] || weekday;
+        const approvalEmbed = new EmbedBuilder()
+          .setTitle('📋 คำขอลงทะเบียนสารวัตรใหม่')
+          .setDescription(
+            `ชื่อ: ${member.first_name} ${member.last_name} (${member.nickname})\n` +
+            `ชั้น: ม.${member.grade_class} #${member.student_no}\n` +
+            `เบอร์: ${member.phone_number}\n` +
+            `เวรประจำวัน: ${weekdayName} (${weekday})\n` +
+            `สถานะเวรพิเศษ: ${isSpecial ? `⭐ **เป็นเวรพิเศษ** (รหัสผลัด: \`${effectiveDutyDay}\`)` : '❌ ไม่ได้เป็นเวรพิเศษ'}\n` +
+            `ผลัดเวรสุทธิ: **${shiftLabel}**\n` +
+            `ดิส: <@${interaction.user.id}>`
+          )
+          .setColor(isSpecial ? '#9B59B6' : '#F39C12');
+
+        const actionRow = new ActionRowBuilder().addComponents(
+          new ButtonBuilder()
+            .setCustomId(`btn_approve_member_${member.id}`)
+            .setLabel('✅ อนุมัติ')
+            .setStyle(ButtonStyle.Success),
+          new ButtonBuilder()
+            .setCustomId(`btn_reject_member_${member.id}`)
+            .setLabel('❌ ปฏิเสธ')
+            .setStyle(ButtonStyle.Danger)
+        );
+
+        await approvalChannel.send({ embeds: [approvalEmbed], components: [actionRow] }).catch(err => {
+          console.error('[APPROVAL SEND ERROR]:', err);
+        });
+      } else {
+        console.warn('[APPROVAL WARNING] Could not find approval channel. Checked ID:', targetApprovalId);
       }
       return;
     }
