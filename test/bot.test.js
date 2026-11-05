@@ -366,4 +366,19 @@ describe('SARAWAT-BOT New Shift & Combined Duty ID Verification', () => {
     assert.equal(cleanFullName('นาง สมร ดีเลิศ'), 'นางสมร ดีเลิศ');
     assert.equal(cleanFullName('นายณิชกานต์ คำไชย'), 'นายณิชกานต์ คำไชย');
   });
+
+  test('All Modal TextInput labels must strictly comply with Discord limit (<= 45 chars)', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const code = fs.readFileSync(path.join(__dirname, '..', 'bot.js'), 'utf8');
+    const lines = code.split('\n');
+    const violations = [];
+    lines.forEach((line, idx) => {
+      const m = line.match(/\.setLabel\((['"])(.*?)\1\)/);
+      if (m && m[2].length > 45) {
+        violations.push({ line: idx + 1, length: m[2].length, label: m[2] });
+      }
+    });
+    assert.equal(violations.length, 0, `Found label length violations: ${JSON.stringify(violations)}`);
+  });
 });

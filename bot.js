@@ -587,6 +587,7 @@ async function sendDailyDutyReminders(guild, options = { dryRun: false, forceDay
     return {
       success: true,
       count: 0,
+      codes: targetCodes,
       message: 'วันนี้เป็นวันหยุดสุดสัปดาห์ ไม่มีเวรประจำวันตามตารางปกติ'
     };
   }
@@ -603,6 +604,7 @@ async function sendDailyDutyReminders(guild, options = { dryRun: false, forceDay
     return {
       success: true,
       count: 0,
+      codes: targetCodes,
       message: `ไม่พบสารวัตรที่มีเวรตรงกับรหัส (${targetCodes.join(', ')}) ในวันนี้`
     };
   }
@@ -1977,7 +1979,7 @@ client.on('interactionCreate', async (interaction) => {
 
         const nameInput = new TextInputBuilder()
           .setCustomId('input_full_name')
-          .setLabel('ชื่อจริง-นามสกุล (ต้องมี นาย/นาง/นางสาว ติดชื่อ)')
+          .setLabel('ชื่อจริง-นามสกุล (มี นาย/นาง/นางสาว ติดชื่อ)')
           .setPlaceholder('เช่น นายสมชาย ใจดี หรือ นางสาวสมหญิง รักเรียน')
           .setStyle(TextInputStyle.Short)
           .setRequired(true);
@@ -1991,7 +1993,7 @@ client.on('interactionCreate', async (interaction) => {
 
         const classInput = new TextInputBuilder()
           .setCustomId('input_class')
-          .setLabel('ระดับชั้น (เฉพาะเลข เช่น 6/7, 4/10 ไม่ต้องใส่ ม.)')
+          .setLabel('ระดับชั้น (เช่น 6/7, 4/10 ไม่ต้องใส่ ม.)')
           .setPlaceholder('เช่น 6/7, 4/10, 5/2 (ห้ามใส่ ม.)')
           .setStyle(TextInputStyle.Short)
           .setRequired(true);
@@ -3654,7 +3656,7 @@ client.on('interactionCreate', async (interaction) => {
 
       const nameInput = new TextInputBuilder()
         .setCustomId('edit_full_name')
-        .setLabel('ชื่อจริง-นามสกุล (ต้องมี นาย/นาง/นางสาว ติดชื่อ)')
+        .setLabel('ชื่อจริง-นามสกุล (มี นาย/นาง/นางสาว ติดชื่อ)')
         .setPlaceholder('เช่น นายสมชาย ใจดี หรือ นางสาวสมหญิง รักเรียน')
         .setValue(`${member.first_name} ${member.last_name}`)
         .setStyle(TextInputStyle.Short)
@@ -3669,7 +3671,7 @@ client.on('interactionCreate', async (interaction) => {
 
       const classInput = new TextInputBuilder()
         .setCustomId('edit_class')
-        .setLabel('ระดับชั้น (เฉพาะเลข เช่น 6/7, 4/10 ไม่ต้องใส่ ม.)')
+        .setLabel('ระดับชั้น (เช่น 6/7, 4/10 ไม่ต้องใส่ ม.)')
         .setPlaceholder('เช่น 6/7, 4/10, 5/2 (ห้ามใส่ ม.)')
         .setValue(cleanGradeClass(member.grade_class))
         .setStyle(TextInputStyle.Short)
