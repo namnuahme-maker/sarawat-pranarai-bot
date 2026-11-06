@@ -146,33 +146,35 @@ process.on('uncaughtException', err => {
 });
 
 const ROLE_IDS = {
-  VERIFIED: process.env.ROLE_VERIFIED,
-  UNVERIFIED: process.env.ROLE_UNVERIFIED,
-  PRESIDENT: process.env.ROLE_PRESIDENT,
-  VICE_PRESIDENT: process.env.ROLE_VICE_PRESIDENT,
+  VERIFIED: process.env.ROLE_VERIFIED || '1567570844472053943',
+  UNVERIFIED: process.env.ROLE_UNVERIFIED || '1567570858937946152',
+  PRESIDENT: process.env.ROLE_PRESIDENT || '1567570798242439320',
+  VICE_PRESIDENT: process.env.ROLE_VICE_PRESIDENT || '1567570800045727978',
+  HEAD_S: process.env.ROLE_HEAD_S || '1567570801866047589',
+  DEPUTY_S: process.env.ROLE_DEPUTY_S || '1567570803703423006',
   DAYS: {
-    'M': process.env.ROLE_MON,
-    'T': process.env.ROLE_TUE,
-    'W': process.env.ROLE_WED,
-    'Ts': process.env.ROLE_THU,
-    'F': process.env.ROLE_FRI,
-    'S': process.env.ROLE_SPECIAL
+    'M': process.env.ROLE_MON || '1567570846388854804',
+    'T': process.env.ROLE_TUE || '1567570847726567526',
+    'W': process.env.ROLE_WED || '1567570849953743049',
+    'Ts': process.env.ROLE_THU || '1567570850935218449',
+    'F': process.env.ROLE_FRI || '1567570856966758431',
+    'S': process.env.ROLE_SPECIAL || '1567570841548627971'
   },
   HEADS: {
-    'M': process.env.ROLE_HEAD_M,
-    'T': process.env.ROLE_HEAD_T,
-    'W': process.env.ROLE_HEAD_W,
-    'Ts': process.env.ROLE_HEAD_THU,
-    'F': process.env.ROLE_HEAD_F,
-    'S': process.env.ROLE_HEAD_S
+    'M': process.env.ROLE_HEAD_M || '1567570806412804126',
+    'T': process.env.ROLE_HEAD_T || '1567570810439335946',
+    'W': process.env.ROLE_HEAD_W || '1567570813878804511',
+    'Ts': process.env.ROLE_HEAD_THU || '1567570829288542218',
+    'F': process.env.ROLE_HEAD_F || '1567570837215649962',
+    'S': process.env.ROLE_HEAD_S || '1567570801866047589'
   },
   DEPUTIES: {
-    'M': process.env.ROLE_DEPUTY_M,
-    'T': process.env.ROLE_DEPUTY_T,
-    'W': process.env.ROLE_DEPUTY_W,
-    'Ts': process.env.ROLE_DEPUTY_THU,
-    'F': process.env.ROLE_DEPUTY_F,
-    'S': process.env.ROLE_DEPUTY_S
+    'M': process.env.ROLE_DEPUTY_M || '1567570808270758020',
+    'T': process.env.ROLE_DEPUTY_T || '1567570812024786996',
+    'W': process.env.ROLE_DEPUTY_W || '1567570815728353490',
+    'Ts': process.env.ROLE_DEPUTY_THU || '1567570831851126804',
+    'F': process.env.ROLE_DEPUTY_F || '1567570839925293178',
+    'S': process.env.ROLE_DEPUTY_S || '1567570803703423006'
   }
 };
 
@@ -352,7 +354,7 @@ async function sendAttendancePanel(channel) {
       'ศูนย์บริการงานสารวัตรนักเรียน โรงเรียนพระนารายณ์\n\n' +
       '• 📄 **ขอใบตารางเช็คชื่อประจำเวร** - ดาวน์โหลดฟอร์มลงเวลาขนาด A4 พร้อมพิมพ์\n' +
       '• 📝 **ขอลาเวรปฏิบัติหน้าที่** - แจ้งขอลาเวรพร้อมระบุผู้ปฏิบัติหน้าที่แทน\n' +
-      '• 🔍 **ขออนุมัติการตรวจ** - ยื่นขออนุมัติตรวจพื้นที่/เป้าหมาย สร้างเคสและส่งผู้บังคับบัญชา'
+      '• 🎯 **ขออนุมัติปฏิบัติ** - ยื่นขออนุมัติปฏิบัติหน้าที่ (เกิดเหตุก่อวิวาส / เหตุน่าสงสัย / อื่นๆ) สร้างเคสส่งห้องแจ้งเหตุใหม่'
     )
     .setColor('#1ABC9C')
     .setFooter({ text: 'กลุ่มงานสารวัตรนักเรียน โรงเรียนพระนารายณ์' });
@@ -368,7 +370,7 @@ async function sendAttendancePanel(channel) {
       .setStyle(ButtonStyle.Danger),
     new ButtonBuilder()
       .setCustomId('btn_request_inspection')
-      .setLabel('🔍 ขออนุมัติการตรวจ')
+      .setLabel('🎯 ขออนุมัติปฏิบัติ')
       .setStyle(ButtonStyle.Primary)
   );
 
@@ -461,8 +463,10 @@ async function syncAllMemberRoles(guild) {
         if (m.duty_day.endsWith('S') && ROLE_IDS.DEPUTY_S) rolesToAdd.push(ROLE_IDS.DEPUTY_S);
       }
 
-      const validRoles = rolesToAdd.filter(Boolean);
-      await gm.roles.add(validRoles);
+      const validRoles = rolesToAdd.filter(rid => rid && guild.roles.cache.has(rid));
+      if (validRoles.length > 0) {
+        await gm.roles.add(validRoles);
+      }
 
       const allManagedRoles = [
         ...Object.values(ROLE_IDS.DAYS || {}),
@@ -470,14 +474,14 @@ async function syncAllMemberRoles(guild) {
         ...Object.values(ROLE_IDS.DEPUTIES || {}),
         ROLE_IDS.PRESIDENT,
         ROLE_IDS.VICE_PRESIDENT
-      ].filter(Boolean);
-      const obsoleteRoles = allManagedRoles.filter(rid => !validRoles.includes(rid));
-      for (const rid of obsoleteRoles) {
-        if (gm.roles.cache.has(rid)) {
-          await gm.roles.remove(rid).catch(() => {});
-        }
+      ].filter(rid => rid && guild.roles.cache.has(rid));
+      const obsoleteRoles = allManagedRoles.filter(rid => !validRoles.includes(rid) && gm.roles.cache.has(rid));
+      if (obsoleteRoles.length > 0) {
+        await gm.roles.remove(obsoleteRoles).catch(() => {});
       }
-      if (ROLE_IDS.UNVERIFIED) await gm.roles.remove(ROLE_IDS.UNVERIFIED).catch(() => {});
+      if (ROLE_IDS.UNVERIFIED && gm.roles.cache.has(ROLE_IDS.UNVERIFIED)) {
+        await gm.roles.remove(ROLE_IDS.UNVERIFIED).catch(() => {});
+      }
 
       if (m.duty_id) {
         const newNick = `[${m.duty_id}] ${m.nickname} (${m.first_name})`;
@@ -624,16 +628,15 @@ async function sendDailyDutyReminders(guild, options = { dryRun: false, forceDay
     const shiftLabel = getShiftLabel(m.duty_day);
 
     const embed = new EmbedBuilder()
-      .setTitle('🔔 [แจ้งเตือนเวร] วันนี้เป็นวันปฏิบัติหน้าที่ของคุณ!')
+      .setTitle('🔔 แจ้งเตือนเวรสารวัตรนักเรียนประจำวัน')
       .setDescription(
-        `สวัสดีครับ สารวัตร **[${m.duty_id || 'สารวัตร'}] ${m.first_name} ${m.last_name} (${m.nickname})**\n\n` +
-        `📅 **วันนี้:** ${todayThaiDate}\n` +
-        `📍 **ผลัดเวร:** ${shiftLabel}\n` +
-        `🛡️ **หน้าที่:** ขอให้เตรียมความพร้อม สวมเครื่องแบบ และเข้าประจำจุดตรวจตามเวลาที่กำหนด\n\n` +
-        `───────────────────────\n` +
-        `⚠️ **หากติดภารกิจและต้องการลาเวร:**\n` +
-        `หากคุณไม่สามารถปฏิบัติหน้าที่ได้ **โปรดกดปุ่ม "📝 ขอลาเวรวันนี้" ด้านล่าง** ได้ทันที\n` +
-        `ระบบจะบันทึกข้อมูลการลาเข้าฐานข้อมูล พร้อมส่งข้อความแจ้งเตือนหา**หัวหน้าเวรและรองหัวหน้าเวร**ของคุณโดยอัตโนมัติ`
+        `# ☀️ วันนี้เป็นเวรปฏิบัติหน้าที่ของคุณ!\n\n` +
+        `### 👮 [${m.duty_id || 'สารวัตร'}] คุณ${m.nickname} (${m.first_name} ${m.last_name})\n` +
+        `📅 **ประจำวัน:** **${todayThaiDate}** (${shiftLabel})\n` +
+        `⏰ **ข้อปฏิบัติ:** สวมปลอกแขน/เครื่องแบบสารวัตร และเข้าประจำจุดตรวจตามเวลา\n\n` +
+        `━━━━━━━━━━━━━━━━━━━━\n` +
+        `### ⚠️ หากติดภารกิจและต้องการลาเวร\n` +
+        `กดปุ่ม **"📝 ขอลาเวรวันนี้"** ด้านล่างได้ทันทีเพื่อเลือกประเภทการลาและระบุหมายเหตุ`
       )
       .setColor('#F39C12')
       .setFooter({ text: `เวร${DAY_NAMES[baseDay] || m.duty_day} • กลุ่มงานสารวัตรนักเรียน โรงเรียนพระนารายณ์` })
@@ -2384,21 +2387,30 @@ client.on('interactionCreate', async (interaction) => {
                 if (member.duty_day.endsWith('S') && ROLE_IDS.DEPUTY_S) rolesToAdd.push(ROLE_IDS.DEPUTY_S);
               }
 
-              const validApprovedRoles = rolesToAdd.filter(Boolean);
-              await guildMember.roles.add(validApprovedRoles).catch((err) => {
-                if (err.message && err.message.includes('Missing Permissions')) {
-                  roleErrorNote = '\n⚠️ **เตือน:** บอทไม่มีสิทธิ์แจกยศเนื่องจาก **ลำดับยศ SARAWAT-BOT ต่ำกว่ายศอื่น** (กรุณาลากยศบอทขึ้นบนสุดใน Server Settings > Roles แล้วพิมพ์ `!sync-roles`)';
-                }
-              });
-
-              // ถอดถอนยศเวรเก่าที่ตกค้างออก
-              const allDayRoles = Object.values(ROLE_IDS.DAYS || {}).filter(Boolean);
-              const obsoleteDayRoles = allDayRoles.filter(rid => !validApprovedRoles.includes(rid));
-              for (const rid of obsoleteDayRoles) {
-                await guildMember.roles.remove(rid).catch(() => {});
+              const validApprovedRoles = rolesToAdd.filter(rid => rid && interaction.guild.roles.cache.has(rid));
+              if (validApprovedRoles.length > 0) {
+                await guildMember.roles.add(validApprovedRoles).catch((err) => {
+                  console.error('[ROLE ADD ERROR]:', err);
+                  if (err.message && err.message.includes('Missing Permissions')) {
+                    roleErrorNote = '\n⚠️ **เตือน:** บอทไม่มีสิทธิ์แจกยศเนื่องจาก **ลำดับยศ SARAWAT-BOT ต่ำกว่ายศอื่น** (กรุณาลากยศบอทขึ้นบนสุดใน Server Settings > Roles แล้วพิมพ์ `!sync-roles`)';
+                  } else {
+                    roleErrorNote = `\n⚠️ **เตือนเรื่องยศ:** ${err.message}`;
+                  }
+                });
               }
 
-              if (ROLE_IDS.UNVERIFIED) await guildMember.roles.remove(ROLE_IDS.UNVERIFIED).catch(() => {});
+              // ถอดถอนยศเวรเก่าที่ตกค้างออก
+              const allDayRoles = Object.values(ROLE_IDS.DAYS || {}).filter(rid => rid && interaction.guild.roles.cache.has(rid));
+              const obsoleteDayRoles = allDayRoles.filter(rid => !validApprovedRoles.includes(rid) && guildMember.roles.cache.has(rid));
+              if (obsoleteDayRoles.length > 0) {
+                await guildMember.roles.remove(obsoleteDayRoles).catch((err) => {
+                  console.error('[ROLE REMOVE OBSOLETE ERROR]:', err);
+                });
+              }
+
+              if (ROLE_IDS.UNVERIFIED && guildMember.roles.cache.has(ROLE_IDS.UNVERIFIED)) {
+                await guildMember.roles.remove(ROLE_IDS.UNVERIFIED).catch(() => {});
+              }
 
               const shiftLabel = getShiftLabel(member.duty_day);
               const dmEmbed = new EmbedBuilder()
@@ -2649,78 +2661,125 @@ client.on('interactionCreate', async (interaction) => {
       });
     }
 
-    // 5. ขอลาเวร
-    if (interaction.isButton() && interaction.customId === 'btn_request_leave') {
-      const { data: member } = await supabase
-        .from('members')
-        .select('*')
-        .eq('discord_id', interaction.user.id)
-        .eq('status', 'ACTIVE')
-        .single();
+    // 5. ขอลาเวร (ด่วน รวดเร็ว เลือกประเภทได้ทันที)
+    if (interaction.isButton() && (interaction.customId === 'btn_request_leave' || interaction.customId.startsWith('btn_dm_quick_leave_'))) {
+      let member = null;
+      if (interaction.customId.startsWith('btn_dm_quick_leave_')) {
+        const memId = interaction.customId.replace('btn_dm_quick_leave_', '');
+        const { data } = await supabase.from('members').select('*').eq('id', memId).maybeSingle();
+        member = data;
+      } else {
+        const { data } = await supabase.from('members').select('*').eq('discord_id', interaction.user.id).eq('status', 'ACTIVE').maybeSingle();
+        member = data;
+      }
 
       if (!member) {
         await interaction.reply({
-          content: '⚠️ ไม่พบข้อมูลที่ได้รับการอนุมัติของคุณในระบบ กรุณายืนยันตัวตนในห้อง `#ยืนยันตัวตน` ก่อนครับ',
+          content: '⚠️ ไม่พบข้อมูลสารวัตรในระบบ กรุณายืนยันตัวตนในห้อง `#ยืนยันตัวตน` ก่อนครับ',
           ephemeral: true
         });
         return;
       }
 
-      const leaveModal = new ModalBuilder()
-        .setCustomId(`modal_submit_leave_${member.id}`)
-        .setTitle(`📝 แบบฟอร์มขอลาเวร [${member.duty_id}]`);
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`btn_pick_leave_${member.id}_sick`)
+          .setLabel('🤒 ลาป่วย')
+          .setStyle(ButtonStyle.Danger),
+        new ButtonBuilder()
+          .setCustomId(`btn_pick_leave_${member.id}_personal`)
+          .setLabel('📝 ลากิจ')
+          .setStyle(ButtonStyle.Primary),
+        new ButtonBuilder()
+          .setCustomId(`btn_pick_leave_${member.id}_exam`)
+          .setLabel('📚 ติดสอบ/เรียน')
+          .setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder()
+          .setCustomId(`btn_pick_leave_${member.id}_other`)
+          .setLabel('🔄 ภารกิจอื่น')
+          .setStyle(ButtonStyle.Secondary)
+      );
 
-      const dateInput = new TextInputBuilder()
-        .setCustomId('input_leave_date')
-        .setLabel('วันที่ขอลา (เช่น 12 พ.ย. 2569)')
-        .setStyle(TextInputStyle.Short)
-        .setRequired(true);
+      await interaction.reply({
+        content: `### 📝 **แบบฟอร์มขอลาเวรด่วน [${member.duty_id || 'สารวัตร'}]**\n` +
+                 `คุณ **${member.nickname}** (${member.first_name})\n` +
+                 `โปรดกดเลือกประเภทการลาด้านล่าง เพื่อระบุหมายเหตุ/เหตุผล:`,
+        components: [row],
+        ephemeral: true
+      });
+      return;
+    }
 
-      const periodInput = new TextInputBuilder()
-        .setCustomId('input_shift_period')
-        .setLabel('ช่วงเวลาที่ลา (เช้า/กลางวัน/เย็น/ทั้งวัน)')
-        .setPlaceholder('เช่น เช้า, กลางวัน, เย็น หรือ ทั้งวัน')
-        .setStyle(TextInputStyle.Short)
-        .setRequired(true);
+    // เมื่อเลือกประเภทการลา -> เปิด Modal กรอกหมายเหตุสั้นๆ
+    if (interaction.isButton() && interaction.customId.startsWith('btn_pick_leave_')) {
+      const parts = interaction.customId.replace('btn_pick_leave_', '').split('_');
+      const memberId = parts[0];
+      const typeKey = parts[1] || 'personal';
 
-      const typeInput = new TextInputBuilder()
-        .setCustomId('input_leave_type')
-        .setLabel('ประเภทการลา (ลาป่วย / ลากิจ / ติดสอบ)')
-        .setStyle(TextInputStyle.Short)
-        .setRequired(true);
+      const typeMap = {
+        sick: 'ลาป่วย',
+        personal: 'ลากิจ',
+        exam: 'ติดสอบ/ภารกิจการเรียน',
+        other: 'ภารกิจอื่น/สลับเวร'
+      };
+      const typeName = typeMap[typeKey] || 'ลากิจ';
+
+      const modal = new ModalBuilder()
+        .setCustomId(`modal_quick_leave_${memberId}_${typeKey}`)
+        .setTitle(`ขอลาเวร: ${typeName}`.slice(0, 45));
 
       const reasonInput = new TextInputBuilder()
         .setCustomId('input_leave_reason')
-        .setLabel('เหตุผลการลา')
+        .setLabel('หมายเหตุ / เหตุผลการลา')
+        .setPlaceholder('ระบุเหตุผลความจำเป็น เช่น มีไข้สูง ไปพบแพทย์ / ติดธุระครอบครัว')
         .setStyle(TextInputStyle.Paragraph)
         .setRequired(true);
 
       const substituteInput = new TextInputBuilder()
         .setCustomId('input_substitute')
-        .setLabel('สารวัตรที่เข้าเวรแทน (ถ้ามี)')
+        .setLabel('สารวัตรที่เข้าเวรแทน (ถ้ามีระบุ)')
+        .setPlaceholder('เช่น [TS2] กาย หรือระบุว่า ไม่มี')
         .setStyle(TextInputStyle.Short)
         .setRequired(false);
 
-      leaveModal.addComponents(
-        new ActionRowBuilder().addComponents(dateInput),
-        new ActionRowBuilder().addComponents(periodInput),
-        new ActionRowBuilder().addComponents(typeInput),
+      modal.addComponents(
         new ActionRowBuilder().addComponents(reasonInput),
         new ActionRowBuilder().addComponents(substituteInput)
       );
 
-      await interaction.showModal(leaveModal);
+      await interaction.showModal(modal);
+      return;
     }
 
-    if (interaction.isModalSubmit() && interaction.customId.startsWith('modal_submit_leave_')) {
+    if (interaction.isModalSubmit() && (interaction.customId.startsWith('modal_quick_leave_') || interaction.customId.startsWith('modal_submit_leave_') || interaction.customId.startsWith('modal_dm_quick_leave_'))) {
       await interaction.deferReply({ ephemeral: true });
-      const memberId = interaction.customId.replace('modal_submit_leave_', '');
 
-      const leaveDate = interaction.fields.getTextInputValue('input_leave_date').trim();
-      const shiftPeriod = interaction.fields.getTextInputValue('input_shift_period').trim();
-      const leaveType = interaction.fields.getTextInputValue('input_leave_type').trim();
+      let memberId = '';
+      let typeKey = 'personal';
+
+      if (interaction.customId.startsWith('modal_quick_leave_')) {
+        const parts = interaction.customId.replace('modal_quick_leave_', '').split('_');
+        memberId = parts[0];
+        typeKey = parts[1] || 'personal';
+      } else if (interaction.customId.startsWith('modal_submit_leave_')) {
+        memberId = interaction.customId.replace('modal_submit_leave_', '');
+      } else if (interaction.customId.startsWith('modal_dm_quick_leave_')) {
+        memberId = interaction.customId.replace('modal_dm_quick_leave_', '');
+      }
+
+      const typeMap = {
+        sick: 'ลาป่วย',
+        personal: 'ลากิจ',
+        exam: 'ติดสอบ/ภารกิจการเรียน',
+        other: 'ภารกิจอื่น'
+      };
+
       const reason = interaction.fields.getTextInputValue('input_leave_reason').trim();
-      const substitute = interaction.fields.getTextInputValue('input_substitute').trim() || '-';
+      const substitute = interaction.fields.fields.has('input_substitute') ? (interaction.fields.getTextInputValue('input_substitute').trim() || '-') : '-';
+      const todayStr = `วันนี้ (${new Date().toLocaleDateString('th-TH', { day: 'numeric', month: 'short' })})`;
+      const leaveDate = interaction.fields.fields.has('input_leave_date') ? interaction.fields.getTextInputValue('input_leave_date').trim() : todayStr;
+      const shiftPeriod = interaction.fields.fields.has('input_shift_period') ? interaction.fields.getTextInputValue('input_shift_period').trim() : 'ทั้งวัน';
+      const leaveType = interaction.fields.fields.has('input_leave_type') ? interaction.fields.getTextInputValue('input_leave_type').trim() : (typeMap[typeKey] || 'ลากิจ');
 
       const { data: member } = await supabase.from('members').select('*').eq('id', memberId).single();
 
@@ -2742,6 +2801,41 @@ client.on('interactionCreate', async (interaction) => {
         .in('shift_role', ['SHIFT_HEAD', 'SHIFT_DEPUTY'])
         .not('discord_id', 'is', null)
         .eq('status', 'ACTIVE');
+
+      const dmEmbed = new EmbedBuilder()
+        .setTitle('🔔 [แจ้งเตือนการลาเวร] มีสมาชิกขอลาเวร')
+        .setColor('#E74C3C')
+        .setDescription(
+          `# 🔔 มีสารวัตรแจ้งขอลาเวรด่วน\n\n` +
+          `### 👮 [${member.duty_id || 'สารวัตร'}] คุณ${member.nickname} (${member.first_name} ${member.last_name})\n` +
+          `🏷️ **ประเภทการลา:** **${leaveType}**\n` +
+          `📅 **วันที่ขอลา:** ${leaveDate} (${shiftPeriod})\n` +
+          `📝 **หมายเหตุ:** ${reason}\n` +
+          `🔄 **ผู้เข้าเวรแทน:** ${substitute}\n` +
+          `📞 **เบอร์โทรติดต่อ:** ${member.phone_number || '-'}`
+        )
+        .setFooter({ text: `เวร${DAY_NAMES[member.duty_day] || member.duty_day} • โรงเรียนพระนารายณ์` });
+
+      let dmSentCount = 0;
+      if (heads && heads.length > 0) {
+        for (const head of heads) {
+          try {
+            const user = await client.users.fetch(head.discord_id);
+            await user.send({ embeds: [dmEmbed] });
+            dmSentCount++;
+          } catch (e) {}
+        }
+      }
+
+      await interaction.editReply({
+        content: `# ✅ ส่งคำขอลาเวรเรียบร้อยแล้ว\n` +
+                 `- **ผู้ลา:** [${member.duty_id}] ${member.nickname} (${member.first_name})\n` +
+                 `- **ประเภท:** ${leaveType}\n` +
+                 `- **หมายเหตุ:** ${reason}\n` +
+                 `📨 ส่งข้อความแจ้งเตือนหาหัวหน้าเวรและรองหัวหน้าเวรแล้ว (${dmSentCount} ท่าน)`
+      });
+      return;
+    }
 
       const dmEmbed = new EmbedBuilder()
         .setTitle('🔔 [แจ้งเตือนการลาเวร] มีสมาชิกขอลาเวร')
@@ -3306,7 +3400,7 @@ client.on('interactionCreate', async (interaction) => {
       const resultEmbed = new EmbedBuilder()
         .setTitle(`📁 [บันทึกเข้าคดีเสร็จสิ้น] รหัสคดี: ${caseId}`)
         .setDescription(
-          `การปฏิบัติหน้าที่ได้รับการบันทึกและปิดคดีเรียบร้อยแล้ว\n\n` +
+          `การปฏิบัติหน้าที่ตรวจได้รับการบันทึกและปิดคดีเรียบร้อยแล้ว\n\n` +
           `👤 **ใครทำ:** ${who}\n` +
           `📝 **ทำอะไร:** ${what}\n` +
           `⏰ **ตอนไหน:** ${when}\n` +
@@ -3334,14 +3428,6 @@ client.on('interactionCreate', async (interaction) => {
         embeds: [resultEmbed],
         components: [actionRow]
       });
-
-      if (interaction.channel && interaction.channel.isThread()) {
-        await interaction.channel.send({
-          content: `🏁 **คดี ${caseId} ได้รับการบันทึกผลเสร็จสิ้นแล้ว!**`,
-          embeds: [resultEmbed],
-          components: [actionRow]
-        }).catch(() => {});
-      }
       return;
     }
 
