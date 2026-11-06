@@ -988,8 +988,9 @@ client.once(Events.ClientReady || 'ready', async () => {
       await targetGuild.commands.set(commandsJson);
       console.log(`[SARAWAT-BOT] Registered ${commandsJson.length} slash commands to guild: ${targetGuild.name}`);
     }
+    // ล้าง Global Commands เพื่อป้องกันไม่ให้คำสั่งขึ้นซ้ำ 2 ชุดในเซิร์ฟเวอร์
     if (client.application) {
-      await client.application.commands.set(commandsJson);
+      await client.application.commands.set([]);
     }
   } catch (err) {
     console.warn('[SARAWAT-BOT] Slash commands registration notice:', err.message);
