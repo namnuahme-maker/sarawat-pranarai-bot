@@ -223,19 +223,135 @@ function generateCardHTML(member) {
 
   // ค่าพิกัดแบบไดนามิกจาก Custom Template หรือ Default
   const el = (customConfig && customConfig.elements) || {};
-  const sTopH = el.headerSarawat ? el.headerSarawat.top : 10;
-  const sTopInsp = el.headerInspector ? el.headerInspector.top : 54;
-  const sTopNick = el.nickname ? el.nickname.top : 490;
-  const sTopCode = el.codeline ? el.codeline.top : 542;
-  const sTopThaiNick = el.thaiNickname ? el.thaiNickname.top : 574;
-  const sTopThaiName = el.thaiFullname ? el.thaiFullname.top : 598;
-  const sTopBarcode = el.barcode ? el.barcode.top : 622;
-  const sLeftBarcode = el.barcode ? el.barcode.left : 35;
-  const sTopEmblem = el.schoolEmblem ? el.schoolEmblem.top : 568;
-  const sLeftEmblem = el.schoolEmblem ? el.schoolEmblem.left : 315;
   const sTopPhoto = el.photo ? el.photo.top : 125;
   const sHeightPhoto = el.photo ? el.photo.height : 360;
   const sTopWhiteFade = Math.max(0, sTopPhoto + sHeightPhoto - 175);
+
+  let cardInnerHtml = '';
+  if (customConfig && customConfig.elements && Object.keys(customConfig.elements).length > 0) {
+    let elementsHtml = '';
+    for (const [key, elem] of Object.entries(customConfig.elements)) {
+      const left = Math.round(elem.left || 0);
+      const top = Math.round(elem.top || 0);
+      const width = elem.width ? `${Math.round(elem.width)}px` : 'auto';
+      const height = elem.height ? `${Math.round(elem.height)}px` : 'auto';
+      const opacity = elem.opacity !== undefined ? elem.opacity : 1;
+      const angle = elem.angle || 0;
+
+      if (elem.type === 'rect') {
+        elementsHtml += `
+          <div style="position: absolute; left: ${left}px; top: ${top}px; width: ${width}; height: ${height}; background: ${elem.fill || '#000'}; opacity: ${opacity}; z-index: 25; pointer-events: none;"></div>
+        `;
+      } else if (elem.type === 'image' && elem.src) {
+        let imgSrc = elem.src;
+        if (imgSrc.includes('logo.png') || imgSrc.includes('logo.jpg')) {
+          imgSrc = inspectorLogoB64 || imgSrc;
+        } else if (imgSrc.includes('school_emblem.png')) {
+          imgSrc = schoolEmblemB64 || imgSrc;
+        }
+        const transform = angle ? `transform: rotate(${angle}deg);` : '';
+        elementsHtml += `
+          <img src="${imgSrc}" style="position: absolute; left: ${left}px; top: ${top}px; width: ${width}; height: ${height}; object-fit: contain; opacity: ${opacity}; ${transform} z-index: ${key.includes('watermark') ? 2 : 20}; pointer-events: none;" alt="${elem.name || ''}">
+        `;
+      } else if (elem.type === 'photo') {
+        elementsHtml += `
+          <div style="position: absolute; left: ${left}px; top: ${top}px; width: ${width}; height: ${height}; display: flex; align-items: center; justify-content: center; z-index: 5; pointer-events: none;">
+            ${photoUrl 
+              ? `<img src="${photoUrl}" style="width: 100%; height: 100%; object-fit: cover; object-position: top center; -webkit-mask-image: linear-gradient(to bottom, rgba(0,0,0,1) 0%, rgba(0,0,0,1) 75%, rgba(0,0,0,0) 100%); mask-image: linear-gradient(to bottom, rgba(0,0,0,1) 0%, rgba(0,0,0,1) 75%, rgba(0,0,0,0) 100%);" crossorigin="anonymous" alt="Photo">` 
+              : `<span style="font-size: 80px; color: #94a3b8;">👤</span>`
+            }
+          </div>
+        `;
+      } else if (elem.type === 'text') {
+        let textVal = elem.text;
+        if (textVal === '{{nickname}}') textVal = englishNickname;
+        if (textVal === '{{codeline}}') textVal = codeLine;
+        if (textVal === '{{thaiNickname}}') textVal = thaiNickname;
+        if (textVal === '{{thaiFullname}}') textVal = fullName;
+
+        const fontSize = Math.round(elem.fontSize || 20);
+        const charSpacing = elem.charSpacing ? `${(elem.charSpacing / 1000) * 10}px` : 'normal';
+        const strokeStyle = elem.stroke ? `-webkit-text-stroke: ${elem.strokeWidth || 1}px ${elem.stroke};` : '';
+        const originTransform = elem.originX === 'center' ? 'translateX(-50%)' : '';
+        const rotTransform = angle ? `rotate(${angle}deg)` : '';
+        const scaleYTransform = elem.scaleY ? `scaleY(${elem.scaleY})` : '';
+        const combinedTransform = [originTransform, rotTransform, scaleYTransform].filter(Boolean).join(' ');
+        const transformStyle = combinedTransform ? `transform: ${combinedTransform};` : '';
+
+        elementsHtml += `
+          <div style="position: absolute; left: ${left}px; top: ${top}px; ${transformStyle} font-family: '${elem.fontFamily || 'Prompt'}', sans-serif; font-size: ${fontSize}px; font-weight: ${elem.fontWeight || 'normal'}; color: ${elem.fill || '#050505'}; letter-spacing: ${charSpacing}; ${strokeStyle} opacity: ${opacity}; z-index: 20; white-space: nowrap; pointer-events: none; text-align: ${elem.originX || 'left'};">
+            ${textVal}
+          </div>
+        `;
+      } else if (elem.type === 'barcode') {
+        elementsHtml += `
+          <div style="position: absolute; left: ${left}px; top: ${top}px; width: ${width}; height: ${height}; display: flex; align-items: center; justify-content: center; z-index: 20; pointer-events: none;">
+            <svg id="cardBarcode" style="width: 100%; height: 100%;"></svg>
+          </div>
+        `;
+      }
+    }
+
+    cardInnerHtml = `
+      <!-- Ambient Glow Fades (Over photo & background, strictly below all text) -->
+      <div class="glow-fade-blue"></div>
+      <div class="glow-fade-red"></div>
+      <div class="glow-fade-white-bottom" style="top: ${sTopWhiteFade}px;"></div>
+
+      ${elementsHtml}
+    `;
+  } else {
+    cardInnerHtml = `
+      <!-- Side Stripes -->
+      <div class="stripe-blue"></div>
+      <div class="stripe-red"></div>
+
+      <!-- Right Vertical School Text -->
+      <div class="vertical-school-text">PRANARAI SCHOOL</div>
+
+      <!-- Watermark Emblem Behind Left Shoulder -->
+      ${inspectorLogoB64 ? `<img src="${inspectorLogoB64}" class="watermark-emblem" alt="Watermark">` : ''}
+
+      <!-- Center Photo with Soft Gradient Fade-Out -->
+      <div class="photo-center-area">
+        ${photoUrl 
+          ? `<img src="${photoUrl}" class="photo-fade-img" crossorigin="anonymous" alt="Photo">` 
+          : `<span class="photo-fallback">👤</span>`
+        }
+      </div>
+
+      <!-- Ambient Glow Fades (Over photo & background, strictly below all text) -->
+      <div class="glow-fade-blue"></div>
+      <div class="glow-fade-red"></div>
+      <div class="glow-fade-white-bottom" style="top: ${sTopWhiteFade}px;"></div>
+
+      <!-- Top Header -->
+      <div class="header-wrap" style="position: absolute; left: 13px; right: 13px; top: 10px;">
+        <div class="title-sarawat">SARAWAT</div>
+        <div class="title-inspector">INSPECTOR</div>
+      </div>
+
+      <!-- Mid Text: Nickname & Code -->
+      <div class="mid-text-section">
+        <div class="text-nickname-big">${englishNickname}</div>
+        <div class="text-code-line">${codeLine}</div>
+      </div>
+
+      <!-- Bottom Details -->
+      <div class="bottom-row-section">
+        <div class="bottom-left-col">
+          <div class="text-thai-nick">${thaiNickname}</div>
+          <div class="text-thai-full">${fullName}</div>
+          <div class="barcode-svg-wrap">
+            <svg id="cardBarcode"></svg>
+          </div>
+        </div>
+        <div class="bottom-right-col">
+          ${schoolEmblemB64 ? `<img src="${schoolEmblemB64}" class="school-crest-img" alt="School Emblem">` : ''}
+        </div>
+      </div>
+    `;
+  }
 
   return `<!DOCTYPE html>
 <html lang="th">
@@ -580,55 +696,7 @@ function generateCardHTML(member) {
 
   <div class="card-wrap">
     <div class="id-card" id="idCard">
-      <!-- Side Stripes -->
-      <div class="stripe-blue"></div>
-      <div class="stripe-red"></div>
-
-      <!-- Right Vertical School Text -->
-      <div class="vertical-school-text">PRANARAI SCHOOL</div>
-
-      <!-- Watermark Emblem Behind Left Shoulder -->
-      ${inspectorLogoB64 ? `<img src="${inspectorLogoB64}" class="watermark-emblem" alt="Watermark">` : ''}
-
-      <!-- Center Photo with Soft Gradient Fade-Out -->
-      <div class="photo-center-area">
-        ${photoUrl 
-          ? `<img src="${photoUrl}" class="photo-fade-img" crossorigin="anonymous" alt="Photo">` 
-          : `<span class="photo-fallback">👤</span>`
-        }
-      </div>
-
-      <!-- Ambient Glow Fades (Over photo & background, strictly below all text) -->
-      <div class="glow-fade-blue"></div>
-      <div class="glow-fade-red"></div>
-      <div class="glow-fade-white-bottom" style="top: ${sTopWhiteFade}px;"></div>
-
-      <!-- Top Header -->
-      <div class="header-wrap" style="position: absolute; left: 13px; right: 13px; top: 10px;">
-        <div class="title-sarawat">SARAWAT</div>
-        <div class="title-inspector">INSPECTOR</div>
-      </div>
-
-      <!-- Mid Text: Nickname & Code -->
-      <div class="mid-text-section">
-        <div class="text-nickname-big">${englishNickname}</div>
-        <div class="text-code-line">${codeLine}</div>
-      </div>
-
-      <!-- Bottom Details -->
-      <div class="bottom-row-section">
-        <div class="bottom-left-col">
-          <div class="text-thai-nick">${thaiNickname}</div>
-          <div class="text-thai-full">${fullName}</div>
-          <div class="barcode-svg-wrap">
-            <svg id="cardBarcode"></svg>
-          </div>
-        </div>
-        <div class="bottom-right-col">
-          ${schoolEmblemB64 ? `<img src="${schoolEmblemB64}" class="school-crest-img" alt="School Emblem">` : ''}
-        </div>
-      </div>
-
+      ${cardInnerHtml}
     </div>
 
     <div class="actions">

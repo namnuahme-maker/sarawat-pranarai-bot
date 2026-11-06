@@ -5598,6 +5598,19 @@ function generateCombinedAttendanceSheetHTML(allMembers) {
 const server = http.createServer(async (req, res) => {
   const parsedUrl = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
 
+  // 🖼️ เส้นทางดาวน์โหลดไฟล์รูปภาพ Static: /assets/*
+  if (parsedUrl.pathname.startsWith('/assets/')) {
+    const filename = path.basename(parsedUrl.pathname);
+    const assetPath = path.join(__dirname, 'assets', filename);
+    if (fs.existsSync(assetPath)) {
+      const ext = path.extname(filename).toLowerCase();
+      const mimeType = ext === '.png' ? 'image/png' : (ext === '.jpg' || ext === '.jpeg') ? 'image/jpeg' : 'application/octet-stream';
+      res.writeHead(200, { 'Content-Type': mimeType, 'Cache-Control': 'public, max-age=86400' });
+      fs.createReadStream(assetPath).pipe(res);
+      return;
+    }
+  }
+
   // 🪪 เส้นทางเปิดดูบัตรประจำตัวสารวัตรนักเรียน: /card?id=UUID หรือ /verify?id=UUID
   if (parsedUrl.pathname === '/card' || parsedUrl.pathname === '/verify' || parsedUrl.pathname.startsWith('/card/')) {
     let memberId = parsedUrl.searchParams.get('id');
