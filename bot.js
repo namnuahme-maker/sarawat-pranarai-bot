@@ -36,6 +36,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { spawn } = require('child_process');
 require('dotenv').config();
 const { generateCardHTML } = require('./card_template');
 
@@ -87,6 +88,46 @@ const cleanupSheetsTimer = setInterval(() => {
   }
 }, 5 * 60 * 1000);
 if (cleanupSheetsTimer.unref) cleanupSheetsTimer.unref();
+
+// ==========================================================
+// 📸 PENDING PHOTO UPLOADS & AI BACKGROUND REMOVAL
+// ==========================================================
+const pendingPhotoUploads = new Map(); // memberId -> { url, name, timestamp }
+
+function getUploadDir() {
+  const dir1 = path.join(__dirname, '..', 'web', 'public', 'uploads');
+  if (fs.existsSync(path.join(__dirname, '..', 'web'))) return dir1;
+  const dir2 = path.join(__dirname, 'web', 'public', 'uploads');
+  if (fs.existsSync(path.join(__dirname, 'web'))) return dir2;
+  return path.join(__dirname, 'uploads');
+}
+
+function processBackgroundRemoval(imageUrl, memberId) {
+  return new Promise((resolve, reject) => {
+    let scriptPath = path.join(__dirname, 'remove_bg.py');
+    if (!fs.existsSync(scriptPath)) {
+      scriptPath = path.join(__dirname, 'bot', 'remove_bg.py');
+    }
+    const uploadsDir = getUploadDir();
+    if (!fs.existsSync(uploadsDir)) {
+      fs.mkdirSync(uploadsDir, { recursive: true });
+    }
+    const outFileName = `cutout_${memberId}_${Date.now()}.png`;
+    const outPath = path.join(uploadsDir, outFileName);
+
+    const py = spawn('python', [scriptPath, imageUrl, outPath]);
+    let stderr = '';
+    py.stderr.on('data', (d) => { stderr += d.toString(); });
+    py.on('close', (code) => {
+      if (code === 0 && fs.existsSync(outPath)) {
+        resolve({ outPath, outFileName });
+      } else {
+        reject(new Error(stderr || `Python exited with code ${code}`));
+      }
+    });
+    py.on('error', (err) => reject(err));
+  });
+}
 
 // ==========================================================
 // 🛡️ MEMBER INPUT SANITIZERS & VALIDATORS
@@ -1291,35 +1332,42 @@ client.on('messageCreate', async (message) => {
             .maybeSingle();
 
           if (member) {
-            await supabase
-              .from('members')
-              .update({ profile_image_url: attachment.url, updated_at: new Date() })
-              .eq('id', member.id);
+            // บันทึกรูปที่รอดำเนินการเลือกลบพื้นหลัง
+            pendingPhotoUploads.set(member.id, {
+              url: attachment.url,
+              name: attachment.name || `photo_${member.id}.png`,
+              memberId: member.id,
+              authorId: message.author.id,
+              timestamp: Date.now()
+            });
 
             const shiftLabel = getShiftLabel(member.duty_day);
             const dutyTag = member.duty_id ? `\`[${member.duty_id}]\`` : '`[รออนุมัติ]`';
 
-            const successEmbed = new EmbedBuilder()
-              .setTitle('📸 บันทึกรูปทำบัตรสำเร็จ')
+            const promptEmbed = new EmbedBuilder()
+              .setTitle('📸 ได้รับรูปถ่ายของคุณแล้ว')
               .setDescription(
-                `ชื่อ: ${member.first_name} ${member.last_name} (${member.nickname})\n` +
-                `ชั้น: ม.${member.grade_class} #${member.student_no}\n` +
-                `รหัสเวร: ${dutyTag}\n` +
-                `เวร: ${shiftLabel}\n` +
-                `รูปแบบ: บัตรประจำตัวแนวตั้ง (Portrait Standard)`
+                `สมาชิก: **${member.first_name} ${member.last_name} (${member.nickname})**\n` +
+                `ชั้น: ม.${member.grade_class} #${member.student_no} • รหัสเวร: ${dutyTag} • เวร: ${shiftLabel}\n\n` +
+                `**ต้องการลบพื้นหลังรูปถ่ายหรือไม่?**\n` +
+                `• ✨ **ลบพื้นหลัง (AI Cutout)**: ระบบจะตัดพื้นหลังออกให้อัตโนมัติ (แนะนำสำหรับรูปติดบัตร)\n` +
+                `• 🖼️ **ใช้รูปเดิม**: บันทึกรูปต้นฉบับตามที่คุณส่งเข้ามาโดยไม่ตัดพื้นหลัง`
               )
-              .setThumbnail(attachment.url)
-              .setColor('#2ECC71');
+              .setImage(attachment.url)
+              .setColor('#3498DB');
 
-            const cardUrl = `${getBaseUrl()}/card?id=${member.id}`;
             const actionRow = new ActionRowBuilder().addComponents(
               new ButtonBuilder()
-                .setLabel('🪪 เปิดดูบัตรประจำตัวแนวตั้ง')
-                .setStyle(ButtonStyle.Link)
-                .setURL(cardUrl)
+                .setCustomId(`btn_photo_remove_bg_${member.id}`)
+                .setLabel('✨ ลบพื้นหลัง (AI Cutout)')
+                .setStyle(ButtonStyle.Primary),
+              new ButtonBuilder()
+                .setCustomId(`btn_photo_keep_orig_${member.id}`)
+                .setLabel('🖼️ ใช้รูปเดิม')
+                .setStyle(ButtonStyle.Secondary)
             );
 
-            await message.reply({ embeds: [successEmbed], components: [actionRow] }).catch(() => {});
+            await message.reply({ embeds: [promptEmbed], components: [actionRow] }).catch(() => {});
             return;
           } else {
             await message.reply({
@@ -1954,6 +2002,154 @@ client.on('interactionCreate', async (interaction) => {
 
       await interaction.editReply({ embeds: [previewEmbed] });
       return;
+    }
+
+    // ==========================================================
+    // 📸 PHOTO UPLOAD CHOICE: KEEP ORIGINAL OR REMOVE BACKGROUND
+    // ==========================================================
+    if (interaction.isButton() && (interaction.customId.startsWith('btn_photo_keep_orig_') || interaction.customId.startsWith('btn_photo_remove_bg_'))) {
+      const isRemoveBg = interaction.customId.startsWith('btn_photo_remove_bg_');
+      const memberId = isRemoveBg
+        ? interaction.customId.replace('btn_photo_remove_bg_', '')
+        : interaction.customId.replace('btn_photo_keep_orig_', '');
+
+      const { data: member } = await supabase
+        .from('members')
+        .select('*')
+        .eq('id', memberId)
+        .maybeSingle();
+
+      if (!member) {
+        await interaction.reply({ content: '⚠️ ไม่พบข้อมูลสมาชิกในระบบ', ephemeral: true }).catch(() => {});
+        return;
+      }
+
+      const isOwnerOrAdmin = interaction.user.id === member.discord_id ||
+        interaction.member?.permissions.has(PermissionsBitField.Flags.Administrator);
+
+      if (!isOwnerOrAdmin) {
+        await interaction.reply({
+          content: '⚠️ เฉพาะเจ้าของรูปถ่ายหรือผู้ดูแลระบบเท่านั้นที่สามารถเลือกการจัดการรูปนี้ได้',
+          ephemeral: true
+        }).catch(() => {});
+        return;
+      }
+
+      // Find the image URL from pending cache or fallback to message embed
+      const pending = pendingPhotoUploads.get(member.id);
+      const rawUrl = pending?.url || interaction.message?.embeds?.[0]?.image?.url || interaction.message?.embeds?.[0]?.thumbnail?.url;
+
+      if (!rawUrl) {
+        await interaction.reply({
+          content: '⚠️ ไม่พบ URL รูปภาพ กรุณาส่งรูปเข้ามาใหม่อีกครั้งที่ห้องนี้ครับ',
+          ephemeral: true
+        }).catch(() => {});
+        return;
+      }
+
+      const shiftLabel = getShiftLabel(member.duty_day);
+      const dutyTag = member.duty_id ? `\`[${member.duty_id}]\`` : '`[รออนุมัติ]`';
+      const cardUrl = `${getBaseUrl()}/card?id=${member.id}`;
+      const cardRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setLabel('🪪 เปิดดูบัตรประจำตัวแนวตั้ง')
+          .setStyle(ButtonStyle.Link)
+          .setURL(cardUrl)
+      );
+
+      if (!isRemoveBg) {
+        // Option 1: Keep Original Photo
+        await interaction.deferUpdate();
+        await supabase
+          .from('members')
+          .update({ profile_image_url: rawUrl, updated_at: new Date() })
+          .eq('id', member.id);
+
+        pendingPhotoUploads.delete(member.id);
+
+        const successEmbed = new EmbedBuilder()
+          .setTitle('📸 บันทึกรูปทำบัตรสำเร็จ (รูปต้นฉบับ)')
+          .setDescription(
+            `ชื่อ: **${member.first_name} ${member.last_name} (${member.nickname})**\n` +
+            `ชั้น: ม.${member.grade_class} #${member.student_no}\n` +
+            `รหัสเวร: ${dutyTag} | เวร: ${shiftLabel}\n` +
+            `รูปแบบ: บันทึกรูปต้นฉบับเรียบร้อยแล้ว`
+          )
+          .setImage(rawUrl)
+          .setColor('#2ECC71');
+
+        await interaction.editReply({
+          content: `✅ <@${interaction.user.id}> บันทึกรูปโปรไฟล์ทำบัตรแบบต้นฉบับสำเร็จ`,
+          embeds: [successEmbed],
+          components: [cardRow]
+        }).catch(() => {});
+        return;
+      } else {
+        // Option 2: Remove Background (AI Cutout)
+        await interaction.deferUpdate();
+        await interaction.editReply({
+          content: `⏳ <@${interaction.user.id}> ระบบกำลังใช้ AI ตัดพื้นหลังรูปถ่าย กรุณารอสักครู่ (ประมาณ 3-5 วินาที)...`,
+          components: []
+        }).catch(() => {});
+
+        try {
+          const { outPath, outFileName } = await processBackgroundRemoval(rawUrl, member.id);
+          const attachment = new AttachmentBuilder(outPath, { name: outFileName });
+
+          const successEmbed = new EmbedBuilder()
+            .setTitle('✨ บันทึกรูปทำบัตรสำเร็จ (AI ตัดพื้นหลังแล้ว)')
+            .setDescription(
+              `ชื่อ: **${member.first_name} ${member.last_name} (${member.nickname})**\n` +
+              `ชั้น: ม.${member.grade_class} #${member.student_no}\n` +
+              `รหัสเวร: ${dutyTag} | เวร: ${shiftLabel}\n` +
+              `รูปแบบ: ตัดพื้นหลังโปร่งใส (Transparent PNG) เหมาะสำหรับติดบัตรดิจิทัล`
+            )
+            .setImage(`attachment://${outFileName}`)
+            .setColor('#2ECC71');
+
+          const updateResult = await interaction.editReply({
+            content: `✨ <@${interaction.user.id}> ตัดพื้นหลังรูปถ่ายสำเร็จ และบันทึกเข้าสู่ระบบเรียบร้อยแล้ว!`,
+            embeds: [successEmbed],
+            components: [cardRow],
+            files: [attachment]
+          }).catch(() => null);
+
+          const cdnUrl = updateResult?.attachments?.first()?.url || `${getBaseUrl()}/uploads/${outFileName}`;
+
+          await supabase
+            .from('members')
+            .update({ profile_image_url: cdnUrl, updated_at: new Date() })
+            .eq('id', member.id);
+
+          pendingPhotoUploads.delete(member.id);
+        } catch (err) {
+          console.error('[AI REMOVE BG ERROR]:', err);
+          await supabase
+            .from('members')
+            .update({ profile_image_url: rawUrl, updated_at: new Date() })
+            .eq('id', member.id);
+
+          pendingPhotoUploads.delete(member.id);
+
+          const fallbackEmbed = new EmbedBuilder()
+            .setTitle('📸 บันทึกรูปทำบัตร (รูปต้นฉบับ)')
+            .setDescription(
+              `ชื่อ: **${member.first_name} ${member.last_name} (${member.nickname})**\n` +
+              `⚠️ ระบบ AI ไม่สามารถตัดพื้นหลังภาพนี้ได้ (อาจเป็นเพราะภาพสว่างเกินไปหรือความละเอียดไม่รองรับ)\n` +
+              `ระบบจึงบันทึกเป็นรูปต้นฉบับให้แทนเรียบร้อยแล้วครับ`
+            )
+            .setImage(rawUrl)
+            .setColor('#F39C12');
+
+          await interaction.editReply({
+            content: `⚠️ เกิดข้อผิดพลาดในการตัดพื้นหลัง ระบบจึงบันทึกรูปต้นฉบับแทน`,
+            embeds: [fallbackEmbed],
+            components: [cardRow],
+            files: []
+          }).catch(() => {});
+        }
+        return;
+      }
     }
 
     // 1. ยืนยันตัวตน
@@ -5677,5 +5873,8 @@ module.exports = {
   getShiftLabel,
   getDayName,
   cleanGradeClass,
-  cleanFullName
+  cleanFullName,
+  pendingPhotoUploads,
+  processBackgroundRemoval,
+  getUploadDir
 };
