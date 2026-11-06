@@ -303,15 +303,24 @@ function findChannel(guild, idOrName) {
 async function sendVerifyPanel(channel) {
   if (!channel) return null;
   const embed = new EmbedBuilder()
-    .setTitle('🛡️ จุดลงทะเบียนและยืนยันตัวตนสารวัตรนักเรียน | โรงเรียนพระนารายณ์')
-    .setDescription('ยินดีต้อนรับสารวัตรนักเรียนทุกท่าน!\n\nกรุณากดปุ่ม **"🛡️ ยืนยันตัวตนสารวัตรนักเรียน"** ด้านล่าง\n- กรอกข้อมูลส่วนตัวและเบอร์โทรศัพท์\n- เลือกรอบเวรประจำวัน (M, T, W, Ts, F หรือ เวรพิเศษ S มาทุกวัน)\n- **ระบบจะส่งคำขอไปยังคณะผู้บริหาร/หัวหน้าสารวัตรเพื่ออนุมัติ**')
+    .setTitle('🛡️ จุดลงทะเบียนและยืนยันตัวตนสารวัตรนักเรียน')
+    .setDescription(
+      'ยินดีต้อนรับสารวัตรนักเรียนโรงเรียนพระนารายณ์ทุกท่าน เข้าสู่ระบบบริหารงานดิจิทัล\n\n' +
+      '━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n' +
+      '📌 **ขั้นตอนการยืนยันตัวตน (3 ขั้นตอนง่ายๆ):**\n' +
+      '1️⃣ **[เลือกชื่อของคุณ]** — ค้นหาชื่อ-นามสกุลจากฐานข้อมูล หรือกดขอเพิ่มชื่อใหม่\n' +
+      '2️⃣ **[เลือกรอบเวร]** — กำหนดวันปฏิบัติหน้าที่หลัก (จันทร์-ศุกร์) หรือเวรพิเศษ (S)\n' +
+      '3️⃣ **[รอการอนุมัติ]** — ส่งคำขอให้คณะผู้บริหารตรวจสอบ บอทจะมอบยศและตั้งชื่อให้อัตโนมัติ\n' +
+      '━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n' +
+      '👉 *กดปุ่ม **"🛡️ เริ่มต้นยืนยันตัวตน"** ด้านล่างเพื่อเริ่มทำรายการทันที*'
+    )
     .setColor('#3498DB')
-    .setFooter({ text: 'ฝ่ายบริหารงานสารวัตรนักเรียน โรงเรียนพระนารายณ์' });
+    .setFooter({ text: 'ฝ่ายบริหารงานสารวัตรนักเรียน • โรงเรียนพระนารายณ์' });
 
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId('btn_start_verify')
-      .setLabel('🛡️ ยืนยันตัวตนสารวัตรนักเรียน')
+      .setLabel('🛡️ เริ่มต้นยืนยันตัวตน')
       .setStyle(ButtonStyle.Primary)
   );
 
@@ -321,14 +330,19 @@ async function sendVerifyPanel(channel) {
 async function sendPhotoPanel(channel) {
   if (!channel) return null;
   const embed = new EmbedBuilder()
-    .setTitle('📸 จุดส่งรูปโปรไฟล์สำหรับทำบัตรสารวัตรนักเรียน | โรงเรียนพระนารายณ์')
-    .setDescription('สารวัตรนักเรียนที่ผ่านการอนุมัติแล้ว กรุณากดส่งรูปถ่ายหน้าตรงของคุณเข้ามาในห้องนี้ได้เลยครับ\n\n' +
-      '• **การตรวจสอบอัตโนมัติ:** เมื่อคุณส่งรูป บอทจะตรวจจับบัญชี Discord ทันทีว่าคือใคร\n' +
-      '• **การผูกข้อมูล:** บอทจะบันทึกรูปเข้ากับชื่อ-นามสกุล, ชื่อเล่น และรหัสเวรของคุณในฐานข้อมูลทันที\n' +
-      '• **การจัดทำบัตร:** ฝ่ายบริหารจะนำรูปนี้ไปพิมพ์ลงบนบัตรประจำตัวสารวัตรนักเรียน\n\n' +
-      '*(หมายเหตุ: หากยังไม่ได้ยืนยันตัวตน ให้ไปลงทะเบียนที่ห้อง 🛡️│ยืนยันตัวตน ก่อนนะครับ)*')
-    .setColor('#3498DB')
-    .setFooter({ text: 'กลุ่มงานสารวัตรนักเรียน โรงเรียนพระนารายณ์' });
+    .setTitle('📸 จุดส่งรูปโปรไฟล์สำหรับทำบัตรสารวัตรนักเรียน (3D ID Card)')
+    .setDescription(
+      'สารวัตรนักเรียนที่ผ่านการอนุมัติแล้ว สามารถส่งรูปถ่ายหน้าตรงเพื่อจัดทำบัตรประจำตัวได้ที่นี่\n\n' +
+      '━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n' +
+      '📌 **ขั้นตอนการส่งรูปทำบัตร (อัตโนมัติ 100%):**\n' +
+      '1️⃣ **[อัปโหลดรูปภาพ]** — แนบรูปถ่ายหน้าตรงในเครื่องแบบของคุณ ส่งเข้ามาในห้องนี้ได้ทันที\n' +
+      '2️⃣ **[ระบบผูกข้อมูล]** — บอทจะตรวจจับและบันทึกรูปเข้ากับรหัสเวรและชื่อของคุณในระบบ\n' +
+      '3️⃣ **[ตรวจสอบผล]** — กดปุ่ม **"🔍 ตรวจสอบรูปภาพของฉัน"** เพื่อดูรูปตัวอย่างและสถานะ\n' +
+      '━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n' +
+      '*(หมายเหตุ: ต้องผ่านการยืนยันตัวตนที่ห้อง 🛡️│ยืนยันตัวตน เรียบร้อยก่อนนะครับ)*'
+    )
+    .setColor('#9B59B6')
+    .setFooter({ text: 'กลุ่มงานสารวัตรนักเรียน • โรงเรียนพระนารายณ์' });
 
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
@@ -349,28 +363,33 @@ async function sendAttendancePanel(channel) {
   }
 
   const embed = new EmbedBuilder()
-    .setTitle('📋 ศูนย์บริการสารวัตรนักเรียน (SARAWAT SERVICES)')
+    .setTitle('📋 ศูนย์บริการสารวัตรนักเรียน (SARAWAT SERVICE HUB)')
     .setDescription(
-      'ศูนย์บริการงานสารวัตรนักเรียน โรงเรียนพระนารายณ์\n\n' +
-      '• 📄 **ขอใบตารางเช็คชื่อประจำเวร** - ดาวน์โหลดฟอร์มลงเวลาขนาด A4 พร้อมพิมพ์\n' +
-      '• 📝 **ขอลาเวรปฏิบัติหน้าที่** - แจ้งขอลาเวรพร้อมระบุผู้ปฏิบัติหน้าที่แทน\n' +
-      '• 🎯 **ขออนุมัติปฏิบัติ** - ยื่นขออนุมัติปฏิบัติหน้าที่ (เกิดเหตุก่อวิวาส / เหตุน่าสงสัย / อื่นๆ) สร้างเคสส่งห้องแจ้งเหตุใหม่'
+      'ยินดีต้อนรับสู่ศูนย์บริการสารวัตรนักเรียน โรงเรียนพระนารายณ์\n\n' +
+      '━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n' +
+      '📄 **1. งานเอกสารและการลงเวลา**\n' +
+      'ขอใบตารางเช็คชื่อลงเวลาประจำเวร ขนาดกระดาษ A4 มาตรฐาน พร้อมพิมพ์ใช้งานได้ทันที\n\n' +
+      '📝 **2. การแจ้งลาเวรปฏิบัติหน้าที่**\n' +
+      'แจ้งขอลาเวรด่วน พร้อมระบุผู้ปฏิบัติหน้าที่แทน ระบบจะส่งข้อความแจ้งเตือนหาหัวหน้าเวรทันที\n\n' +
+      '🚨 **3. การขออนุมัติออกปฏิบัติหน้าที่**\n' +
+      'ยื่นขออนุมัติตรวจพื้นที่เป้าหมาย / เข้าระงับเหตุด่วน เพื่อเปิดเคสส่งคณะผู้บริหาร\n' +
+      '━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
     )
     .setColor('#1ABC9C')
-    .setFooter({ text: 'กลุ่มงานสารวัตรนักเรียน โรงเรียนพระนารายณ์' });
+    .setFooter({ text: 'กลุ่มงานสารวัตรนักเรียน • โรงเรียนพระนารายณ์' });
 
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId('btn_request_attendance')
-      .setLabel('📄 ขอใบตารางเช็คชื่อประจำเวร')
+      .setLabel('📄 ขอใบเช็คชื่อ A4')
       .setStyle(ButtonStyle.Success),
     new ButtonBuilder()
       .setCustomId('btn_request_leave')
-      .setLabel('📝 ขอลาเวรปฏิบัติหน้าที่')
+      .setLabel('📝 แจ้งขอลาเวร')
       .setStyle(ButtonStyle.Danger),
     new ButtonBuilder()
       .setCustomId('btn_request_inspection')
-      .setLabel('🎯 ขออนุมัติปฏิบัติ')
+      .setLabel('🚨 ขอออกปฏิบัติหน้าที่')
       .setStyle(ButtonStyle.Primary)
   );
 
@@ -380,23 +399,28 @@ async function sendAttendancePanel(channel) {
 async function sendAppointPanel(channel) {
   if (!channel) return null;
   const embed = new EmbedBuilder()
-    .setTitle('👑 ศูนย์แต่งตั้งและมอบหมายตำแหน่งสารวัตร')
+    .setTitle('👑 ศูนย์บริหารและแต่งตั้งตำแหน่งสารวัตรนักเรียน')
     .setDescription(
-      '(เฉพาะประธาน รองประธาน และผู้บริหาร)\n\n' +
-      'กดปุ่มด้านล่างเพื่อแต่งตั้ง **หัวหน้าเวร**, **รองหัวหน้าเวร**, **ประธาน** หรือ **รองประธาน**\n' +
-      'ระบบจะบันทึกลงฐานข้อมูลและแจกยศ Discord อัตโนมัติ'
+      '*(สงวนสิทธิ์เฉพาะประธานสารวัตร, รองประธาน และคณะผู้บริหารเท่านั้น)*\n\n' +
+      '━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n' +
+      '👑 **แต่งตั้งผู้นำฝ่ายและหัวหน้าเวร**\n' +
+      'แต่งตั้งตำแหน่ง **ประธาน**, **รองประธาน**, **หัวหน้าเวร** หรือ **รองหัวหน้าเวร**\n' +
+      'ระบบจะอัปเดตบทบาทในฐานข้อมูล และแจก/ปรับยศใน Discord ให้อัตโนมัติทันที\n\n' +
+      '👥 **ตรวจสอบทำเนียบสารวัตร**\n' +
+      'ดูรายชื่อสารวัตรทั้งหมดที่ปฏิบัติหน้าที่อยู่ในปัจจุบัน แยกตามผลัดเวร\n' +
+      '━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
     )
     .setColor('#F1C40F')
-    .setFooter({ text: 'SARAWAT-BOT • ระบบบริหารงานสารวัตร' });
+    .setFooter({ text: 'SARAWAT-BOT • ระบบบริหารงานสารวัตรนักเรียน' });
 
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId('btn_open_appoint_menu')
-      .setLabel('👑 แต่งตั้งตำแหน่งสารวัตร')
+      .setLabel('👑 แต่งตั้งตำแหน่ง')
       .setStyle(ButtonStyle.Success),
     new ButtonBuilder()
       .setCustomId('btn_inspect_roster')
-      .setLabel('👥 ตรวจสอบรายชื่อสารวัตร')
+      .setLabel('👥 ตรวจสอบทำเนียบสารวัตร')
       .setStyle(ButtonStyle.Secondary),
     new ButtonBuilder()
       .setCustomId('btn_set_semester')
@@ -1975,15 +1999,23 @@ client.on('interactionCreate', async (interaction) => {
 
       (members || []).slice(0, 24).forEach(m => {
         selectMenu.addOptions({
-          label: `${m.nickname} - ${m.first_name} ${m.last_name}`,
-          description: `ชั้น ${m.grade_class} เลขที่ ${m.student_no}`,
+          label: `${m.nickname} — ${m.first_name} ${m.last_name}`,
+          description: `ชั้น ม.${m.grade_class} เลขที่ #${m.student_no}`,
           value: m.id
         });
       });
 
       const row = new ActionRowBuilder().addComponents(selectMenu);
+      const step1Embed = new EmbedBuilder()
+        .setTitle('🛡️ [ขั้นตอนที่ 1/3] ค้นหาและเลือกชื่อของคุณ')
+        .setColor('#3498DB')
+        .setDescription(
+          'โปรดค้นหาและเลือกชื่อของคุณจากเมนูด้านล่างนี้\n' +
+          '*(หากไม่มีชื่อของคุณในระบบ ให้กดเลือก **"➕ ขอเพิ่มชื่อใหม่"**)*'
+        );
+
       await interaction.editReply({
-        content: 'เลือกชื่อของคุณ หรือ "➕ ขอเพิ่มชื่อใหม่":',
+        embeds: [step1Embed],
         components: [row]
       });
       return;
@@ -2060,19 +2092,32 @@ client.on('interactionCreate', async (interaction) => {
         return;
       }
 
+      const confirmEmbed = new EmbedBuilder()
+        .setTitle('🛡️ [ขั้นตอนที่ 1/3] ตรวจสอบข้อมูลตัวตนของคุณ')
+        .setColor('#3498DB')
+        .setDescription(
+          `โปรดตรวจสอบข้อมูลด้านล่างนี้ว่าถูกต้องและตรงกับตัวคุณหรือไม่\n\n` +
+          `👤 **ชื่อ-นามสกุล:** ${member.first_name} ${member.last_name} (**${member.nickname}**)\n` +
+          `🏫 **ชั้นเรียน:** มัธยมศึกษาปีที่ **${member.grade_class}** (เลขที่ **${member.student_no}**)\n` +
+          `📞 **เบอร์โทรศัพท์:** \`${member.phone_number || '-'}\`\n\n` +
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+          `🔹 **สถานะขั้นตอน:** 🟩⬜⬜ (ขั้นตอนที่ 1 จาก 3)`
+        );
+
       const confirmRow = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
           .setCustomId(`btn_confirm_identity_${member.id}`)
-          .setLabel('✅ ใช่ ฉันคือคนนี้')
+          .setLabel('✅ ข้อมูลถูกต้อง ยืนยันตัวตน')
           .setStyle(ButtonStyle.Success),
         new ButtonBuilder()
           .setCustomId('btn_start_verify')
-          .setLabel('❌ ไม่ใช่ / เลือกใหม่')
+          .setLabel('↩️ ไม่ใช่ / เลือกชื่อใหม่')
           .setStyle(ButtonStyle.Secondary)
       );
 
       await interaction.update({
-        content: `ชื่อ: ${member.first_name} ${member.last_name}\nชื่อเล่น: ${member.nickname}\nชั้น: ม.${member.grade_class} #${member.student_no}\nเบอร์: ${member.phone_number}`,
+        embeds: [confirmEmbed],
+        content: null,
         components: [confirmRow]
       });
     }
@@ -2154,29 +2199,42 @@ client.on('interactionCreate', async (interaction) => {
       const specialCodePreview = selectedWeekday === 'Ts' ? 'TSS' : `${selectedWeekday}S`;
 
       // สร้างปุ่มถามว่า เป็นเวรพิเศษ (ปฏิบัติหน้าที่ทุกวัน) ด้วยหรือไม่?
+      const specialEmbed = new EmbedBuilder()
+        .setTitle('⭐ [ขั้นตอนที่ 2/3] เลือกลักษณะการปฏิบัติหน้าที่')
+        .setColor('#9B59B6')
+        .setDescription(
+          `คุณได้เลือกวันเวรหลักเรียบร้อยแล้ว โปรดระบุว่าคุณเป็น **เวรพิเศษ** หรือไม่\n\n` +
+          `👤 **สารวัตร:** ${member?.first_name || ''} ${member?.last_name || ''} (**${member?.nickname || ''}**)\n` +
+          `📅 **เวรประจำวันหลัก:** **เวรวัน${weekdayName}** (\`${selectedWeekday}\`)\n\n` +
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+          `📌 **คำอธิบายความแตกต่าง:**\n` +
+          `• **เวรพิเศษ (มาทุกวัน):** ได้รับรหัส \`[${specialCodePreview}]\` ปฏิบัติหน้าที่อำนวยความสะดวกทุกวัน\n` +
+          `• **เวรเฉพาะวัน:** ปฏิบัติหน้าที่เฉพาะวัน${weekdayName} เท่านั้น ได้รับรหัส \`[${selectedWeekday}]\`\n\n` +
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+          `🔹 **สถานะขั้นตอน:** 🟩🟩⬜ (ขั้นตอนที่ 2 จาก 3)`
+        );
+
       const specialRow = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
           .setCustomId(`btn_special_shift_yes_${memberId}_${selectedWeekday}`)
-          .setLabel('⭐ เป็นเวรพิเศษด้วย (มาปฏิบัติหน้าที่ทุกวัน)')
+          .setLabel('⭐ ใช่ เป็นเวรพิเศษ (มาทุกวัน)')
           .setStyle(ButtonStyle.Primary),
         new ButtonBuilder()
           .setCustomId(`btn_special_shift_no_${memberId}_${selectedWeekday}`)
-          .setLabel('👤 ไม่เป็น (เฉพาะเวรประจำวันเท่านั้น)')
+          .setLabel('👤 ปฏิบัติหน้าที่เฉพาะวันเท่านั้น')
           .setStyle(ButtonStyle.Secondary)
       );
 
       const backRow = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
           .setCustomId(`btn_back_to_duty_${memberId}`)
-          .setLabel('↩️ เลือกวันเวรประจำสัปดาห์ใหม่')
+          .setLabel('↩️ ย้อนกลับไปเลือกวันเวรใหม่')
           .setStyle(ButtonStyle.Secondary)
       );
 
       await interaction.editReply({
-        content: `👤 **ชื่อ:** ${member?.first_name || ''} ${member?.last_name || ''} (${member?.nickname || ''})\n` +
-                 `📅 **เวรประจำวันของคุณ:** ${weekdayName} (${selectedWeekday})\n\n` +
-                 `⭐ **คุณต้องการลงทะเบียนเป็น "เวรพิเศษ" (ปฏิบัติหน้าที่ทุกวัน) ด้วยหรือไม่?**\n` +
-                 `*(หากเลือกเป็นเวรพิเศษ รหัสของคุณจะเป็น **${specialCodePreview}** เช่น \`[${specialCodePreview}1]\`)*`,
+        embeds: [specialEmbed],
+        content: null,
         components: [specialRow, backRow]
       });
       return;
@@ -2237,8 +2295,22 @@ client.on('interactionCreate', async (interaction) => {
 
       const shiftLabel = getShiftLabel(effectiveDutyDay);
 
+      const doneEmbed = new EmbedBuilder()
+        .setTitle('✅ [ขั้นตอนที่ 3/3] ส่งคำขอลงทะเบียนเรียบร้อยแล้ว')
+        .setColor('#2ECC71')
+        .setDescription(
+          `ระบบได้บันทึกและส่งข้อมูลคำขอของคุณไปยังห้องตรวจสอบของคณะผู้บริหารแล้ว\n\n` +
+          `👤 **ผู้ลงทะเบียน:** ${member.first_name} ${member.last_name} (**${member.nickname}**)\n` +
+          `📅 **รอบการปฏิบัติหน้าที่:** **${shiftLabel}**\n` +
+          `⏳ **สถานะ:** **รอการอนุมัติจากผู้บริหาร (PENDING APPROVAL)**\n\n` +
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+          `🔹 **สถานะขั้นตอน:** 🟩🟩🟩 (ส่งคำขอสำเร็จ)\n` +
+          `💡 *เมื่อผู้บริหารกดอนุมัติ ระบบจะมอบยศ Discord และส่งข้อความแจ้งเตือนทาง DM ทันที*`
+        );
+
       await interaction.editReply({
-        content: `ส่งคำขอแล้ว\nชื่อ: ${member.first_name} (${member.nickname})\nเวร: ${shiftLabel}\nสถานะ: รออนุมัติ`,
+        embeds: [doneEmbed],
+        content: null,
         components: []
       });
 
@@ -2256,26 +2328,29 @@ client.on('interactionCreate', async (interaction) => {
       if (approvalChannel) {
         const weekdayName = DAY_NAMES[weekday] || weekday;
         const approvalEmbed = new EmbedBuilder()
-          .setTitle('📋 คำขอลงทะเบียนสารวัตรใหม่')
+          .setTitle('📋 คำขอลงทะเบียนสารวัตรใหม่ [รอการตรวจสอบ]')
           .setDescription(
-            `ชื่อ: ${member.first_name} ${member.last_name} (${member.nickname})\n` +
-            `ชั้น: ม.${member.grade_class} #${member.student_no}\n` +
-            `เบอร์: ${member.phone_number}\n` +
-            `เวรประจำวัน: ${weekdayName} (${weekday})\n` +
-            `สถานะเวรพิเศษ: ${isSpecial ? `⭐ **เป็นเวรพิเศษ** (รหัสผลัด: \`${effectiveDutyDay}\`)` : '❌ ไม่ได้เป็นเวรพิเศษ'}\n` +
-            `ผลัดเวรสุทธิ: **${shiftLabel}**\n` +
-            `ดิส: <@${interaction.user.id}>`
+            `มีสารวัตรนักเรียนทำรายการลงทะเบียนเข้ามาใหม่ โปรดตรวจสอบและดำเนินการ\n\n` +
+            `👤 **ชื่อ-สกุล:** ${member.first_name} ${member.last_name} (**${member.nickname}**)\n` +
+            `🏫 **ชั้นเรียน:** ม.${member.grade_class} (เลขที่ ${member.student_no})\n` +
+            `📞 **เบอร์โทรศัพท์:** \`${member.phone_number || '-'}\`\n` +
+            `📅 **เวรประจำวัน:** วัน${weekdayName} (\`${weekday}\`)\n` +
+            `⭐ **ลักษณะเวร:** ${isSpecial ? `⭐ **เวรพิเศษ (ทุกวัน)** [ผลัด \`${effectiveDutyDay}\`]` : `👤 เวรเฉพาะวัน [ผลัด \`${effectiveDutyDay}\`]`}\n` +
+            `🏷️ **ผลัดเวรสุทธิ:** **${shiftLabel}**\n` +
+            `💬 **บัญชี Discord:** <@${interaction.user.id}> (\`${interaction.user.tag}\`)`
           )
-          .setColor(isSpecial ? '#9B59B6' : '#F39C12');
+          .setColor(isSpecial ? '#9B59B6' : '#F39C12')
+          .setFooter({ text: 'ระบบลงทะเบียนสารวัตร • โรงเรียนพระนารายณ์' })
+          .setTimestamp();
 
         const actionRow = new ActionRowBuilder().addComponents(
           new ButtonBuilder()
             .setCustomId(`btn_approve_member_${member.id}`)
-            .setLabel('✅ อนุมัติ')
+            .setLabel('✅ อนุมัติการลงทะเบียน')
             .setStyle(ButtonStyle.Success),
           new ButtonBuilder()
             .setCustomId(`btn_reject_member_${member.id}`)
-            .setLabel('❌ ปฏิเสธ')
+            .setLabel('❌ ปฏิเสธคำขอ')
             .setStyle(ButtonStyle.Danger)
         );
 
@@ -2415,14 +2490,18 @@ client.on('interactionCreate', async (interaction) => {
 
               const shiftLabel = getShiftLabel(member.duty_day);
               const dmEmbed = new EmbedBuilder()
-                .setTitle('อนุมัติเป็นสารวัตรแล้ว')
+                .setTitle('🎉 ยินดีด้วย! คำขอลงทะเบียนได้รับการอนุมัติแล้ว')
+                .setColor('#2ECC71')
                 .setDescription(
-                  `ชื่อ: ${member.first_name} (${member.nickname})\n` +
-                  `รหัส: [${dutyId}]\n` +
-                  `เวร: ${shiftLabel}\n\n` +
-                  `ส่งรูปทำบัตรที่ห้อง: <#${PHOTO_CHANNEL_ID || '1567570866663989389'}>`
+                  `คุณได้รับการอนุมัติเป็นสารวัตรนักเรียนโรงเรียนพระนารายณ์เรียบร้อยแล้ว\n\n` +
+                  `🆔 **รหัสประจำตัว:** \`[${dutyId}]\`\n` +
+                  `👤 **ชื่อเล่น:** คุณ**${member.nickname}** (${member.first_name})\n` +
+                  `📅 **รอบการปฏิบัติหน้าที่:** **${shiftLabel}**\n\n` +
+                  `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                  `📸 **ขั้นตอนถัดไป:**\n` +
+                  `โปรดเข้าไปที่ห้อง <#${PHOTO_CHANNEL_ID || '1567570866663989389'}> เพื่อส่งรูปถ่ายหน้าตรงของคุณสำหรับจัดทำบัตรประจำตัวสารวัตรดิจิทัล 3D`
                 )
-                .setColor('#2ECC71');
+                .setFooter({ text: 'คณะกรรมการสารวัตรนักเรียน โรงเรียนพระนารายณ์' });
 
               await guildMember.send({ embeds: [dmEmbed] }).catch(() => {});
             }
@@ -2432,8 +2511,25 @@ client.on('interactionCreate', async (interaction) => {
         }
 
         const shiftLabel = getShiftLabel(member.duty_day);
+        const approvedEmbed = new EmbedBuilder()
+          .setTitle('✅ อนุมัติสารวัตรนักเรียนเรียบร้อยแล้ว')
+          .setColor('#2ECC71')
+          .setDescription(
+            `สารวัตรนักเรียนได้รับการตรวจสอบและอนุมัติเข้าสู่ระบบอย่างเป็นทางการ\n\n` +
+            `🆔 **รหัสประจำตัว:** \`[${dutyId}]\`\n` +
+            `👤 **ชื่อ-สกุล:** ${member.first_name} ${member.last_name} (**${member.nickname}**)\n` +
+            `📅 **ผลัดเวร:** **${shiftLabel}**\n` +
+            `💬 **ผู้ใช้งาน:** <@${member.discord_id}>\n\n` +
+            `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+            `👮 **ผู้อนุมัติ:** <@${interaction.user.id}>\n` +
+            `⏰ **เวลาอนุมัติ:** <t:${Math.floor(Date.now() / 1000)}:F>${roleErrorNote}`
+          )
+          .setFooter({ text: 'บันทึกการอนุมัติเสร็จสมบูรณ์ • โรงเรียนพระนารายณ์' })
+          .setTimestamp();
+
         await interaction.editReply({
-          content: `อนุมัติแล้ว\nชื่อ: [${dutyId}] ${member.nickname} (${member.first_name})\nเวร: ${shiftLabel}\nโดย: <@${interaction.user.id}>${roleErrorNote}`,
+          embeds: [approvedEmbed],
+          content: null,
           components: []
         });
       }
@@ -2448,15 +2544,37 @@ client.on('interactionCreate', async (interaction) => {
           try {
             const guildMember = await interaction.guild.members.fetch(member.discord_id).catch(() => null);
             if (guildMember && typeof guildMember.send === 'function') {
-              await guildMember.send({
-                content: `ผลการพิจารณา: คำขอไม่ได้รับการอนุมัติ`
-              }).catch(() => {});
+              const dmRejectEmbed = new EmbedBuilder()
+                .setTitle('⚠️ ผลการพิจารณาการลงทะเบียนสารวัตร')
+                .setColor('#E74C3C')
+                .setDescription(
+                  `สวัสดีครับคุณ **${member.nickname || member.first_name}**\n\n` +
+                  `คำขอลงทะเบียนสารวัตรนักเรียนของคุณ **ไม่ผ่านการอนุมัติ** ในครั้งนี้\n` +
+                  `หากต้องการสอบถามเพิ่มเติมหรือลงทะเบียนใหม่ โปรดติดต่อคณะผู้บริหาร หรือลงทะเบียนใหม่อีกครั้งที่ห้อง <#${VERIFY_CHANNEL_ID || '1567570864835264542'}>`
+                )
+                .setFooter({ text: 'คณะกรรมการสารวัตรนักเรียน โรงเรียนพระนารายณ์' });
+              await guildMember.send({ embeds: [dmRejectEmbed] }).catch(() => {});
             }
           } catch (e) {}
         }
 
+        const rejectedEmbed = new EmbedBuilder()
+          .setTitle('❌ ปฏิเสธคำขอลงทะเบียนสารวัตร')
+          .setColor('#95A5A6')
+          .setDescription(
+            `คำขอลงทะเบียนนี้ถูกปฏิเสธโดยผู้บริหาร\n\n` +
+            `👤 **ผู้ขอลงทะเบียน:** ${member.first_name} ${member.last_name} (**${member.nickname}**)\n` +
+            `💬 **ผู้ใช้งาน:** <@${member.discord_id || 'ไม่ระบุ'}>\n\n` +
+            `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+            `👮 **ผู้ปฏิเสธ:** <@${interaction.user.id}>\n` +
+            `⏰ **เวลาที่ทำรายการ:** <t:${Math.floor(Date.now() / 1000)}:F>`
+          )
+          .setFooter({ text: 'คำขอถูกระงับ/ยกเลิก • โรงเรียนพระนารายณ์' })
+          .setTimestamp();
+
         await interaction.editReply({
-          content: `ปฏิเสธคำขอแล้ว\nชื่อ: ${member.nickname} (${member.first_name} ${member.last_name})\nโดย: <@${interaction.user.id}>`,
+          embeds: [rejectedEmbed],
+          content: null,
           components: []
         });
       }
@@ -2836,35 +2954,6 @@ client.on('interactionCreate', async (interaction) => {
                  `📨 ส่งข้อความแจ้งเตือนหาหัวหน้าเวรและรองหัวหน้าเวรแล้ว (${dmSentCount} ท่าน)`
       });
       return;
-    }
-
-      const dmEmbed = new EmbedBuilder()
-        .setTitle('🔔 [แจ้งเตือนการลาเวร] มีสมาชิกขอลาเวร')
-        .setColor('#E74C3C')
-        .setDescription(`สารวัตร **[${member.duty_id}] ${member.nickname} (${member.first_name} ${member.last_name})** ได้แจ้งขอลาเวร`)
-        .addFields(
-          { name: '📅 วันที่ขอลา', value: `${leaveDate} (${shiftPeriod})`, inline: true },
-          { name: '🏷️ ประเภทการลา', value: leaveType, inline: true },
-          { name: '📝 เหตุผล', value: reason, inline: false },
-          { name: '🔄 ผู้เข้าเวรแทน', value: substitute, inline: true },
-          { name: '📞 เบอร์โทรผู้ลา', value: member.phone_number, inline: true }
-        )
-        .setFooter({ text: `เวร${DAY_NAMES[member.duty_day] || member.duty_day} • โรงเรียนพระนารายณ์` });
-
-      let dmSentCount = 0;
-      if (heads && heads.length > 0) {
-        for (const head of heads) {
-          try {
-            const user = await client.users.fetch(head.discord_id);
-            await user.send({ embeds: [dmEmbed] });
-            dmSentCount++;
-          } catch (e) {}
-        }
-      }
-
-      await interaction.editReply({
-        content: `ส่งคำขอลาแล้ว\nชื่อ: [${member.duty_id}] ${member.nickname} ${member.first_name}\nวันที่ลา: ${leaveDate} (${shiftPeriod})\nแจ้งเตือนหัวหน้า: ${dmSentCount} ท่าน`
-      });
     }
 
     // -------------------------------------------------------------
@@ -4559,24 +4648,42 @@ client.on('interactionCreate', async (interaction) => {
 async function showDutySelection(interaction, memberId, nickname, fullName) {
   const daySelectMenu = new StringSelectMenuBuilder()
     .setCustomId(`select_duty_day_${memberId}`)
-    .setPlaceholder('เลือกวันเวรประจำสัปดาห์ (จันทร์ - ศุกร์)')
+    .setPlaceholder('📅 เลือกวันเวรหลักของคุณ (จันทร์ - ศุกร์)')
     .addOptions([
-      { label: 'วันจันทร์ (M)', value: 'M', description: 'เวรประจำวันจันทร์', emoji: '🔵' },
-      { label: 'วันอังคาร (T)', value: 'T', description: 'เวรประจำวันอังคาร', emoji: '🟣' },
-      { label: 'วันพุธ (W)', value: 'W', description: 'เวรประจำวันพุธ', emoji: '🟢' },
-      { label: 'วันพฤหัสบดี (Ts)', value: 'Ts', description: 'เวรประจำวันพฤหัสบดี', emoji: '🟠' },
-      { label: 'วันศุกร์ (F)', value: 'F', description: 'เวรประจำวันศุกร์', emoji: '🔴' }
+      { label: 'วันจันทร์ (Monday - M)', value: 'M', description: 'ปฏิบัติหน้าที่เวรประจำวันจันทร์', emoji: '🔵' },
+      { label: 'วันอังคาร (Tuesday - T)', value: 'T', description: 'ปฏิบัติหน้าที่เวรประจำวันอังคาร', emoji: '🟣' },
+      { label: 'วันพุธ (Wednesday - W)', value: 'W', description: 'ปฏิบัติหน้าที่เวรประจำวันพุธ', emoji: '🟢' },
+      { label: 'วันพฤหัสบดี (Thursday - Ts)', value: 'Ts', description: 'ปฏิบัติหน้าที่เวรประจำวันพฤหัสบดี', emoji: '🟠' },
+      { label: 'วันศุกร์ (Friday - F)', value: 'F', description: 'ปฏิบัติหน้าที่เวรประจำวันศุกร์', emoji: '🔴' }
     ]);
 
   const row = new ActionRowBuilder().addComponents(daySelectMenu);
-  const text = `ชื่อ: ${fullName} (${nickname})\nเลือกวันเวรประจำสัปดาห์ (จันทร์ - ศุกร์):`;
+  const cancelRow = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId('btn_start_verify')
+      .setLabel('↩️ ย้อนกลับไปเลือกชื่อใหม่')
+      .setStyle(ButtonStyle.Secondary)
+  );
+
+  const embed = new EmbedBuilder()
+    .setTitle('📅 [ขั้นตอนที่ 2/3] เลือกรอบเวรปฏิบัติหน้าที่')
+    .setColor('#F39C12')
+    .setDescription(
+      `👤 **สารวัตร:** ${fullName} (**${nickname}**)\n\n` +
+      `โปรดเลือกวันเวรหลักประจำสัปดาห์ของคุณจากเมนูด้านล่าง:\n` +
+      `*(สามารถเลือกเป็นเวรพิเศษปฏิบัติหน้าที่ทุกวันได้ในขั้นตอนถัดไป)*\n\n` +
+      `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+      `🔹 **สถานะขั้นตอน:** 🟩🟩⬜ (ขั้นตอนที่ 2 จาก 3)`
+    );
+
+  const payload = { embeds: [embed], components: [row, cancelRow], content: null };
 
   if (interaction.isModalSubmit()) {
-    await interaction.reply({ content: text, components: [row], ephemeral: true });
+    await interaction.reply({ ...payload, ephemeral: true });
   } else if (interaction.deferred || interaction.replied) {
-    await interaction.editReply({ content: text, components: [row] });
+    await interaction.editReply(payload);
   } else {
-    await interaction.update({ content: text, components: [row] });
+    await interaction.update(payload);
   }
 }
 
