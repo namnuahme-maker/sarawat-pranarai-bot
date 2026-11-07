@@ -214,7 +214,14 @@ client.once(Events.ClientReady || 'ready', async () => {
           .setStyle(ButtonStyle.Primary)
       );
 
-      await chVerify.send({ embeds: [embed], components: [row] });
+      const verifyFiles = [];
+      const verifyBanner = path.join(__dirname, 'assets', 'panel_input_data.jpg');
+      if (fs.existsSync(verifyBanner)) {
+        verifyFiles.push(new AttachmentBuilder(verifyBanner, { name: 'panel_input_data.jpg' }));
+        embed.setImage('attachment://panel_input_data.jpg');
+      }
+
+      await chVerify.send({ embeds: [embed], components: [row], files: verifyFiles });
     }
 
     const webUrl = process.env.WEB_URL || process.env.RENDER_WEB_URL || 'https://sarawat-pranarai-web.onrender.com';
@@ -232,6 +239,13 @@ client.once(Events.ClientReady || 'ready', async () => {
         .setColor('#1ABC9C')
         .setFooter({ text: 'SARAWAT-BOT • ระบบบริการสารวัตรนักเรียน' });
 
+      const serviceFiles = [];
+      const serviceBanner = path.join(__dirname, 'assets', 'panel_all_in_one.jpg');
+      if (fs.existsSync(serviceBanner)) {
+        serviceFiles.push(new AttachmentBuilder(serviceBanner, { name: 'panel_all_in_one.jpg' }));
+        embed.setImage('attachment://panel_all_in_one.jpg');
+      }
+
       const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
           .setCustomId('btn_request_leave')
@@ -247,7 +261,7 @@ client.once(Events.ClientReady || 'ready', async () => {
           .setURL(webUrl)
       );
 
-      await chServiceDesk.send({ embeds: [embed], components: [row] });
+      await chServiceDesk.send({ embeds: [embed], components: [row], files: serviceFiles });
     }
 
     const allInOneMessages = await chAllInOne.messages.fetch({ limit: 5 });
@@ -257,6 +271,13 @@ client.once(Events.ClientReady || 'ready', async () => {
         .setDescription('สิทธิ์: ประธาน | รองประธาน | หัวหน้าเวร | รองหัวหน้าเวร\n\nเลือกทำรายการ:')
         .setColor('#F1C40F')
         .setFooter({ text: 'SARAWAT-BOT • All in One' });
+
+      const aioFiles = [];
+      const aioBanner = path.join(__dirname, 'assets', 'panel_all_in_one.jpg');
+      if (fs.existsSync(aioBanner)) {
+        aioFiles.push(new AttachmentBuilder(aioBanner, { name: 'panel_all_in_one.jpg' }));
+        embed.setImage('attachment://panel_all_in_one.jpg');
+      }
 
       const row1 = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
@@ -288,7 +309,7 @@ client.once(Events.ClientReady || 'ready', async () => {
           .setStyle(ButtonStyle.Primary)
       );
 
-      await chAllInOne.send({ embeds: [embed], components: [row1, row2] });
+      await chAllInOne.send({ embeds: [embed], components: [row1, row2], files: aioFiles });
     }
 
     const photoMessages = await chPhoto.messages.fetch({ limit: 5 });
@@ -302,6 +323,13 @@ client.once(Events.ClientReady || 'ready', async () => {
         )
         .setColor('#3498DB');
 
+      const photoFiles = [];
+      const photoBanner = path.join(__dirname, 'assets', 'panel_send_photo.jpg');
+      if (fs.existsSync(photoBanner)) {
+        photoFiles.push(new AttachmentBuilder(photoBanner, { name: 'panel_send_photo.jpg' }));
+        embed.setImage('attachment://panel_send_photo.jpg');
+      }
+
       const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
           .setCustomId('btn_check_my_photo')
@@ -309,7 +337,7 @@ client.once(Events.ClientReady || 'ready', async () => {
           .setStyle(ButtonStyle.Primary)
       );
 
-      await chPhoto.send({ embeds: [embed], components: [row] });
+      await chPhoto.send({ embeds: [embed], components: [row], files: photoFiles });
     }
 
     console.log(`[SETUP] Interactive buttons deployed (#ยืนยันตัวตน, #อัปโหลดรูปโปรไฟล์, #ขอใบตารางเช็คชื่อ, #ขอลาเวร, #ตรวจสอบข้อมูลสมาชิก)`);
