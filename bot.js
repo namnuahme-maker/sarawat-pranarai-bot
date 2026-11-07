@@ -162,6 +162,15 @@ function getBaseUrl() {
   return `http://localhost:${PORT}`;
 }
 
+function getWebDashboardUrl() {
+  if (process.env.WEB_URL) return process.env.WEB_URL.replace(/\/$/, '');
+  if (process.env.RENDER_WEB_URL) return process.env.RENDER_WEB_URL.replace(/\/$/, '');
+  if (process.env.NODE_ENV === 'production') {
+    return 'https://sarawat-pranarai-dashboard.onrender.com';
+  }
+  return 'http://localhost:10001';
+}
+
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
 
 const client = new Client({
@@ -413,7 +422,9 @@ async function sendAttendancePanel(channel) {
       '📝 **2. การแจ้งลาเวรปฏิบัติหน้าที่**\n' +
       'แจ้งขอลาเวรด่วน พร้อมระบุผู้ปฏิบัติหน้าที่แทน ระบบจะส่งข้อความแจ้งเตือนหาหัวหน้าเวรทันที\n\n' +
       '🚨 **3. การขออนุมัติออกปฏิบัติหน้าที่**\n' +
-      'ยื่นขออนุมัติตรวจพื้นที่เป้าหมาย / เข้าระงับเหตุด่วน เพื่อเปิดเคสส่งคณะผู้บริหาร\n' +
+      'ยื่นขออนุมัติตรวจพื้นที่เป้าหมาย / เข้าระงับเหตุด่วน เพื่อเปิดเคสส่งคณะผู้บริหาร\n\n' +
+      '🌐 **4. ระบบสารสนเทศและแดชบอร์ด**\n' +
+      'เข้าสู่ระบบเว็บศูนย์บัญชาการสารวัตรนักเรียน เพื่อดูสถิติ, คดี, และทำเนียบสารวัตร\n' +
       '━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
     )
     .setColor('#1ABC9C')
@@ -431,7 +442,11 @@ async function sendAttendancePanel(channel) {
     new ButtonBuilder()
       .setCustomId('btn_request_inspection')
       .setLabel('🚨 ขอออกปฏิบัติหน้าที่')
-      .setStyle(ButtonStyle.Primary)
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setLabel('🌐 เข้าสู่เว็บไซต์ระบบ')
+      .setStyle(ButtonStyle.Link)
+      .setURL(getWebDashboardUrl())
   );
 
   return await channel.send({ embeds: [embed], components: [row] });
@@ -448,7 +463,9 @@ async function sendAppointPanel(channel) {
       'แต่งตั้งตำแหน่ง **ประธาน**, **รองประธาน**, **หัวหน้าเวร** หรือ **รองหัวหน้าเวร**\n' +
       'ระบบจะอัปเดตบทบาทในฐานข้อมูล และแจก/ปรับยศใน Discord ให้อัตโนมัติทันที\n\n' +
       '👥 **ตรวจสอบทำเนียบสารวัตร**\n' +
-      'ดูรายชื่อสารวัตรทั้งหมดที่ปฏิบัติหน้าที่อยู่ในปัจจุบัน แยกตามผลัดเวร\n' +
+      'ดูรายชื่อสารวัตรทั้งหมดที่ปฏิบัติหน้าที่อยู่ในปัจจุบัน แยกตามผลัดเวร\n\n' +
+      '🌐 **ศูนย์บัญชาการสารวัตรนักเรียน (Web Command)**\n' +
+      'เปิดหน้าเว็บแดชบอร์ดสำหรับผู้บริหาร เพื่อจัดการข้อมูลและตรวจสอบสถิติเชิงลึก\n' +
       '━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
     )
     .setColor('#F1C40F')
@@ -466,7 +483,11 @@ async function sendAppointPanel(channel) {
     new ButtonBuilder()
       .setCustomId('btn_set_semester')
       .setLabel('🎓 กำหนดภาคเรียน')
-      .setStyle(ButtonStyle.Primary)
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setLabel('🌐 เข้าสู่ระบบแดชบอร์ด (Web)')
+      .setStyle(ButtonStyle.Link)
+      .setURL(getWebDashboardUrl())
   );
 
   return await channel.send({ embeds: [embed], components: [row] });
@@ -5892,5 +5913,6 @@ module.exports = {
   cleanFullName,
   pendingPhotoUploads,
   processBackgroundRemoval,
-  getUploadDir
+  getUploadDir,
+  getWebDashboardUrl
 };

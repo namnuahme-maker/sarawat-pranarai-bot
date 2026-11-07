@@ -216,6 +216,8 @@ client.once(Events.ClientReady || 'ready', async () => {
       await chVerify.send({ embeds: [embed], components: [row] });
     }
 
+    const webUrl = process.env.WEB_URL || process.env.RENDER_WEB_URL || 'https://sarawat-pranarai-dashboard.onrender.com';
+
     const serviceMessages = await chServiceDesk.messages.fetch({ limit: 5 });
     if (serviceMessages.size === 0) {
       const embed = new EmbedBuilder()
@@ -223,7 +225,8 @@ client.once(Events.ClientReady || 'ready', async () => {
         .setDescription(
           'กดเลือกรายการที่ต้องการทำรายการ:\n\n' +
           '• **ขอลาเวร:** บอทส่ง DM แจ้งหัวหน้าเวรทันที\n' +
-          '• **ขอใบเช็คชื่อ A4:** รับแบบฟอร์มลงเวลา 12 สัปดาห์พร้อมพิมพ์'
+          '• **ขอใบเช็คชื่อ A4:** รับแบบฟอร์มลงเวลา 12 สัปดาห์พร้อมพิมพ์\n' +
+          '• **เข้าสู่ระบบเว็บไซต์:** เปิดแดชบอร์ดศูนย์บัญชาการสารวัตรนักเรียน'
         )
         .setColor('#1ABC9C')
         .setFooter({ text: 'SARAWAT-BOT • ระบบบริการสารวัตรนักเรียน' });
@@ -236,7 +239,11 @@ client.once(Events.ClientReady || 'ready', async () => {
         new ButtonBuilder()
           .setCustomId('btn_request_attendance')
           .setLabel('📄 ขอใบเช็คชื่อ')
-          .setStyle(ButtonStyle.Success)
+          .setStyle(ButtonStyle.Success),
+        new ButtonBuilder()
+          .setLabel('🌐 เข้าสู่เว็บไซต์ระบบ')
+          .setStyle(ButtonStyle.Link)
+          .setURL(webUrl)
       );
 
       await chServiceDesk.send({ embeds: [embed], components: [row] });
@@ -258,7 +265,11 @@ client.once(Events.ClientReady || 'ready', async () => {
         new ButtonBuilder()
           .setCustomId('btn_open_remove_member_menu')
           .setLabel('🗑️ ลบข้อมูล (ออกจากสารวัตร)')
-          .setStyle(ButtonStyle.Danger)
+          .setStyle(ButtonStyle.Danger),
+        new ButtonBuilder()
+          .setLabel('🌐 เข้าสู่ระบบแดชบอร์ด (Web)')
+          .setStyle(ButtonStyle.Link)
+          .setURL(webUrl)
       );
 
       const row2 = new ActionRowBuilder().addComponents(
