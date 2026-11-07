@@ -119,10 +119,6 @@ client.once(Events.ClientReady || 'ready', async () => {
       { id: everyoneRole.id, deny: [PermissionsBitField.Flags.ViewChannel] },
       { id: verifiedRole.id, allow: [PermissionsBitField.Flags.ViewChannel], deny: [PermissionsBitField.Flags.SendMessages] }
     ]);
-    await getOrCreateTextChannel(guild, '💬│พูดคุยหลัก', catHQ.id, [
-      { id: everyoneRole.id, deny: [PermissionsBitField.Flags.ViewChannel] },
-      { id: verifiedRole.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages] }
-    ]);
 
     // Category 3
     const catIncidents = await getOrCreateCategory(guild, '🚨 ศูนย์รับเรื่องและคดี');
@@ -137,6 +133,10 @@ client.once(Events.ClientReady || 'ready', async () => {
 
     // Category 4
     const catDuty = await getOrCreateCategory(guild, '📅 ปฏิบัติการประจำเวร');
+    await getOrCreateTextChannel(guild, '💬│แค่พูดคุย', catDuty.id, [
+      { id: everyoneRole.id, deny: [PermissionsBitField.Flags.ViewChannel] },
+      { id: verifiedRole.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages] }
+    ]);
     const chServiceDesk = await getOrCreateTextChannel(guild, '📑│บริการ', catDuty.id, [
       { id: everyoneRole.id, deny: [PermissionsBitField.Flags.ViewChannel] },
       { id: verifiedRole.id, allow: [PermissionsBitField.Flags.ViewChannel] }

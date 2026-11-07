@@ -962,7 +962,10 @@ async function executeDDay(guild, executorUser) {
       }
       const chApproval = findChannel(guild, process.env.APPROVAL_CHANNEL_ID) || guild.channels.cache.find(c => c.name.includes('อนุมัติสมาชิก'));
       const chAllInOne = findChannel(guild, '👑│ผู้นำ-all-in-one') || findChannel(guild, '👑│ห้องประชุมหัวหน้า');
-      const chAnnounce = findChannel(guild, '📢│ประกาศและมอบหมายงาน') || findChannel(guild, '💬│พูดคุยหลัก');
+      const chAnnounce = findChannel(guild, '📢│ประกาศและมอบหมายงาน') ||
+        findChannel(guild, '💬│แค่พูดคุย') ||
+        findChannel(guild, 'แค่พูดคุย') ||
+        findChannel(guild, '💬│พูดคุยหลัก');
 
       if (chVerify) {
         await purgeChannelMessages(chVerify);
