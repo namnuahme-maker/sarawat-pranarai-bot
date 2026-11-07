@@ -166,7 +166,7 @@ function getWebDashboardUrl() {
   if (process.env.WEB_URL) return process.env.WEB_URL.replace(/\/$/, '');
   if (process.env.RENDER_WEB_URL) return process.env.RENDER_WEB_URL.replace(/\/$/, '');
   if (process.env.NODE_ENV === 'production') {
-    return 'https://sarawat-pranarai-dashboard.onrender.com';
+    return 'https://sarawat-pranarai-web.onrender.com';
   }
   return 'http://localhost:10001';
 }
@@ -367,6 +367,13 @@ async function sendVerifyPanel(channel) {
     .setColor('#3498DB')
     .setFooter({ text: 'ฝ่ายบริหารงานสารวัตรนักเรียน • โรงเรียนพระนารายณ์' });
 
+  const files = [];
+  const bannerPath = path.join(__dirname, 'assets', 'panel_input_data.jpg');
+  if (fs.existsSync(bannerPath)) {
+    files.push(new AttachmentBuilder(bannerPath, { name: 'panel_input_data.jpg' }));
+    embed.setImage('attachment://panel_input_data.jpg');
+  }
+
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId('btn_start_verify')
@@ -374,7 +381,7 @@ async function sendVerifyPanel(channel) {
       .setStyle(ButtonStyle.Primary)
   );
 
-  return await channel.send({ embeds: [embed], components: [row] });
+  return await channel.send({ embeds: [embed], components: [row], files });
 }
 
 async function sendPhotoPanel(channel) {
@@ -394,6 +401,13 @@ async function sendPhotoPanel(channel) {
     .setColor('#9B59B6')
     .setFooter({ text: 'กลุ่มงานสารวัตรนักเรียน • โรงเรียนพระนารายณ์' });
 
+  const files = [];
+  const bannerPath = path.join(__dirname, 'assets', 'panel_send_photo.jpg');
+  if (fs.existsSync(bannerPath)) {
+    files.push(new AttachmentBuilder(bannerPath, { name: 'panel_send_photo.jpg' }));
+    embed.setImage('attachment://panel_send_photo.jpg');
+  }
+
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId('btn_check_my_photo')
@@ -401,7 +415,7 @@ async function sendPhotoPanel(channel) {
       .setStyle(ButtonStyle.Primary)
   );
 
-  return await channel.send({ embeds: [embed], components: [row] });
+  return await channel.send({ embeds: [embed], components: [row], files });
 }
 
 async function sendAttendancePanel(channel) {
@@ -430,6 +444,13 @@ async function sendAttendancePanel(channel) {
     .setColor('#1ABC9C')
     .setFooter({ text: 'กลุ่มงานสารวัตรนักเรียน • โรงเรียนพระนารายณ์' });
 
+  const files = [];
+  const bannerPath = path.join(__dirname, 'assets', 'panel_all_in_one.jpg');
+  if (fs.existsSync(bannerPath)) {
+    files.push(new AttachmentBuilder(bannerPath, { name: 'panel_all_in_one.jpg' }));
+    embed.setImage('attachment://panel_all_in_one.jpg');
+  }
+
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId('btn_request_attendance')
@@ -449,7 +470,7 @@ async function sendAttendancePanel(channel) {
       .setURL(getWebDashboardUrl())
   );
 
-  return await channel.send({ embeds: [embed], components: [row] });
+  return await channel.send({ embeds: [embed], components: [row], files });
 }
 
 async function sendAppointPanel(channel) {
@@ -471,6 +492,13 @@ async function sendAppointPanel(channel) {
     .setColor('#F1C40F')
     .setFooter({ text: 'SARAWAT-BOT • ระบบบริหารงานสารวัตรนักเรียน' });
 
+  const files = [];
+  const bannerPath = path.join(__dirname, 'assets', 'panel_all_in_one.jpg');
+  if (fs.existsSync(bannerPath)) {
+    files.push(new AttachmentBuilder(bannerPath, { name: 'panel_all_in_one.jpg' }));
+    embed.setImage('attachment://panel_all_in_one.jpg');
+  }
+
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId('btn_open_appoint_menu')
@@ -490,7 +518,7 @@ async function sendAppointPanel(channel) {
       .setURL(getWebDashboardUrl())
   );
 
-  return await channel.send({ embeds: [embed], components: [row] });
+  return await channel.send({ embeds: [embed], components: [row], files });
 }
 
 async function purgeChannelMessages(channel, limit = 100) {
