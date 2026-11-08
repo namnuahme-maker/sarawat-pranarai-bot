@@ -290,16 +290,16 @@ describe('SARAWAT-BOT New Shift & Combined Duty ID Verification', () => {
     assert.equal(delta.obsoleteDayRoles.includes('role_special'), false); // Special role kept
   });
 
-  test('Slash Commands list must contain all 12 commands and valid Discord naming conventions', () => {
+  test('Slash Commands list must contain all 13 commands and valid Discord naming conventions', () => {
     const { slashCommands } = require('../bot.js');
     assert.equal(Array.isArray(slashCommands), true);
-    assert.equal(slashCommands.length, 12);
+    assert.equal(slashCommands.length, 13);
 
     const commandNames = slashCommands.map(c => c.name);
     const expected = [
       'status', 'my-card', 'sync-roles', 'semester',
       'setup-verify', 'setup-leave', 'setup-attendance',
-      'setup-photo', 'setup-appoint', 'setup-lost-found', 'setup-all', 'd-day'
+      'setup-photo', 'setup-appoint', 'setup-lost-found', 'setup-all', 'd-day', 'killfile'
     ];
 
     for (const exp of expected) {
@@ -314,6 +314,15 @@ describe('SARAWAT-BOT New Shift & Combined Duty ID Verification', () => {
       assert.equal(json.name, json.name.toLowerCase(), `Command ${json.name} must be lowercase`);
       assert.ok(json.description && json.description.length > 0, `Command ${json.name} must have description`);
     }
+  });
+
+  test('KillFile function and slash command are properly configured', () => {
+    const { executeKillFile, slashCommands } = require('../bot.js');
+    assert.equal(typeof executeKillFile, 'function');
+    const killCmd = slashCommands.find(c => c.name === 'killfile');
+    assert.ok(killCmd);
+    assert.equal(killCmd.name, 'killfile');
+    assert.ok(killCmd.description.includes('ระบบของหาย'));
   });
 
   test('D-Day confirmation gate requires exact CONFIRM D-DAY passphrase', () => {

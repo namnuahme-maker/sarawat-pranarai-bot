@@ -355,7 +355,10 @@ const slashCommands = [
     .setDescription('📦 ติดตั้งจุดรับแจ้งสิ่งของที่พบเจอ (Lost & Found Hub) (Admin)'),
   new SlashCommandBuilder()
     .setName('d-day')
-    .setDescription('🚨 ปฏิบัติการ D-DAY: ล้างข้อมูลสารวัตรทุกนาย และเริ่มใหม่แต่ 0 ทุกช่องแชท (Admin Only)')
+    .setDescription('🚨 ปฏิบัติการ D-DAY: ล้างข้อมูลสารวัตรทุกนาย และเริ่มใหม่แต่ 0 ทุกช่องแชท (Admin Only)'),
+  new SlashCommandBuilder()
+    .setName('killfile')
+    .setDescription('🗑️ ลบข้อมูลสิ่งของที่มีอยู่ในระบบของหายทั้งหมด เริ่มใหม่แต่ 0 (Admin Only)')
 ];
 
 // 📦 ที่เก็บสถานะชั่วคราวสำหรับการแจ้งพบของหายผ่านรูปภาพใน Discord
@@ -1181,6 +1184,89 @@ async function executeDDay(guild, executorUser) {
   return result;
 }
 
+/**
+ * 🗑️ ลบข้อมูลสิ่งของและคำร้องที่มีอยู่ในระบบของหายทั้งหมด เริ่มใหม่แต่ 0 (/killfile)
+ */
+async function executeKillFile(guild, executorUser) {
+  const result = {
+    deletedItems: 0,
+    deletedClaims: 0,
+    resetChannels: 0
+  };
+
+  // 1. ลบข้อมูลจาก Supabase PostgreSQL Database
+  try {
+    const { count: cItems } = await supabase.from('lost_items').select('*', { count: 'exact', head: true });
+    result.deletedItems = cItems || 0;
+    await supabase.from('lost_items').delete().gte('created_at', '1970-01-01');
+
+    const { count: cClaims } = await supabase.from('lost_claims').select('*', { count: 'exact', head: true });
+    result.deletedClaims = cClaims || 0;
+    await supabase.from('lost_claims').delete().gte('created_at', '1970-01-01');
+  } catch (err) {
+    console.error('[KILLFILE] Supabase wipe error:', err.message);
+  }
+
+  // 2. ล้างข้อมูลใน Local Cache (web/lost_items_cache.json)
+  try {
+    const possibleCachePaths = [
+      path.join(__dirname, '..', 'web', 'lost_items_cache.json'),
+      path.join(__dirname, 'lost_items_cache.json'),
+      path.join(process.cwd(), 'web', 'lost_items_cache.json'),
+      path.join(process.cwd(), 'lost_items_cache.json')
+    ];
+    for (const targetPath of possibleCachePaths) {
+      if (fs.existsSync(targetPath)) {
+        let cacheData = {};
+        try { cacheData = JSON.parse(fs.readFileSync(targetPath, 'utf8')); } catch (e) {}
+        const cItemsCount = (cacheData.items || []).length;
+        const cClaimsCount = (cacheData.claims || []).length;
+        result.deletedItems = Math.max(result.deletedItems, cItemsCount);
+        result.deletedClaims = Math.max(result.deletedClaims, cClaimsCount);
+        cacheData.items = [];
+        cacheData.claims = [];
+        fs.writeFileSync(targetPath, JSON.stringify(cacheData, null, 2), 'utf8');
+      }
+    }
+  } catch (err) {
+    console.error('[KILLFILE] Cache wipe error:', err.message);
+  }
+
+  // 3. แจ้ง Web Backend API ให้เคลียร์แคชและรูปสำรอง
+  try {
+    const webUrls = ['http://localhost:10001', 'https://sarawat-pranarai-web.onrender.com'];
+    for (const u of webUrls) {
+      try {
+        await fetch(`${u}/api/lost-found/killfile`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ triggered_by: executorUser?.tag || 'Admin' })
+        });
+      } catch (e) {}
+    }
+  } catch (e) {}
+
+  // 4. ล้างข้อความเก่าและติดตั้งแผงคู่มือใหม่ในห้อง 📦│แจ้งพบของหาย
+  if (guild) {
+    try {
+      const chLostFound = findChannel(guild, '📦│แจ้งพบของหาย') ||
+        findChannel(guild, 'แจ้งพบของหาย') ||
+        guild.channels.cache.find(c => c.name.includes('ของหาย'));
+
+      if (chLostFound) {
+        await purgeChannelMessages(chLostFound, 100);
+        await sendLostFoundGuidePanel(chLostFound);
+        result.resetChannels++;
+      }
+    } catch (err) {
+      console.warn('[KILLFILE] Channel reset error:', err.message);
+    }
+  }
+
+  console.log(`[KILLFILE] 🗑️ ล้างระบบของหายสำเร็จโดย ${executorUser?.tag || 'Admin'}: สิ่งของ ${result.deletedItems} ชิ้น, คำร้อง ${result.deletedClaims} รายการ`);
+  return result;
+}
+
 client.once(Events.ClientReady || 'ready', async () => {
   const guildName = client.guilds.cache.get(process.env.GUILD_ID)?.name || 'Guild';
   console.log(`[SARAWAT-BOT] Online: ${client.user.tag} | ${guildName} | Port: ${PORT}`);
@@ -1396,6 +1482,45 @@ client.on('messageCreate', async (message) => {
     await message.reply({
       content: `🎓 **ภาคเรียนปัจจุบัน:** ${sem} (กำหนดโดยประธานสารวัตรนักเรียน)`
     });
+    return;
+  }
+
+  // คำสั่งล้างระบบของหาย: !killfile หรือ /KillFile (แบบข้อความ)
+  if (message.content === '!killfile' || message.content === '/killfile' || message.content === '/KillFile') {
+    const isAdmin = message.member?.permissions.has(PermissionsBitField.Flags.Administrator) ||
+                    message.guild?.ownerId === message.author.id;
+    if (!isAdmin) {
+      await message.reply('⛔ สงวนสิทธิ์เฉพาะผู้ดูแลระบบ (Admin) เท่านั้นที่สามารถใช้คำสั่งล้างระบบของหายได้');
+      return;
+    }
+
+    const killEmbed = new EmbedBuilder()
+      .setTitle('🗑️ ยืนยันการล้างข้อมูลระบบของหาย (KILLFILE RESET)')
+      .setDescription(
+        `⚠️ **คำเตือนความปลอดภัย (DESTRUCTIVE ACTION)**\n\n` +
+        `คุณกำลังจะลบข้อมูลสิ่งของและคำร้องทั้งหมดในระบบของหาย **เริ่มใหม่แต่ 0**:\n\n` +
+        `  • 📦 **สิ่งของที่บันทึกไว้ทั้งหมด** ในฐานข้อมูลและแคชจะถูกลบถาวร\n` +
+        `  • 📋 **ประวัติคำร้องขอรับของคืน** จะถูกล้างทั้งหมด\n` +
+        `  • 📸 **ภาพหลักฐานการส่งมอบ** ในเครื่องจะถูกเคลียร์\n` +
+        `  • 🔄 **ห้อง 📦│แจ้งพบของหาย** จะถูกล้างข้อความเก่าและติดตั้งแผงคู่มือใหม่\n\n` +
+        `*(ข้อมูลสารวัตรนักเรียน คดี และการลาเวรจะไม่ได้รับผลกระทบ)*\n\n` +
+        `**หากแน่ใจ ให้กดปุ่มยืนยันด้านล่างเพื่อเริ่มกระบวนการ**`
+      )
+      .setColor('#E74C3C')
+      .setFooter({ text: 'SARAWAT LOST & FOUND • KillFile Reset System' });
+
+    const killRow = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId('btn_killfile_confirm')
+        .setLabel('🗑️ ยืนยันลบทั้งหมด (เริ่มใหม่แต่ 0)')
+        .setStyle(ButtonStyle.Danger),
+      new ButtonBuilder()
+        .setCustomId('btn_killfile_cancel')
+        .setLabel('❌ ยกเลิก')
+        .setStyle(ButtonStyle.Secondary)
+    );
+
+    await message.reply({ embeds: [killEmbed], components: [killRow] });
     return;
   }
 
@@ -2133,6 +2258,102 @@ client.on('interactionCreate', async (interaction) => {
         await interaction.reply({ embeds: [ddayEmbed], components: [ddayRow], ephemeral: true });
         return;
       }
+
+      if (commandName === 'killfile') {
+        const isAdmin = interaction.member?.permissions.has(PermissionsBitField.Flags.Administrator) ||
+                        interaction.guild?.ownerId === interaction.user.id;
+        if (!isAdmin) {
+          await interaction.reply({
+            content: '⛔ สงวนสิทธิ์เฉพาะผู้ดูแลระบบ (Admin) หรือเจ้าของเซิร์ฟเวอร์เท่านั้นในการสั่งการ KillFile',
+            ephemeral: true
+          });
+          return;
+        }
+
+        const killEmbed = new EmbedBuilder()
+          .setTitle('🗑️ ยืนยันการล้างข้อมูลระบบของหาย (KILLFILE RESET)')
+          .setDescription(
+            `⚠️ **คำเตือนความปลอดภัย (DESTRUCTIVE ACTION)**\n\n` +
+            `คุณกำลังจะลบข้อมูลสิ่งของและคำร้องทั้งหมดในระบบของหาย **เริ่มใหม่แต่ 0**:\n\n` +
+            `• 📦 **สิ่งของที่บันทึกไว้ทั้งหมด** ในฐานข้อมูลและแคชจะถูกลบถาวร\n` +
+            `• 📋 **ประวัติคำร้องขอรับของคืน** จะถูกล้างทั้งหมด\n` +
+            `• 📸 **ภาพหลักฐานการส่งมอบ** ในเครื่องจะถูกเคลียร์\n` +
+            `• 🔄 **ห้อง 📦│แจ้งพบของหาย** จะถูกล้างข้อความเก่าและติดตั้งแผงคู่มือใหม่\n\n` +
+            `*(ข้อมูลสารวัตรนักเรียน คดี และการลาเวรจะไม่ได้รับผลกระทบ)*\n\n` +
+            `**หากแน่ใจ ให้กดปุ่มยืนยันด้านล่างเพื่อเริ่มกระบวนการ**`
+          )
+          .setColor('#E74C3C')
+          .setFooter({ text: 'SARAWAT LOST & FOUND • KillFile Reset System' });
+
+        const killRow = new ActionRowBuilder().addComponents(
+          new ButtonBuilder()
+            .setCustomId('btn_killfile_confirm')
+            .setLabel('🗑️ ยืนยันลบทั้งหมด (เริ่มใหม่แต่ 0)')
+            .setStyle(ButtonStyle.Danger),
+          new ButtonBuilder()
+            .setCustomId('btn_killfile_cancel')
+            .setLabel('❌ ยกเลิก')
+            .setStyle(ButtonStyle.Secondary)
+        );
+
+        await interaction.reply({ embeds: [killEmbed], components: [killRow], ephemeral: true });
+        return;
+      }
+    }
+
+    // ==========================================================
+    // 🗑️ KILLFILE BUTTON HANDLING (ล้างระบบของหาย เริ่มใหม่แต่ 0)
+    // ==========================================================
+    if (interaction.isButton() && interaction.customId === 'btn_killfile_cancel') {
+      await interaction.update({
+        content: '✅ **ยกเลิกการล้างข้อมูลระบบของหายแล้ว** ข้อมูลทุกรายการยังคงปลอดภัย 100%',
+        embeds: [],
+        components: []
+      });
+      return;
+    }
+
+    if (interaction.isButton() && interaction.customId === 'btn_killfile_confirm') {
+      const isAdmin = interaction.member?.permissions.has(PermissionsBitField.Flags.Administrator) ||
+                      interaction.guild?.ownerId === interaction.user.id;
+      if (!isAdmin) {
+        await interaction.reply({
+          content: '⛔ สงวนสิทธิ์เฉพาะผู้ดูแลระบบ (Admin) เท่านั้นในการสั่งการ KillFile',
+          ephemeral: true
+        });
+        return;
+      }
+
+      await interaction.deferUpdate();
+
+      const killResult = await executeKillFile(interaction.guild, interaction.user);
+
+      const embedDone = new EmbedBuilder()
+        .setTitle('🗑️ ล้างระบบของหายสำเร็จ (เริ่มใหม่แต่ 0)')
+        .setDescription(
+          `ศูนย์บัญชาการสารวัตรนักเรียน ได้ล้างข้อมูลระบบของหายทั้งหมดเรียบร้อยแล้ว:\n\n` +
+          `• 📦 **สิ่งของที่ถูกลบ:** ${killResult.deletedItems} รายการ\n` +
+          `• 📋 **คำร้องที่ถูกลบ:** ${killResult.deletedClaims} รายการ\n` +
+          `• 🔄 **ห้อง 📦│แจ้งพบของหาย:** ติดตั้งแผงคู่มือใหม่เรียบร้อย (${killResult.resetChannels} ช่อง)\n\n` +
+          `✨ *ระบบของหายพร้อมเริ่มรับแจ้งและส่งมอบของชิ้นใหม่จาก 0 เรียบร้อยแล้ว*`
+        )
+        .setColor('#2ECC71')
+        .setFooter({ text: 'SARAWAT LOST & FOUND • KillFile Reset' })
+        .setTimestamp();
+
+      const btnRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setLabel('🌐 ตรวจสอบหน้าเว็บ (Web)')
+          .setStyle(ButtonStyle.Link)
+          .setURL(`${getWebDashboardUrl()}/lost-found`)
+      );
+
+      await interaction.editReply({
+        content: '',
+        embeds: [embedDone],
+        components: [btnRow]
+      });
+      return;
     }
 
     // ==========================================================
@@ -6410,6 +6631,7 @@ module.exports = {
   client,
   slashCommands,
   executeDDay,
+  executeKillFile,
   refreshAllChannelsAndPanels,
   getTodayDutyCodes,
   sendDailyDutyReminders,
