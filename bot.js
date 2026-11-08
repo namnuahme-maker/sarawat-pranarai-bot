@@ -1594,15 +1594,6 @@ client.on('messageCreate', async (message) => {
     if (isImage) {
       try {
         const reportId = `rep_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-        pendingLostReports.set(reportId, {
-          userId: message.author.id,
-          attachmentUrl: attachment.url,
-          proxyUrl: attachment.proxyURL || attachment.url,
-          attachmentName: attachment.name || 'lost_item.jpg',
-          channelId: message.channel.id,
-          messageId: message.id,
-          timestamp: Date.now()
-        });
 
         // รายการหมวดหมู่เริ่มต้น
         let categories = [
@@ -1656,7 +1647,31 @@ client.on('messageCreate', async (message) => {
           .setColor('#3498DB')
           .setFooter({ text: 'กรุณาเลือกหมวดหมู่ภายใน 5 นาที' });
 
-        await message.reply({ embeds: [replyEmbed], components: [row] });
+        const promptReplyMsg = await message.reply({ embeds: [replyEmbed], components: [row] });
+
+        pendingLostReports.set(reportId, {
+          userId: message.author.id,
+          attachmentUrl: attachment.url,
+          proxyUrl: attachment.proxyURL || attachment.url,
+          attachmentName: attachment.name || 'lost_item.jpg',
+          channelId: message.channel.id,
+          messageId: message.id,
+          promptMessageId: promptReplyMsg.id,
+          timestamp: Date.now()
+        });
+
+        // ล้างข้อความ prompt ตัวเลือกหมวดหมู่ออกอัตโนมัติเมื่อหมดเวลา 5 นาที (หากไม่ได้ทำรายการ)
+        setTimeout(async () => {
+          if (pendingLostReports.has(reportId)) {
+            pendingLostReports.delete(reportId);
+            try {
+              if (promptReplyMsg && promptReplyMsg.deletable) {
+                await promptReplyMsg.delete().catch(() => {});
+              }
+            } catch (e) {}
+          }
+        }, 5 * 60 * 1000);
+
         return;
       } catch (err) {
         console.error('[LOST-FOUND ERROR]', err);
@@ -2669,6 +2684,9 @@ client.on('interactionCreate', async (interaction) => {
 
       const selectedCat = interaction.values[0];
       report.selectedCategory = selectedCat;
+      if (interaction.message?.id) {
+        report.promptMessageId = interaction.message.id;
+      }
 
       if (selectedCat === '__NEW_CATEGORY__') {
         const modal = new ModalBuilder()
@@ -2862,6 +2880,21 @@ client.on('interactionCreate', async (interaction) => {
       } catch (e) {}
 
       pendingLostReports.delete(reportId);
+
+      // ลบข้อความตัวเลือกหมวดหมู่ (Prompt Message) ทันทีเมื่อทำรายการเสร็จสิ้น
+      try {
+        if (report.promptMessageId) {
+          const ch = interaction.channel || (client.channels ? await client.channels.fetch(report.channelId).catch(() => null) : null);
+          if (ch) {
+            const promptMsg = await ch.messages.fetch(report.promptMessageId).catch(() => null);
+            if (promptMsg && promptMsg.deletable) {
+              await promptMsg.delete().catch(() => {});
+            }
+          }
+        }
+      } catch (delErr) {
+        console.error('[DELETE PROMPT MESSAGE ERROR]:', delErr?.message || delErr);
+      }
 
       const successEmbed = new EmbedBuilder()
         .setTitle(`📦 บันทึกข้อมูลของหายสำเร็จ! [${itemCode}]`)
@@ -6695,6 +6728,7 @@ module.exports = {
   cleanGradeClass,
   cleanFullName,
   pendingPhotoUploads,
+  pendingLostReports,
   getUploadDir,
   getWebDashboardUrl
 };

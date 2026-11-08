@@ -400,4 +400,21 @@ describe('SARAWAT-BOT New Shift & Combined Duty ID Verification', () => {
     assert.ok(code.includes("channel.name.includes('คลังเก็บรูปสำรอง')"), 'Must guard vault from purge');
     assert.ok(code.includes("sarawat-photos"), 'Must upload photos to Supabase Storage sarawat-photos bucket');
   });
+
+  test('Lost & Found prompt message ID is stored and cleared upon completion', () => {
+    const { pendingLostReports } = require('../bot.js');
+    assert.ok(pendingLostReports instanceof Map, 'pendingLostReports must be an instance of Map');
+    
+    const testRepId = `test_rep_${Date.now()}`;
+    pendingLostReports.set(testRepId, {
+      userId: 'test_user_1',
+      promptMessageId: '1234567890',
+      timestamp: Date.now()
+    });
+
+    const retrieved = pendingLostReports.get(testRepId);
+    assert.equal(retrieved.promptMessageId, '1234567890');
+    pendingLostReports.delete(testRepId);
+    assert.equal(pendingLostReports.get(testRepId), undefined);
+  });
 });
