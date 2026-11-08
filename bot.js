@@ -2803,18 +2803,62 @@ client.on('interactionCreate', async (interaction) => {
         updated_at: now.toISOString()
       };
 
+      // 1. ซิงค์ลง Supabase Database (หากสร้างตารางไว้แล้ว)
       try {
         await supabase.from('lost_items').insert(newItem);
-      } catch (e) {}
+      } catch (e) {
+        console.error('[SUPABASE INSERT LOST ITEM ERROR]:', e?.message || e);
+      }
 
-      try {
-        const cachePath = path.join(__dirname, '../web/lost_items_cache.json');
-        let cacheData = [];
-        if (fs.existsSync(cachePath)) {
-          cacheData = JSON.parse(fs.readFileSync(cachePath, 'utf8') || '[]');
+      // 2. ซิงค์ยิงตรงเข้า Web Dashboard API ผ่าน HTTP POST (ทั้ง Render & Localhost)
+      const webTargets = [
+        getWebDashboardUrl(),
+        'https://sarawat-pranarai-web.onrender.com',
+        'http://localhost:10001'
+      ];
+      const uniqueTargets = [...new Set(webTargets.filter(Boolean))];
+
+      for (const targetUrl of uniqueTargets) {
+        try {
+          const controller = new AbortController();
+          const tId = setTimeout(() => controller.abort(), 3500);
+          await fetch(`${targetUrl.replace(/\/$/, '')}/api/lost-found/items`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(newItem),
+            signal: controller.signal
+          });
+          clearTimeout(tId);
+        } catch (postErr) {
+          // ไม่ขัดจังหวะกรณี target ไหนออฟไลน์
         }
-        cacheData.unshift({ id: `lf-${Date.now()}`, ...newItem });
-        fs.writeFileSync(cachePath, JSON.stringify(cacheData, null, 2), 'utf8');
+      }
+
+      // 3. ซิงค์ลงแคชไฟล์ Local (กรณีรันบนโฮสต์ที่มีโฟลเดอร์ web/data)
+      try {
+        const cacheTargets = [
+          path.join(__dirname, '..', 'data', 'lost_found_db.json'),
+          path.join(__dirname, '..', 'web', 'lost_items_cache.json'),
+          path.join(__dirname, 'lost_items_cache.json')
+        ];
+        for (const cp of cacheTargets) {
+          try {
+            if (fs.existsSync(path.dirname(cp))) {
+              let parsed = null;
+              if (fs.existsSync(cp)) {
+                parsed = JSON.parse(fs.readFileSync(cp, 'utf8') || 'null');
+              }
+              if (Array.isArray(parsed)) {
+                parsed.unshift({ id: `lf-${Date.now()}`, ...newItem });
+                fs.writeFileSync(cp, JSON.stringify(parsed, null, 2), 'utf8');
+              } else if (parsed && typeof parsed === 'object') {
+                parsed.items = parsed.items || [];
+                parsed.items.unshift({ id: `lf-${Date.now()}`, ...newItem });
+                fs.writeFileSync(cp, JSON.stringify(parsed, null, 2), 'utf8');
+              }
+            }
+          } catch (e) {}
+        }
       } catch (e) {}
 
       pendingLostReports.delete(reportId);
