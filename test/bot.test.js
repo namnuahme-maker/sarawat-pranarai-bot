@@ -290,16 +290,16 @@ describe('SARAWAT-BOT New Shift & Combined Duty ID Verification', () => {
     assert.equal(delta.obsoleteDayRoles.includes('role_special'), false); // Special role kept
   });
 
-  test('Slash Commands list must contain all 11 commands and valid Discord naming conventions', () => {
+  test('Slash Commands list must contain all 12 commands and valid Discord naming conventions', () => {
     const { slashCommands } = require('../bot.js');
     assert.equal(Array.isArray(slashCommands), true);
-    assert.equal(slashCommands.length, 11);
+    assert.equal(slashCommands.length, 12);
 
     const commandNames = slashCommands.map(c => c.name);
     const expected = [
       'status', 'my-card', 'sync-roles', 'semester',
       'setup-verify', 'setup-leave', 'setup-attendance',
-      'setup-photo', 'setup-appoint', 'setup-all', 'd-day'
+      'setup-photo', 'setup-appoint', 'setup-lost-found', 'setup-all', 'd-day'
     ];
 
     for (const exp of expected) {
@@ -380,5 +380,15 @@ describe('SARAWAT-BOT New Shift & Combined Duty ID Verification', () => {
       }
     });
     assert.equal(violations.length, 0, `Found label length violations: ${JSON.stringify(violations)}`);
+  });
+
+  test('PHOTO_VAULT_CHANNEL_NAME and purge protections must be active', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const code = fs.readFileSync(path.join(__dirname, '..', 'bot.js'), 'utf8');
+    assert.ok(code.includes("PHOTO_VAULT_CHANNEL_NAME = '📸│คลังเก็บรูปสำรอง-bot'"), 'Must define PHOTO_VAULT_CHANNEL_NAME');
+    assert.ok(code.includes("getOrCreatePhotoVaultChannel"), 'Must define getOrCreatePhotoVaultChannel');
+    assert.ok(code.includes("channel.name.includes('คลังเก็บรูปสำรอง')"), 'Must guard vault from purge');
+    assert.ok(code.includes("sarawat-photos"), 'Must upload photos to Supabase Storage sarawat-photos bucket');
   });
 });

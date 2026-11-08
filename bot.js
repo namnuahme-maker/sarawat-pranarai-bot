@@ -18,6 +18,7 @@ const {
   GatewayIntentBits, 
   Events,
   ActivityType,
+  ChannelType,
   ActionRowBuilder, 
   ButtonBuilder, 
   ButtonStyle, 
@@ -100,33 +101,6 @@ function getUploadDir() {
   const dir2 = path.join(__dirname, 'web', 'public', 'uploads');
   if (fs.existsSync(path.join(__dirname, 'web'))) return dir2;
   return path.join(__dirname, 'uploads');
-}
-
-function processBackgroundRemoval(imageUrl, memberId) {
-  return new Promise((resolve, reject) => {
-    let scriptPath = path.join(__dirname, 'remove_bg.py');
-    if (!fs.existsSync(scriptPath)) {
-      scriptPath = path.join(__dirname, 'bot', 'remove_bg.py');
-    }
-    const uploadsDir = getUploadDir();
-    if (!fs.existsSync(uploadsDir)) {
-      fs.mkdirSync(uploadsDir, { recursive: true });
-    }
-    const outFileName = `cutout_${memberId}_${Date.now()}.png`;
-    const outPath = path.join(uploadsDir, outFileName);
-
-    const py = spawn('python', [scriptPath, imageUrl, outPath]);
-    let stderr = '';
-    py.stderr.on('data', (d) => { stderr += d.toString(); });
-    py.on('close', (code) => {
-      if (code === 0 && fs.existsSync(outPath)) {
-        resolve({ outPath, outFileName });
-      } else {
-        reject(new Error(stderr || `Python exited with code ${code}`));
-      }
-    });
-    py.on('error', (err) => reject(err));
-  });
 }
 
 // ==========================================================
@@ -299,6 +273,48 @@ function resolveDutyDayForAppoint(currentDutyDay, targetShift) {
 const APPROVAL_CHANNEL_ID = process.env.APPROVAL_CHANNEL_ID;
 const PHOTO_CHANNEL_ID = process.env.PHOTO_CHANNEL_ID;
 const ATTENDANCE_CHANNEL_ID = process.env.ATTENDANCE_CHANNEL_ID;
+const PHOTO_VAULT_CHANNEL_NAME = '📸│คลังเก็บรูปสำรอง-bot';
+
+/**
+ * 📸 ค้นหาหรือสร้างช่องคลังเก็บรูปสำรองถาวร (เฉพาะบอทและแอดมินมองเห็น ป้องกันข้อมูลสูญหาย 100%)
+ */
+async function getOrCreatePhotoVaultChannel(guild) {
+  if (!guild) return null;
+  let ch = guild.channels.cache.find(c => 
+    c.name === PHOTO_VAULT_CHANNEL_NAME || 
+    c.name === 'คลังเก็บรูปสำรอง-bot' ||
+    (c.name.includes('คลัง') && c.name.includes('รูป'))
+  );
+  if (!ch) {
+    try {
+      ch = await guild.channels.create({
+        name: PHOTO_VAULT_CHANNEL_NAME,
+        type: ChannelType.GuildText,
+        topic: 'คลังเก็บรูปถ่ายโปรไฟล์และรูปทำบัตรสำรองถาวร (บอทและผู้ดูแลระบบเท่านั้น)',
+        permissionOverwrites: [
+          {
+            id: guild.roles.everyone.id,
+            deny: [PermissionsBitField.Flags.ViewChannel]
+          },
+          {
+            id: guild.client.user.id,
+            allow: [
+              PermissionsBitField.Flags.ViewChannel,
+              PermissionsBitField.Flags.SendMessages,
+              PermissionsBitField.Flags.AttachFiles,
+              PermissionsBitField.Flags.ReadMessageHistory,
+              PermissionsBitField.Flags.EmbedLinks
+            ]
+          }
+        ]
+      });
+      console.log(`[PHOTO-VAULT] 📸 สร้างห้องคลังรูปสำรองสำเร็จ: #${ch.name} (${ch.id})`);
+    } catch (err) {
+      console.error('[PHOTO-VAULT ERROR] ไม่สามารถสร้างห้องคลังรูปสำรอง:', err.message);
+    }
+  }
+  return ch;
+}
 
 // ==========================================================
 // ⚡ DISCORD SLASH COMMANDS DEFINITION (/)
@@ -335,9 +351,15 @@ const slashCommands = [
     .setName('setup-all')
     .setDescription('🚀 ติดตั้งแผงปุ่มระบบทั้งหมดลงในทุกห้องที่เกี่ยวข้องในคลิกเดียว (Admin)'),
   new SlashCommandBuilder()
+    .setName('setup-lost-found')
+    .setDescription('📦 ติดตั้งจุดรับแจ้งสิ่งของที่พบเจอ (Lost & Found Hub) (Admin)'),
+  new SlashCommandBuilder()
     .setName('d-day')
     .setDescription('🚨 ปฏิบัติการ D-DAY: ล้างข้อมูลสารวัตรทุกนาย และเริ่มใหม่แต่ 0 ทุกช่องแชท (Admin Only)')
 ];
+
+// 📦 ที่เก็บสถานะชั่วคราวสำหรับการแจ้งพบของหายผ่านรูปภาพใน Discord
+const pendingLostReports = new Map();
 
 // ==========================================================
 // 🛠️ HELPER FUNCTIONS FOR PANELS & SYSTEM MANAGEMENT
@@ -348,6 +370,39 @@ function findChannel(guild, idOrName) {
     return guild.channels.cache.get(idOrName);
   }
   return guild.channels.cache.find(c => c.name.includes(idOrName));
+}
+
+async function sendLostFoundGuidePanel(channel) {
+  if (!channel) return null;
+  const embed = new EmbedBuilder()
+    .setTitle('📦 จุดรับแจ้งสิ่งของที่พบเจอ (LOST & FOUND HUB)')
+    .setDescription(
+      'ศูนย์กลางรับแจ้งและบันทึกสิ่งของที่เก็บได้ภายในโรงเรียนพระนารายณ์\n\n' +
+      '━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n' +
+      '📌 **ขั้นตอนการบันทึกของหายเข้าระบบ (ง่ายๆ ใน 2 ขั้น):**\n' +
+      '1️⃣ **[ส่งรูปภาพ]** — แนบส่งรูปถ่ายสิ่งของที่เก็บได้ เข้ามาในห้องนี้ได้ทันที\n' +
+      '2️⃣ **[เลือกหมวด & กรอกชื่อ]** — บอทจะเปิดเมนูให้เลือกหมวดหมู่ และเด้งกล่องข้อความให้ระบุชื่อสิ่งของและสถานที่พบ\n' +
+      '━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n' +
+      '⚡ *ระบบจะใช้ Discord เป็น Host จัดเก็บรูปภาพ และส่งข้อมูลขึ้นหน้าเว็บศูนย์บัญชาการสารวัตรทันที*'
+    )
+    .setColor('#F39C12')
+    .setFooter({ text: 'ฝ่ายบริหารงานสารวัตรนักเรียน • โรงเรียนพระนารายณ์' });
+
+  const files = [];
+  const bannerPath = path.join(__dirname, 'assets', 'panel_send_photo.jpg');
+  if (fs.existsSync(bannerPath)) {
+    files.push(new AttachmentBuilder(bannerPath, { name: 'panel_send_photo.jpg' }));
+    embed.setImage('attachment://panel_send_photo.jpg');
+  }
+
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setLabel('🌐 ตรวจสอบคลังของหาย (Web)')
+      .setStyle(ButtonStyle.Link)
+      .setURL(`${getWebDashboardUrl()}/lost-found`)
+  );
+
+  return await channel.send({ embeds: [embed], components: [row], files });
 }
 
 async function sendVerifyPanel(channel) {
@@ -523,6 +578,10 @@ async function sendAppointPanel(channel) {
 
 async function purgeChannelMessages(channel, limit = 100) {
   if (!channel || !channel.isTextBased()) return;
+  // ป้องกันไม่ให้ลบข้อความในห้องคลังเก็บรูปสำรองถาวรเด็ดขาด
+  if (channel.name && (channel.name === PHOTO_VAULT_CHANNEL_NAME || channel.name.includes('คลังเก็บรูปสำรอง'))) {
+    return;
+  }
   try {
     const fetched = await channel.messages.fetch({ limit }).catch(() => null);
     if (!fetched || fetched.size === 0) return;
@@ -640,6 +699,40 @@ async function refreshAllChannelsAndPanels(guild, options = { purge: true }) {
     }
     const chApproval = findChannel(guild, process.env.APPROVAL_CHANNEL_ID) || guild.channels.cache.find(c => c.name.includes('อนุมัติสมาชิก'));
     const chAllInOne = findChannel(guild, '👑│ผู้นำ-all-in-one') || findChannel(guild, '👑│ห้องประชุมหัวหน้า');
+    let chLostFound = findChannel(guild, '📦│แจ้งพบของหาย') ||
+      findChannel(guild, 'แจ้งพบของหาย') ||
+      guild.channels.cache.find(c => c.name.includes('ของหาย'));
+
+    if (!chLostFound) {
+      try {
+        const catTarget = guild.channels.cache.find(c => c.type === ChannelType.GuildCategory && (c.name.includes('ปฏิบัติการ') || c.name.includes('ศูนย์รับเรื่อง') || c.name.includes('คดี') || c.name.includes('บริการ'))) || null;
+        const verifiedRole = guild.roles.cache.find(r => r.name.includes('สารวัตรนักเรียน'));
+        const overwrites = [
+          { id: guild.roles.everyone.id, deny: [PermissionsBitField.Flags.ViewChannel] }
+        ];
+        if (verifiedRole) {
+          overwrites.push({
+            id: verifiedRole.id,
+            allow: [
+              PermissionsBitField.Flags.ViewChannel,
+              PermissionsBitField.Flags.SendMessages,
+              PermissionsBitField.Flags.AttachFiles,
+              PermissionsBitField.Flags.EmbedLinks
+            ]
+          });
+        }
+        chLostFound = await guild.channels.create({
+          name: '📦│แจ้งพบของหาย',
+          type: ChannelType.GuildText,
+          parent: catTarget ? catTarget.id : null,
+          topic: 'ศูนย์รับแจ้งและบันทึกสิ่งของที่พบเจอ (ส่งรูปภาพในห้องนี้เพื่อบันทึกของหาย)',
+          permissionOverwrites: overwrites
+        });
+        console.log(`[REFRESH] 📦 สร้างห้องแจ้งพบของหายสำเร็จ: #${chLostFound.name}`);
+      } catch (e) {
+        console.warn('[REFRESH] ไม่สามารถสร้างห้องแจ้งพบของหาย:', e.message);
+      }
+    }
 
     if (chVerify) {
       if (options.purge) await purgeChannelMessages(chVerify);
@@ -662,6 +755,12 @@ async function refreshAllChannelsAndPanels(guild, options = { purge: true }) {
     if (chAllInOne) {
       if (options.purge) await purgeChannelMessages(chAllInOne);
       await sendAppointPanel(chAllInOne);
+      result.refreshedChannels++;
+    }
+
+    if (chLostFound) {
+      if (options.purge) await purgeChannelMessages(chLostFound);
+      await sendLostFoundGuidePanel(chLostFound);
       result.refreshedChannels++;
     }
 
@@ -1117,6 +1216,8 @@ client.once(Events.ClientReady || 'ready', async () => {
   try {
     const targetGuild = client.guilds.cache.get(process.env.GUILD_ID) || client.guilds.cache.first();
     if (targetGuild) {
+      // ตรวจสอบและสร้างห้องคลังเก็บรูปสำรองถาวรสำหรับบอท
+      await getOrCreatePhotoVaultChannel(targetGuild);
       console.log(`[STARTUP] 🧹 กำลังเคลียร์ข้อความเก่าและรีเฟรชแผงปุ่มฟีเจอร์อัตโนมัติใน: ${targetGuild.name}`);
       await refreshAllChannelsAndPanels(targetGuild, { purge: true });
     }
@@ -1359,7 +1460,92 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
+  // 📦 ฟังก์ชันดักรับรูปถ่ายสิ่งของที่พบในห้อง #📦│แจ้งพบของหาย
+  const isLostFoundChannel = message.channel && message.channel.name && message.channel.name.includes('ของหาย');
+  if (isLostFoundChannel && !message.author.bot && message.attachments.size > 0) {
+    const attachment = message.attachments.first();
+    const isImage = (attachment.contentType && attachment.contentType.startsWith('image/')) ||
+                    /\.(jpe?g|png|webp|gif|heic)$/i.test(attachment.name || attachment.url);
+    if (isImage) {
+      try {
+        const reportId = `rep_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+        pendingLostReports.set(reportId, {
+          userId: message.author.id,
+          attachmentUrl: attachment.url,
+          proxyUrl: attachment.proxyURL || attachment.url,
+          attachmentName: attachment.name || 'lost_item.jpg',
+          channelId: message.channel.id,
+          messageId: message.id,
+          timestamp: Date.now()
+        });
+
+        // รายการหมวดหมู่เริ่มต้น
+        let categories = [
+          { label: 'กระเป๋า / กระเป๋าสตางค์', value: 'กระเป๋า / กระเป๋าสตางค์', emoji: '👛' },
+          { label: 'อุปกรณ์ไอที / มือถือ', value: 'อุปกรณ์ไอที / มือถือ', emoji: '📱' },
+          { label: 'กุญแจ / ยานพาหนะ', value: 'กุญแจ / ยานพาหนะ', emoji: '🔑' },
+          { label: 'เครื่องแต่งกาย / หมวก', value: 'เครื่องแต่งกาย / หมวก', emoji: '👕' },
+          { label: 'เครื่องเขียน / หนังสือ', value: 'เครื่องเขียน / หนังสือ', emoji: '📚' },
+          { label: 'สิ่งของทั่วไป / อื่นๆ', value: 'สิ่งของทั่วไป / อื่นๆ', emoji: '📦' }
+        ];
+
+        try {
+          const { data: dbCats } = await supabase.from('lost_categories').select('name, icon').order('name');
+          if (dbCats && dbCats.length > 0) {
+            categories = dbCats.map(c => ({
+              label: c.name.slice(0, 50),
+              value: c.name.slice(0, 50),
+              emoji: c.icon || '📦'
+            }));
+          }
+        } catch (e) {}
+
+        const selectOptions = [
+          ...categories.slice(0, 24).map(c => ({
+            label: c.label,
+            value: c.value,
+            emoji: c.emoji || '📦'
+          })),
+          {
+            label: '➕ เพิ่มหมวดหมู่ใหม่...',
+            value: '__NEW_CATEGORY__',
+            description: 'พิมพ์ระบุชื่อหมวดหมู่ใหม่ด้วยตนเอง',
+            emoji: '✨'
+          }
+        ];
+
+        const row = new ActionRowBuilder().addComponents(
+          new StringSelectMenuBuilder()
+            .setCustomId(`select_lost_cat_${reportId}`)
+            .setPlaceholder('📂 โปรดเลือกหมวดหมู่สิ่งของ...')
+            .addOptions(selectOptions)
+        );
+
+        const replyEmbed = new EmbedBuilder()
+          .setTitle('📦 บันทึกข้อมูลสิ่งของที่พบ')
+          .setDescription(
+            `ตรวจพบรูปภาพจาก **<@${message.author.id}>** เรียบร้อยแล้ว!\n\n` +
+            `👉 **ขั้นตอนถัดไป:** โปรดเลือก **หมวดหมู่** จากเมนูด้านล่าง เพื่อเปิดกล่องระบุชื่อสิ่งของและสถานที่พบ`
+          )
+          .setThumbnail(attachment.url)
+          .setColor('#3498DB')
+          .setFooter({ text: 'กรุณาเลือกหมวดหมู่ภายใน 5 นาที' });
+
+        await message.reply({ embeds: [replyEmbed], components: [row] });
+        return;
+      } catch (err) {
+        console.error('[LOST-FOUND ERROR]', err);
+      }
+    }
+  }
+
   // ฟังก์ชันดักรับรูปโปรไฟล์ทำบัตรในห้อง #อัปโหลดรูปโปรไฟล์-ทำบัตร
+  const isVaultChannel = message.channel && message.channel.name && (
+    message.channel.name === PHOTO_VAULT_CHANNEL_NAME ||
+    message.channel.name.includes('คลังเก็บรูปสำรอง')
+  );
+  if (isVaultChannel) return;
+
   const isPhotoChannel = (PHOTO_CHANNEL_ID && message.channel.id === PHOTO_CHANNEL_ID) ||
     (message.channel.id === '1567570866663989389') ||
     (message.channel && message.channel.name && (
@@ -1384,42 +1570,105 @@ client.on('messageCreate', async (message) => {
             .maybeSingle();
 
           if (member) {
-            // บันทึกรูปที่รอดำเนินการเลือกลบพื้นหลัง
-            pendingPhotoUploads.set(member.id, {
-              url: attachment.url,
-              name: attachment.name || `photo_${member.id}.png`,
-              memberId: member.id,
-              authorId: message.author.id,
-              timestamp: Date.now()
-            });
+            // 1. ดาวน์โหลดไฟล์รูปภาพเข้าสู่ Memory Buffer ทันทีเพื่อป้องกันลิงก์ Discord หมดอายุ
+            const imgRes = await fetch(attachment.url);
+            if (!imgRes.ok) throw new Error(`Download attachment failed with status ${imgRes.status}`);
+            const imgBuffer = Buffer.from(await imgRes.arrayBuffer());
+
+            const extMatch = (attachment.name || attachment.url).match(/\.(jpe?g|png|webp|gif|heic)/i);
+            const ext = extMatch ? extMatch[1].toLowerCase().replace('jpeg', 'jpg') : 'jpg';
+            const safeDutyId = (member.duty_id || member.id || 'photo').replace(/[^a-zA-Z0-9_-]/g, '_');
+            const filename = `member_${safeDutyId}_${Date.now()}.${ext}`;
+
+            // 2. บันทึกสำเนาลง Local Storage สำหรับ Web Server
+            const uploadDir = path.join(__dirname, '..', 'web', 'public', 'uploads');
+            try {
+              if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+              fs.writeFileSync(path.join(uploadDir, filename), imgBuffer);
+            } catch (fsErr) {
+              console.warn('[PHOTO UPLOAD] Local save notice:', fsErr.message);
+            }
+
+            // 3. อัปโหลดเข้าสู่ Supabase Storage (Bucket: sarawat-photos) เพื่อให้ได้ Public CDN URL ถาวร ไม่หมดอายุ
+            let permanentUrl = null;
+            try {
+              const storagePath = `members/${filename}`;
+              const { error: storageErr } = await supabase.storage
+                .from('sarawat-photos')
+                .upload(storagePath, imgBuffer, {
+                  contentType: attachment.contentType || (ext === 'png' ? 'image/png' : 'image/jpeg'),
+                  upsert: true
+                });
+
+              if (!storageErr) {
+                const { data: { publicUrl } } = supabase.storage.from('sarawat-photos').getPublicUrl(storagePath);
+                permanentUrl = publicUrl;
+              } else {
+                console.warn('[SUPABASE STORAGE NOTICE]:', storageErr.message);
+              }
+            } catch (sErr) {
+              console.warn('[SUPABASE STORAGE ERROR]:', sErr.message);
+            }
+
+            // 4. สำรองไฟล์เข้าห้องคลังรูปสำรองลับของบอท (#📸│คลังเก็บรูปสำรอง-bot)
+            const vaultChannel = await getOrCreatePhotoVaultChannel(message.guild);
+            let vaultAttachmentUrl = null;
+            if (vaultChannel) {
+              try {
+                const vaultAttachment = new AttachmentBuilder(imgBuffer, { name: filename });
+                const vaultEmbed = new EmbedBuilder()
+                  .setTitle('📸 สำรองรูปถ่ายทำบัตรประจำตัว (Vault Archive)')
+                  .setDescription(
+                    `• สมาชิก: **${member.first_name} ${member.last_name} (${member.nickname})**\n` +
+                    `• รหัสเวร: \`${member.duty_id || 'รอดำเนินการ'}\` • ผลัดเวร: **${getShiftLabel(member.duty_day)}**\n` +
+                    `• บัญชี Discord: <@${message.author.id}> (\`${message.author.id}\`)\n` +
+                    `• ชั้น/เลขที่: ม.${member.grade_class || '-'} #${member.student_no || '-'}\n` +
+                    `• บันทึกเวลา: <t:${Math.floor(Date.now() / 1000)}:F>`
+                  )
+                  .setImage(`attachment://${filename}`)
+                  .setColor('#3498DB');
+
+                const vaultMsg = await vaultChannel.send({
+                  embeds: [vaultEmbed],
+                  files: [vaultAttachment]
+                });
+                if (vaultMsg.attachments.size > 0) {
+                  vaultAttachmentUrl = vaultMsg.attachments.first().url;
+                }
+              } catch (vErr) {
+                console.error('[VAULT SEND ERROR]:', vErr.message);
+              }
+            }
+
+            // 5. บันทึก URL ที่เสถียรที่สุดเข้า Database (Supabase Public CDN > Vault URL > Local URL)
+            const finalProfileUrl = permanentUrl || vaultAttachmentUrl || `/uploads/${filename}`;
+
+            await supabase
+              .from('members')
+              .update({ profile_image_url: finalProfileUrl, updated_at: new Date() })
+              .eq('id', member.id);
 
             const shiftLabel = getShiftLabel(member.duty_day);
             const dutyTag = member.duty_id ? `\`[${member.duty_id}]\`` : '`[รออนุมัติ]`';
+            const cardUrl = `${getBaseUrl()}/card?id=${member.id}`;
+            const cardRow = new ActionRowBuilder().addComponents(
+              new ButtonBuilder()
+                .setLabel('🪪 เปิดดูบัตรประจำตัว')
+                .setStyle(ButtonStyle.Link)
+                .setURL(cardUrl)
+            );
 
-            const promptEmbed = new EmbedBuilder()
-              .setTitle('📸 ได้รับรูปถ่ายของคุณแล้ว')
+            const successEmbed = new EmbedBuilder()
+              .setTitle('📸 บันทึกรูปถ่ายทำบัตรสำเร็จ')
               .setDescription(
                 `สมาชิก: **${member.first_name} ${member.last_name} (${member.nickname})**\n` +
                 `ชั้น: ม.${member.grade_class} #${member.student_no} • รหัสเวร: ${dutyTag} • เวร: ${shiftLabel}\n\n` +
-                `**ต้องการลบพื้นหลังรูปถ่ายหรือไม่?**\n` +
-                `• ✨ **ลบพื้นหลัง (AI Cutout)**: ระบบจะตัดพื้นหลังออกให้อัตโนมัติ (แนะนำสำหรับรูปติดบัตร)\n` +
-                `• 🖼️ **ใช้รูปเดิม**: บันทึกรูปต้นฉบับตามที่คุณส่งเข้ามาโดยไม่ตัดพื้นหลัง`
+                `✅ บันทึกรูปถ่ายต้นฉบับเข้าคลังเก็บรูปสำรองบอท และอัปเดตระบบทำบัตรสารวัตรเรียบร้อยแล้ว`
               )
-              .setImage(attachment.url)
-              .setColor('#3498DB');
+              .setImage(finalProfileUrl.startsWith('http') ? finalProfileUrl : attachment.url)
+              .setColor('#2ECC71');
 
-            const actionRow = new ActionRowBuilder().addComponents(
-              new ButtonBuilder()
-                .setCustomId(`btn_photo_remove_bg_${member.id}`)
-                .setLabel('✨ ลบพื้นหลัง (AI Cutout)')
-                .setStyle(ButtonStyle.Primary),
-              new ButtonBuilder()
-                .setCustomId(`btn_photo_keep_orig_${member.id}`)
-                .setLabel('🖼️ ใช้รูปเดิม')
-                .setStyle(ButtonStyle.Secondary)
-            );
-
-            await message.reply({ embeds: [promptEmbed], components: [actionRow] }).catch(() => {});
+            await message.reply({ embeds: [successEmbed], components: [cardRow] }).catch(() => {});
             return;
           } else {
             await message.reply({
@@ -1834,6 +2083,16 @@ client.on('interactionCreate', async (interaction) => {
         return;
       }
 
+      if (commandName === 'setup-lost-found') {
+        if (!interaction.member?.permissions.has(PermissionsBitField.Flags.Administrator)) {
+          await interaction.reply({ content: '⛔ สงวนสิทธิ์เฉพาะผู้ดูแลระบบ (Admin) เท่านั้น', ephemeral: true });
+          return;
+        }
+        await sendLostFoundGuidePanel(interaction.channel);
+        await interaction.reply({ content: '✅ ติดตั้งแผงจุดรับแจ้งของหายเรียบร้อยแล้ว', ephemeral: true });
+        return;
+      }
+
       if (commandName === 'd-day') {
         const isAdmin = interaction.member?.permissions.has(PermissionsBitField.Flags.Administrator) ||
                         interaction.guild?.ownerId === interaction.user.id;
@@ -2052,7 +2311,15 @@ client.on('interactionCreate', async (interaction) => {
         .setImage(member.profile_image_url)
         .setColor('#2ECC71');
 
-      await interaction.editReply({ embeds: [previewEmbed] });
+      const cardUrl = `${getBaseUrl()}/card?id=${member.id}`;
+      const cardRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setLabel('🪪 เปิดดูบัตรประจำตัว 3D')
+          .setStyle(ButtonStyle.Link)
+          .setURL(cardUrl)
+      );
+
+      await interaction.editReply({ embeds: [previewEmbed], components: [cardRow] });
       return;
     }
 
@@ -2124,8 +2391,8 @@ client.on('interactionCreate', async (interaction) => {
           .setDescription(
             `ชื่อ: **${member.first_name} ${member.last_name} (${member.nickname})**\n` +
             `ชั้น: ม.${member.grade_class} #${member.student_no}\n` +
-            `รหัสเวร: ${dutyTag} | เวร: ${shiftLabel}\n` +
-            `รูปแบบ: บันทึกรูปต้นฉบับเรียบร้อยแล้ว`
+            `รหัสเวร: ${dutyTag} | เวร: ${shiftLabel}\n\n` +
+            `✅ บันทึกรูปต้นฉบับเข้าสู่ระบบเรียบร้อยแล้ว`
           )
           .setImage(rawUrl)
           .setColor('#2ECC71');
@@ -2137,71 +2404,227 @@ client.on('interactionCreate', async (interaction) => {
         }).catch(() => {});
         return;
       } else {
-        // Option 2: Remove Background (AI Cutout)
+        // ฟีเจอร์ตัดพื้นหลังถูกยกเลิกแล้ว -> บันทึกรูปต้นฉบับแทน
         await interaction.deferUpdate();
+        await supabase
+          .from('members')
+          .update({ profile_image_url: rawUrl, updated_at: new Date() })
+          .eq('id', member.id);
+
+        pendingPhotoUploads.delete(member.id);
+
+        const successEmbed = new EmbedBuilder()
+          .setTitle('📸 บันทึกรูปทำบัตรสำเร็จ (รูปต้นฉบับ)')
+          .setDescription(
+            `ชื่อ: **${member.first_name} ${member.last_name} (${member.nickname})**\n` +
+            `ชั้น: ม.${member.grade_class} #${member.student_no}\n` +
+            `รหัสเวร: ${dutyTag} | เวร: ${shiftLabel}\n\n` +
+            `ℹ️ ระบบได้ยกเลิกฟีเจอร์ตัดพื้นหลัง AI และบันทึกเป็นรูปต้นฉบับเข้าสู่ระบบเรียบร้อยแล้ว`
+          )
+          .setImage(rawUrl)
+          .setColor('#2ECC71');
+
         await interaction.editReply({
-          content: `⏳ <@${interaction.user.id}> ระบบกำลังใช้ AI ตัดพื้นหลังรูปถ่าย กรุณารอสักครู่ (ประมาณ 3-5 วินาที)...`,
-          components: []
+          content: `✅ <@${interaction.user.id}> บันทึกรูปโปรไฟล์ทำบัตรสำเร็จเรียบร้อย`,
+          embeds: [successEmbed],
+          components: [cardRow]
         }).catch(() => {});
-
-        try {
-          const { outPath, outFileName } = await processBackgroundRemoval(rawUrl, member.id);
-          const attachment = new AttachmentBuilder(outPath, { name: outFileName });
-
-          const successEmbed = new EmbedBuilder()
-            .setTitle('✨ บันทึกรูปทำบัตรสำเร็จ (AI ตัดพื้นหลังแล้ว)')
-            .setDescription(
-              `ชื่อ: **${member.first_name} ${member.last_name} (${member.nickname})**\n` +
-              `ชั้น: ม.${member.grade_class} #${member.student_no}\n` +
-              `รหัสเวร: ${dutyTag} | เวร: ${shiftLabel}\n` +
-              `รูปแบบ: ตัดพื้นหลังโปร่งใส (Transparent PNG) เหมาะสำหรับติดบัตรดิจิทัล`
-            )
-            .setImage(`attachment://${outFileName}`)
-            .setColor('#2ECC71');
-
-          const updateResult = await interaction.editReply({
-            content: `✨ <@${interaction.user.id}> ตัดพื้นหลังรูปถ่ายสำเร็จ และบันทึกเข้าสู่ระบบเรียบร้อยแล้ว!`,
-            embeds: [successEmbed],
-            components: [cardRow],
-            files: [attachment]
-          }).catch(() => null);
-
-          const cdnUrl = updateResult?.attachments?.first()?.url || `${getBaseUrl()}/uploads/${outFileName}`;
-
-          await supabase
-            .from('members')
-            .update({ profile_image_url: cdnUrl, updated_at: new Date() })
-            .eq('id', member.id);
-
-          pendingPhotoUploads.delete(member.id);
-        } catch (err) {
-          console.error('[AI REMOVE BG ERROR]:', err);
-          await supabase
-            .from('members')
-            .update({ profile_image_url: rawUrl, updated_at: new Date() })
-            .eq('id', member.id);
-
-          pendingPhotoUploads.delete(member.id);
-
-          const fallbackEmbed = new EmbedBuilder()
-            .setTitle('📸 บันทึกรูปทำบัตร (รูปต้นฉบับ)')
-            .setDescription(
-              `ชื่อ: **${member.first_name} ${member.last_name} (${member.nickname})**\n` +
-              `⚠️ ระบบ AI ไม่สามารถตัดพื้นหลังภาพนี้ได้ (อาจเป็นเพราะภาพสว่างเกินไปหรือความละเอียดไม่รองรับ)\n` +
-              `ระบบจึงบันทึกเป็นรูปต้นฉบับให้แทนเรียบร้อยแล้วครับ`
-            )
-            .setImage(rawUrl)
-            .setColor('#F39C12');
-
-          await interaction.editReply({
-            content: `⚠️ เกิดข้อผิดพลาดในการตัดพื้นหลัง ระบบจึงบันทึกรูปต้นฉบับแทน`,
-            embeds: [fallbackEmbed],
-            components: [cardRow],
-            files: []
-          }).catch(() => {});
-        }
         return;
       }
+    }
+
+    // 📦 เมื่อผู้ใช้เลือกหมวดหมู่สิ่งของที่พบ
+    if (interaction.isStringSelectMenu() && interaction.customId.startsWith('select_lost_cat_')) {
+      const reportId = interaction.customId.replace('select_lost_cat_', '');
+      const report = pendingLostReports.get(reportId);
+      if (!report) {
+        await interaction.reply({ content: '⚠️ รายการนี้หมดอายุแล้ว กรุณาส่งรูปภาพใหม่อีกครั้งครับ', ephemeral: true });
+        return;
+      }
+      if (report.userId !== interaction.user.id) {
+        await interaction.reply({ content: '❌ สิทธิ์นี้เฉพาะผู้ที่ส่งรูปภาพเข้ามาเท่านั้นครับ', ephemeral: true });
+        return;
+      }
+
+      const selectedCat = interaction.values[0];
+      report.selectedCategory = selectedCat;
+
+      if (selectedCat === '__NEW_CATEGORY__') {
+        const modal = new ModalBuilder()
+          .setCustomId(`modal_lost_item_${reportId}`)
+          .setTitle('✨ เพิ่มหมวดหมู่ & บันทึกสิ่งของ');
+
+        const catInput = new TextInputBuilder()
+          .setCustomId('input_new_category')
+          .setLabel('ชื่อหมวดหมู่ใหม่')
+          .setPlaceholder('เช่น อุปกรณ์กีฬา, แว่นตา, ร่ม')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true);
+
+        const titleInput = new TextInputBuilder()
+          .setCustomId('input_item_title')
+          .setLabel('ของที่พบคืออะไร (ชื่อสิ่งของ)')
+          .setPlaceholder('เช่น แว่นตากรอบดำ Ray-Ban, ลูกบาสเกตบอล')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true);
+
+        const locInput = new TextInputBuilder()
+          .setCustomId('input_item_location')
+          .setLabel('หายหรือพบที่ไหน (เว้นว่างได้)')
+          .setPlaceholder('เช่น หน้าห้องสมุด, โดมกิจกรรม หรือเว้นว่างได้')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(false);
+
+        modal.addComponents(
+          new ActionRowBuilder().addComponents(catInput),
+          new ActionRowBuilder().addComponents(titleInput),
+          new ActionRowBuilder().addComponents(locInput)
+        );
+
+        await interaction.showModal(modal);
+      } else {
+        const modal = new ModalBuilder()
+          .setCustomId(`modal_lost_item_${reportId}`)
+          .setTitle(`📦 ระบุรายละเอียด [${selectedCat.slice(0, 25)}]`);
+
+        const titleInput = new TextInputBuilder()
+          .setCustomId('input_item_title')
+          .setLabel('ของที่พบคืออะไร (ชื่อสิ่งของ)')
+          .setPlaceholder('เช่น กระเป๋าสตางค์หนัง Tough, หูฟัง AirPods Pro 2')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true);
+
+        const locInput = new TextInputBuilder()
+          .setCustomId('input_item_location')
+          .setLabel('หายหรือพบที่ไหน (เว้นว่างได้)')
+          .setPlaceholder('เช่น โต๊ะม้าหินอ่อนหน้าอาคาร 3 หรือเว้นว่างได้')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(false);
+
+        modal.addComponents(
+          new ActionRowBuilder().addComponents(titleInput),
+          new ActionRowBuilder().addComponents(locInput)
+        );
+
+        await interaction.showModal(modal);
+      }
+      return;
+    }
+
+    // 📦 เมื่อผู้ใช้ส่งฟอร์มข้อมูลสิ่งของที่พบ
+    if (interaction.isModalSubmit() && interaction.customId.startsWith('modal_lost_item_')) {
+      await interaction.deferReply();
+      const reportId = interaction.customId.replace('modal_lost_item_', '');
+      const report = pendingLostReports.get(reportId);
+      if (!report) {
+        await interaction.editReply({ content: '⚠️ ข้อมูลการแจ้งหมดอายุ กรุณาส่งรูปใหม่อีกครั้งครับ' });
+        return;
+      }
+
+      let category = report.selectedCategory;
+      if (category === '__NEW_CATEGORY__') {
+        category = interaction.fields.getTextInputValue('input_new_category').trim();
+        try {
+          await supabase.from('lost_categories').insert({
+            name: category,
+            code: `CAT-${Date.now().toString(36).toUpperCase()}`,
+            icon: '📦'
+          });
+        } catch (e) {}
+      }
+
+      const itemTitle = interaction.fields.getTextInputValue('input_item_title').trim();
+      let locationFound = '-';
+      try {
+        const loc = interaction.fields.getTextInputValue('input_item_location')?.trim();
+        if (loc) locationFound = loc;
+      } catch (e) {}
+
+      let finderName = interaction.member?.displayName || interaction.user.username;
+      let finderDutyId = '-';
+      let finderAvatar = interaction.user.displayAvatarURL();
+
+      try {
+        const { data: member } = await supabase
+          .from('members')
+          .select('*')
+          .eq('discord_id', interaction.user.id)
+          .maybeSingle();
+
+        if (member) {
+          const fn = member.full_name || `${member.first_name || ''} ${member.last_name || ''}`.trim();
+          finderName = member.nickname ? `${fn} (${member.nickname})` : fn;
+          finderDutyId = member.duty_id || '-';
+          if (member.photo_url) finderAvatar = member.photo_url;
+        }
+      } catch (e) {}
+
+      const now = new Date();
+      const timeStr = now.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }) + ' น.';
+      const dateStr = now.toISOString().slice(0, 10);
+      const itemCode = `LF-${now.getFullYear()}-${String(Date.now()).slice(-4)}`;
+
+      const newItem = {
+        item_code: itemCode,
+        title: itemTitle,
+        category: category,
+        characteristics: itemTitle,
+        location_found: locationFound,
+        found_date: dateStr,
+        found_time: timeStr,
+        status: 'WAITING_OWNER',
+        storage_location: 'ห้องสารวัตรนักเรียน',
+        image_url: report.attachmentUrl,
+        finder_name: finderName,
+        finder_duty_id: finderDutyId,
+        finder_avatar_url: finderAvatar,
+        created_at: now.toISOString(),
+        updated_at: now.toISOString()
+      };
+
+      try {
+        await supabase.from('lost_items').insert(newItem);
+      } catch (e) {}
+
+      try {
+        const cachePath = path.join(__dirname, '../web/lost_items_cache.json');
+        let cacheData = [];
+        if (fs.existsSync(cachePath)) {
+          cacheData = JSON.parse(fs.readFileSync(cachePath, 'utf8') || '[]');
+        }
+        cacheData.unshift({ id: `lf-${Date.now()}`, ...newItem });
+        fs.writeFileSync(cachePath, JSON.stringify(cacheData, null, 2), 'utf8');
+      } catch (e) {}
+
+      pendingLostReports.delete(reportId);
+
+      const successEmbed = new EmbedBuilder()
+        .setTitle(`📦 บันทึกข้อมูลของหายสำเร็จ! [${itemCode}]`)
+        .setDescription(
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+          `🏷️ **สิ่งของ:** ${itemTitle}\n` +
+          `📂 **หมวดหมู่:** ${category}\n` +
+          `📍 **สถานที่พบ:** ${locationFound}\n` +
+          `📅 **วันเวลา:** ${dateStr} (${timeStr})\n` +
+          `🛡️ **ผู้บันทึก:** ${finderName} \`[${finderDutyId}]\`\n` +
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+          `*🌐 ข้อมูลและรูปภาพ (Discord CDN) ซิงค์ขึ้นศูนย์บัญชาการสารวัตรบนหน้าเว็บแล้ว*`
+        )
+        .setImage(report.attachmentUrl)
+        .setThumbnail(finderAvatar)
+        .setColor('#2ECC71')
+        .setFooter({ text: 'SARAWAT LOST & FOUND • โรงเรียนพระนารายณ์' })
+        .setTimestamp();
+
+      const btnRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setLabel('🌐 เปิดดูบนหน้าเว็บ (Web)')
+          .setStyle(ButtonStyle.Link)
+          .setURL(`${getWebDashboardUrl()}/lost-found`)
+      );
+
+      await interaction.editReply({ embeds: [successEmbed], components: [btnRow] });
+      return;
     }
 
     // 1. ยืนยันตัวตน
@@ -5717,6 +6140,72 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // 📦 เส้นทางรับประกาศส่งมอบของหาย: POST /api/discord/announce-handover
+  if (parsedUrl.pathname === '/api/discord/announce-handover' && req.method === 'POST') {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', async () => {
+      try {
+        const data = JSON.parse(body || '{}');
+        const {
+          item_code,
+          title,
+          claimant_name,
+          claimant_contact,
+          delivered_by,
+          delivered_by_duty_id,
+          handover_photo_base64
+        } = data;
+
+        const targetGuild = client.guilds.cache.get(process.env.GUILD_ID) || client.guilds.cache.first();
+        if (!targetGuild) throw new Error('No guild found');
+
+        const chLostFound = findChannel(targetGuild, '📦│แจ้งพบของหาย') ||
+          findChannel(targetGuild, 'แจ้งพบของหาย') ||
+          targetGuild.channels.cache.find(c => c.name.includes('ของหาย'));
+
+        if (!chLostFound) throw new Error('Channel 📦│แจ้งพบของหาย not found');
+
+        const files = [];
+        let filename = 'handover.jpg';
+        if (handover_photo_base64) {
+          const buf = Buffer.from(handover_photo_base64.split(',').pop(), 'base64');
+          filename = `handover_${(item_code || Date.now()).toString().replace(/[^a-zA-Z0-9_-]/g, '_')}.jpg`;
+          files.push(new AttachmentBuilder(buf, { name: filename }));
+        }
+
+        const embed = new EmbedBuilder()
+          .setTitle(`🎉 ส่งมอบสิ่งของคืนเจ้าของเรียบร้อยแล้ว! [${item_code || ''}]`)
+          .setDescription(
+            `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+            `🏷️ **สิ่งของ:** ${title || '-'}\n` +
+            `👤 **ผู้รับคืน:** ${claimant_name || '-'} (${claimant_contact || '-'})\n` +
+            `🛡️ **สารวัตรผู้ส่งมอบ:** ${delivered_by || '-'} \`[${delivered_by_duty_id || '-'}]\`\n` +
+            `📅 **วันเวลา:** ${new Date().toLocaleDateString('th-TH')} (${new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })})\n` +
+            `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+            `*✅ บันทึกรูปหลักฐาน (Discord CDN) และปิดเคสลงระบบสารสนเทศเรียบร้อยแล้ว*`
+          )
+          .setColor('#2ECC71')
+          .setFooter({ text: 'SARAWAT LOST & FOUND • โรงเรียนพระนารายณ์' })
+          .setTimestamp();
+
+        if (files.length > 0) {
+          embed.setImage(`attachment://${filename}`);
+        }
+
+        const sentMsg = await chLostFound.send({ embeds: [embed], files });
+        const discordPhotoUrl = (sentMsg.attachments && sentMsg.attachments.first()) ? sentMsg.attachments.first().url : null;
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, discord_photo_url: discordPhotoUrl }));
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: err.message }));
+      }
+    });
+    return;
+  }
+
   // เส้นทางเปิดดู/พิมพ์ใบเช็คชื่อชั่วคราว: /sheet/:id
   if (parsedUrl.pathname.startsWith('/sheet/')) {
     const sheetId = parsedUrl.pathname.replace('/sheet/', '').split('/')[0].trim();
@@ -5940,7 +6429,6 @@ module.exports = {
   cleanGradeClass,
   cleanFullName,
   pendingPhotoUploads,
-  processBackgroundRemoval,
   getUploadDir,
   getWebDashboardUrl
 };
