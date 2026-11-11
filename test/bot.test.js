@@ -290,16 +290,16 @@ describe('SARAWAT-BOT New Shift & Combined Duty ID Verification', () => {
     assert.equal(delta.obsoleteDayRoles.includes('role_special'), false); // Special role kept
   });
 
-  test('Slash Commands list must contain all 13 commands and valid Discord naming conventions', () => {
+  test('Slash Commands list must contain all 14 commands and valid Discord naming conventions', () => {
     const { slashCommands } = require('../bot.js');
     assert.equal(Array.isArray(slashCommands), true);
-    assert.equal(slashCommands.length, 13);
+    assert.equal(slashCommands.length, 14);
 
     const commandNames = slashCommands.map(c => c.name);
     const expected = [
       'status', 'my-card', 'sync-roles', 'semester',
       'setup-verify', 'setup-leave', 'setup-attendance',
-      'setup-photo', 'setup-appoint', 'setup-lost-found', 'setup-all', 'd-day', 'killfile'
+      'setup-photo', 'setup-appoint', 'setup-lost-found', 'setup-all', 'd-day', 'killfile', 'test-duty'
     ];
 
     for (const exp of expected) {
@@ -417,4 +417,28 @@ describe('SARAWAT-BOT New Shift & Combined Duty ID Verification', () => {
     pendingLostReports.delete(testRepId);
     assert.equal(pendingLostReports.get(testRepId), undefined);
   });
+
+  test('test-duty slash command is properly configured with mode and day options', () => {
+    const { slashCommands } = require('../bot.js');
+    const cmd = slashCommands.find(c => c.name === 'test-duty');
+    assert.ok(cmd, 'test-duty command must exist');
+    const json = cmd.toJSON();
+    assert.equal(json.name, 'test-duty');
+    assert.ok(json.description.includes('ทดสอบระบบแจ้งเตือนเวร'));
+    assert.equal(json.options.length, 2);
+    const modeOpt = json.options.find(o => o.name === 'mode');
+    const dayOpt = json.options.find(o => o.name === 'day');
+    assert.ok(modeOpt);
+    assert.ok(dayOpt);
+    assert.equal(modeOpt.choices.length, 3);
+    assert.equal(dayOpt.choices.length, 7);
+  });
+
+  test('Log channel helper functions are defined and exported', () => {
+    const { getOrCreateLogChannel, sendBotActionLog, broadcastConsolidatedShiftLeaveCard } = require('../bot.js');
+    assert.equal(typeof getOrCreateLogChannel, 'function');
+    assert.equal(typeof sendBotActionLog, 'function');
+    assert.equal(typeof broadcastConsolidatedShiftLeaveCard, 'function');
+  });
+
 });

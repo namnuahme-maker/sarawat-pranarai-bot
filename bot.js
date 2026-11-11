@@ -358,7 +358,34 @@ const slashCommands = [
     .setDescription('🚨 ปฏิบัติการ D-DAY: ล้างข้อมูลสารวัตรทุกนาย และเริ่มใหม่แต่ 0 ทุกช่องแชท (Admin Only)'),
   new SlashCommandBuilder()
     .setName('killfile')
-    .setDescription('🗑️ ลบข้อมูลสิ่งของที่มีอยู่ในระบบของหายทั้งหมด เริ่มใหม่แต่ 0 (Admin Only)')
+    .setDescription('🗑️ ลบข้อมูลสิ่งของที่มีอยู่ในระบบของหายทั้งหมด เริ่มใหม่แต่ 0 (Admin Only)'),
+  new SlashCommandBuilder()
+    .setName('test-duty')
+    .setDescription('🔔 ทดสอบระบบแจ้งเตือนเวรประจำวัน และตรวจสอบรายชื่อสารวัตร (Admin)')
+    .addStringOption(opt =>
+      opt.setName('mode')
+        .setDescription('รูปแบบการทดสอบแจ้งเตือนเวร')
+        .setRequired(false)
+        .addChoices(
+          { name: '🧪 [โหมด 1] dry_run (จำลองตรวจสอบรายชื่อ ไม่ส่ง DM จริง)', value: 'dry_run' },
+          { name: '📨 [โหมด 2] self (ส่งการ์ดตัวอย่างเข้า DM ของฉันคนเดียว)', value: 'self' },
+          { name: '🚀 [โหมด 3] all (ส่งข้อความแจ้งเตือนจริงหาสารวัตรทุกคนในผลัด)', value: 'all' }
+        )
+    )
+    .addStringOption(opt =>
+      opt.setName('day')
+        .setDescription('เลือกผลัดเวรที่ต้องการทดสอบ (ค่าเริ่มต้น: เวรวันนี้)')
+        .setRequired(false)
+        .addChoices(
+          { name: '📅 วันนี้ (Today - คำนวณเวลาไทยอัตโนมัติ)', value: 'today' },
+          { name: '🔵 วันจันทร์ (M, MS, S)', value: 'M' },
+          { name: '🟣 วันอังคาร (T, TS, S)', value: 'T' },
+          { name: '🟢 วันพุธ (W, WS, S)', value: 'W' },
+          { name: '🟠 วันพฤหัสบดี (Ts, TSS, S)', value: 'Ts' },
+          { name: '🔴 วันศุกร์ (F, FS, S)', value: 'F' },
+          { name: '⭐ เวรพิเศษ (S)', value: 'S' }
+        )
+    )
 ];
 
 // 📦 ที่เก็บสถานะชั่วคราวสำหรับการแจ้งพบของหายผ่านรูปภาพใน Discord
@@ -809,9 +836,293 @@ function getTodayDutyCodes(referenceDate = new Date()) {
 }
 
 /**
+ * 📋 ค้นหาหรือสร้างช่องสำหรับเก็บบันทึกการทำงานของระบบ (Audit Log Channel)
+ * ค้นหาช่องชื่อ 'log' หรือ 'Log' หรือสร้างช่อง 'log' ให้อัตโนมัติ
+ */
+async function getOrCreateLogChannel(guild) {
+  if (!guild || !guild.channels || !guild.channels.cache) return null;
+
+  // 1. ตรวจสอบผ่าน LOG_CHANNEL_ID ใน .env
+  if (process.env.LOG_CHANNEL_ID && guild.channels.cache.has && guild.channels.cache.has(process.env.LOG_CHANNEL_ID)) {
+    return guild.channels.cache.get(process.env.LOG_CHANNEL_ID);
+  }
+
+  // 2. ค้นหาช่องที่มีชื่อว่า log (case-insensitive) เช่น "log", "Log", "LOG", "📋│log", "bot-log", "logs"
+  const isLogChan = (c) => {
+    if (!c || typeof c.isTextBased !== 'function' || !c.isTextBased()) return false;
+    const n = (c.name || '').toLowerCase();
+    return n === 'log' || n === 'logs' || n.includes('log') || n.includes('audit-log');
+  };
+
+  let existing = null;
+  if (typeof guild.channels.cache.find === 'function') {
+    existing = guild.channels.cache.find(isLogChan);
+  } else if (typeof guild.channels.cache.values === 'function') {
+    existing = Array.from(guild.channels.cache.values()).find(isLogChan);
+  }
+  if (existing) return existing;
+
+  // 3. หากยังไม่มีในเซิร์ฟเวอร์ และมีสิทธิ์สร้างห้อง ให้สร้างช่อง "log" ให้อัตโนมัติ
+  if (typeof guild.channels.create !== 'function') return null;
+
+  try {
+    let parentCategory = null;
+    if (typeof guild.channels.cache.find === 'function') {
+      parentCategory = guild.channels.cache.find(c => c && c.type === 4 && ((c.name || '').includes('บริหาร') || (c.name || '').includes('ระบบ')));
+    } else if (typeof guild.channels.cache.values === 'function') {
+      parentCategory = Array.from(guild.channels.cache.values()).find(c => c && c.type === 4 && ((c.name || '').includes('บริหาร') || (c.name || '').includes('ระบบ')));
+    }
+
+    const overwrites = [];
+    if (guild.roles?.everyone?.id) {
+      overwrites.push({ id: guild.roles.everyone.id, deny: [PermissionsBitField.Flags.ViewChannel] });
+    }
+
+    const newChan = await guild.channels.create({
+      name: 'log',
+      type: 0, // GuildText
+      parent: parentCategory ? parentCategory.id : undefined,
+      permissionOverwrites: overwrites,
+      topic: 'ห้องบันทึกการกระทำและการแจ้งเตือนของ SARAWAT-BOT (Action Logs)'
+    });
+    console.log(`[LOG] 📋 สร้างช่อง Log อัตโนมัติ: #${newChan.name} (${newChan.id})`);
+
+    const welcomeEmbed = new EmbedBuilder()
+      .setTitle('📋 [SARAWAT AUDIT LOG] เริ่มต้นระบบบันทึกการทำงาน')
+      .setDescription('ช่องนี้ใช้สำหรับบันทึกการกระทำและการแจ้งเตือนที่สำคัญของ SARAWAT-BOT ทั้งหมด\nเช่น การแจ้งเตือนเวรประจำวัน, การขอลาเวร, และการอนุมัติสมาชิก')
+      .setColor('#3498DB')
+      .setTimestamp();
+    await newChan.send({ embeds: [welcomeEmbed] }).catch(() => {});
+
+    return newChan;
+  } catch (err) {
+    console.warn('[LOG] ⚠️ ไม่สามารถสร้างห้อง Log อัตโนมัติได้:', err.message);
+    return null;
+  }
+}
+
+/**
+ * 📣 ส่งบันทึกการกระทำของบอทเข้าห้อง Log (Audit Action Logger)
+ */
+async function sendBotActionLog(guild, {
+  title,
+  description,
+  fields = [],
+  color = '#3498DB',
+  actor = '⚙️ ระบบอัตโนมัติ (SARAWAT-BOT)',
+  thumbnail = null
+}) {
+  try {
+    if (!guild) return null;
+    const logChan = await getOrCreateLogChannel(guild);
+    if (!logChan) {
+      console.log(`[ACTION LOG] ${title}: ${description}`);
+      return null;
+    }
+
+    const embed = new EmbedBuilder()
+      .setTitle(title)
+      .setDescription(description)
+      .setColor(color)
+      .addFields(
+        { name: '👤 ผู้ดำเนินการ', value: actor, inline: true },
+        ...fields
+      )
+      .setFooter({ text: `SARAWAT Action Logger • เวลาไทย: ${new Date().toLocaleTimeString('th-TH', { timeZone: 'Asia/Bangkok' })}` })
+      .setTimestamp();
+
+    if (thumbnail) embed.setThumbnail(thumbnail);
+
+    return await logChan.send({ embeds: [embed] });
+  } catch (err) {
+    console.warn('[ACTION LOG] ⚠️ ส่ง Log ไม่สำเร็จ:', err.message);
+    return null;
+  }
+}
+
+/**
+ * 📋 รวบยอดข้อมูลการลาเวรของผลัดนั้นให้อยู่ในการ์ดเดียว และส่งแบบ Realtime ให้หัวหน้าเวรและห้องเวร
+ */
+async function broadcastConsolidatedShiftLeaveCard(guild, dutyDay, newLeave = null, actor = null) {
+  if (!guild || !dutyDay) return { success: false, reason: 'Missing guild or dutyDay' };
+
+  const baseDay = dutyDay === 'TSS' ? 'Ts' : dutyDay.replace(/S+$/, '');
+  const matchingCodes = [baseDay, baseDay === 'Ts' ? 'TSS' : `${baseDay}S`, 'S'];
+
+  // 1. ดึงสมาชิกทั้งหมดที่สังกัดเวรนี้
+  const { data: shiftMembers = [] } = await supabase
+    .from('members')
+    .select('*')
+    .eq('status', 'ACTIVE')
+    .in('duty_day', matchingCodes)
+    .order('duty_id', { ascending: true });
+
+  // 2. ดึงรายการลาของเวรนี้ที่สร้างในวันนี้ (UTC+7 Thailand)
+  const now = new Date();
+  const bkkDateParts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Bangkok',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).format(now);
+  const thaiMidnight = new Date(`${bkkDateParts}T00:00:00+07:00`);
+
+  const { data: rawLeaves = [] } = await supabase
+    .from('leave_requests')
+    .select('*, members(*)')
+    .in('duty_day', matchingCodes)
+    .gte('created_at', thaiMidnight.toISOString())
+    .order('created_at', { ascending: false });
+
+  // จัดกลุ่มและ Deduplicate การลาต่อ 1 สมาชิก (เอาใบขอล่าสุด)
+  const leavesMap = new Map();
+  for (const l of rawLeaves) {
+    if (!leavesMap.has(l.member_id)) {
+      leavesMap.set(l.member_id, l);
+    }
+  }
+  const leaves = Array.from(leavesMap.values());
+  const leaveMemberIds = new Set(leaves.map(l => l.member_id));
+  const activeOnDuty = shiftMembers.filter(m => !leaveMemberIds.has(m.id));
+
+  const total = shiftMembers.length;
+  const leaveCount = leaves.length;
+  const onDutyCount = activeOnDuty.length;
+  const readinessPct = total > 0 ? Math.round((onDutyCount / total) * 100) : 0;
+
+  const todayThaiDate = now.toLocaleDateString('th-TH', {
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    timeZone: 'Asia/Bangkok'
+  });
+  const shiftLabel = getShiftLabel(dutyDay);
+
+  // รูปแบบรายการผู้ลา
+  const leaveListFormatted = leaves.map((l, idx) => {
+    const mem = l.members || shiftMembers.find(m => m.id === l.member_id) || {};
+    const name = `[${mem.duty_id || 'สารวัตร'}] คุณ${mem.nickname || mem.first_name} (${mem.grade_class || 'ม.ปลาย'})`;
+    const period = l.shift_period || 'ทั้งวัน';
+    const type = l.leave_type || 'ลากิจ';
+    const reason = l.reason || '-';
+    const sub = (l.substitute_name && l.substitute_name !== '-') ? ` | คนแทน: **${l.substitute_name}**` : '';
+    return `**${idx + 1}. ${name}**\n   └ 🏷️ **${type}** (${period}) • *${reason}*${sub}`;
+  }).join('\n\n');
+
+  // รูปแบบรายชื่อผู้พร้อมปฏิบัติหน้าที่
+  const onDutyFormatted = activeOnDuty.map(m => `\`[${m.duty_id || "เวร"}] ${m.nickname}\``).join(' ') || '_ไม่มีสารวัตรพร้อมปฏิบัติหน้าที่_';
+
+  const cardColor = leaveCount === 0 ? '#2ECC71' : (onDutyCount > 0 ? '#F39C12' : '#E74C3C');
+
+  const consolidatedEmbed = new EmbedBuilder()
+    .setTitle(`📋 [รายงานสถานะกำลังพล] สรุปยอดการลาเวรประจำผลัด`)
+    .setDescription(
+      `# 📅 เวร${DAY_NAMES[baseDay] || dutyDay} (${shiftLabel})\n` +
+      `📅 **ประจำวันที่:** **${todayThaiDate}**\n` +
+      `⚡ **อัปเดตแบบ Realtime:** <t:${Math.floor(Date.now() / 1000)}:R>\n\n` +
+      `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+      `### 📊 สรุปความพร้อมกำลังพล\n` +
+      `• 👥 **กำลังพลตามตารางทั้งหมด:** **${total}** นาย\n` +
+      `• ⚠️ **ขอยอดลาเวร:** **${leaveCount}** นาย\n` +
+      `• 👮 **พร้อมปฏิบัติหน้าที่จริง:** **${onDutyCount}** นาย (${readinessPct}%)\n` +
+      `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+      `### 📝 รายชื่อสารวัตรที่ขอลาเวร (${leaveCount} นาย):\n` +
+      `${leaveListFormatted || '✅ ไม่มีสารวัตรขอลาเวรในผลัดนี้ (กำลังพลพร้อม 100%)'}\n\n` +
+      `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+      `### 🛡️ สารวัตรที่พร้อมปฏิบัติหน้าที่ (${onDutyCount} นาย):\n` +
+      `${onDutyFormatted}`
+    )
+    .setColor(cardColor)
+    .setFooter({ text: `กลุ่มงานสารวัตรนักเรียน โรงเรียนพระนารายณ์ • Real-time Duty Roster` })
+    .setTimestamp();
+
+  const webUrl = getWebDashboardUrl();
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setLabel('🌐 ตรวจสอบในเว็บแดชบอร์ด')
+      .setStyle(ButtonStyle.Link)
+      .setURL(`${webUrl}/`),
+    new ButtonBuilder()
+      .setCustomId(`btn_refresh_shift_leaves_${dutyDay}`)
+      .setLabel('🔄 รีเฟรชยอดลา')
+      .setStyle(ButtonStyle.Secondary)
+  );
+
+  // ส่ง/อัปเดตเข้าช่องเวรประจำวัน
+  const dayChannelNameMap = {
+    'M': 'เวรวันจันทร์-m',
+    'T': 'เวรวันอังคาร-t',
+    'W': 'เวรวันพุธ-w',
+    'Ts': 'เวรวันพฤหัสบดี-ts',
+    'F': 'เวรวันศุกร์-f',
+    'S': 'เวรพิเศษ-s'
+  };
+  const targetChannelKeyword = dayChannelNameMap[baseDay] || `เวร${DAY_NAMES[baseDay]}`;
+  const allChans = guild.channels?.cache?.values ? Array.from(guild.channels.cache.values()) : [];
+  const dayChannel = allChans.find(c => c && typeof c.isTextBased === 'function' && c.isTextBased() && (c.name || '').includes(targetChannelKeyword));
+
+  if (dayChannel) {
+    try {
+      const messages = await dayChannel.messages.fetch({ limit: 10 }).catch(() => null);
+      const existingMsg = messages?.find(m => m.author.id === client.user.id && m.embeds?.[0]?.title?.includes('สรุปยอดการลาเวรประจำผลัด'));
+      if (existingMsg) {
+        await existingMsg.edit({ embeds: [consolidatedEmbed], components: [row] });
+      } else {
+        await dayChannel.send({ embeds: [consolidatedEmbed], components: [row] });
+      }
+    } catch (chanErr) {
+      console.warn(`[BROADCAST] Failed to send to day channel ${targetChannelKeyword}:`, chanErr.message);
+    }
+  }
+
+  // ส่งเข้า DM ของหัวหน้าเวรและรองหัวหน้าเวร (ถ้ามีแต่งตั้งไว้)
+  const { data: heads = [] } = await supabase
+    .from('members')
+    .select('*')
+    .in('duty_day', matchingCodes)
+    .in('shift_role', ['SHIFT_HEAD', 'SHIFT_DEPUTY'])
+    .not('discord_id', 'is', null)
+    .eq('status', 'ACTIVE');
+
+  let headDmCount = 0;
+  for (const h of heads) {
+    try {
+      const u = await client.users.fetch(h.discord_id);
+      if (u) {
+        await u.send({ embeds: [consolidatedEmbed], components: [row] });
+        headDmCount++;
+      }
+    } catch (e) {}
+  }
+
+  // ส่งบันทึกเข้าห้อง Log (Audit Logger)
+  await sendBotActionLog(guild, {
+    title: '📝 [อัปเดตยอดลาเวรแบบ Realtime] สรุปยอดการลาประจำผลัด',
+    description: `มีการอัปเดตข้อมูลการลาในผลัด **เวร${DAY_NAMES[baseDay] || dutyDay}** ระบบได้รวบข้อมูลยอดลาทั้งหมดให้อยู่ในการ์ดเดียว และส่งรายงานสรุปให้หัวหน้าเวรเรียบร้อยแล้ว`,
+    color: '#E67E22',
+    actor: actor || '👮 สารวัตรผู้ขอลา',
+    fields: [
+      { name: '👥 สรุปกำลังพล', value: `ทั้งหมด: **${total}** นาย\nลาเวร: **${leaveCount}** นาย\nพร้อมปฏิบัติหน้าที่: **${onDutyCount}** นาย (${readinessPct}%)`, inline: true },
+      { name: '🏷️ ผู้ขอล่าสุด', value: newLeave ? `คุณ**${newLeave.nickname}** (${newLeave.leave_type || 'ลา'})\nเหตุผล: ${newLeave.reason || '-'}` : 'ไม่มีข้อมูลใหม่', inline: true },
+      { name: '📨 การส่งแจ้งเตือน', value: `ช่องเวร: ${dayChannel ? `<#${dayChannel.id}>` : '-'}\nหัวหน้าเวร (DM): ${headDmCount} ท่าน`, inline: false }
+    ]
+  });
+
+  return {
+    success: true,
+    total,
+    leaveCount,
+    onDutyCount,
+    readinessPct,
+    headDmCount
+  };
+}
+
+/**
  * 🔔 ระบบส่งแจ้งเตือนส่วนตัวว่า "วันนี้เป็นเวรของคุณ" พร้อมปุ่มกดขอลาเวรด่วน
  */
-async function sendDailyDutyReminders(guild, options = { dryRun: false, forceDay: null }) {
+async function sendDailyDutyReminders(guild, options = { dryRun: false, forceDay: null, actor: null }) {
   const targetCodes = options.forceDay
     ? [options.forceDay, options.forceDay === 'Ts' ? 'TSS' : `${options.forceDay}S`, 'S']
     : getTodayDutyCodes();
@@ -852,6 +1163,7 @@ async function sendDailyDutyReminders(guild, options = { dryRun: false, forceDay
 
   let sentCount = 0;
   const errors = [];
+  const remindedList = [];
 
   for (const m of members) {
     const baseDay = m.duty_day === 'TSS' ? 'Ts' : m.duty_day.replace(/S+$/, '');
@@ -885,13 +1197,38 @@ async function sendDailyDutyReminders(guild, options = { dryRun: false, forceDay
         if (user) {
           await user.send({ embeds: [embed], components: [row] });
           sentCount++;
+          remindedList.push(`• [${m.duty_id || 'สารวัตร'}] คุณ${m.nickname} (${m.first_name}) — ผลัด ${m.duty_day}`);
         }
       } catch (err) {
         errors.push(`${m.nickname}: ${err.message}`);
       }
     } else {
       sentCount++;
+      remindedList.push(`• [${m.duty_id || 'สารวัตร'}] คุณ${m.nickname} (${m.first_name}) — ผลัด ${m.duty_day}`);
     }
+  }
+
+  // ส่งบันทึกการกระทำเข้าห้อง "Log"
+  if (guild) {
+    await sendBotActionLog(guild, {
+      title: options.dryRun
+        ? '🧪 [ทดสอบจำลอง] ตรวจสอบเวรสารวัตรประจำวัน (Dry-Run)'
+        : '⏰ [แจ้งเตือนเวรประจำวัน] ส่งข้อความหาสารวัตรประจำวัน',
+      description: options.dryRun
+        ? 'ระบบทำการจำลองการตรวจเช็คเวรประจำวัน โดยไม่ส่งข้อความจริงไปยังสารวัตร'
+        : 'ระบบได้ทำการส่งข้อความแจ้งเตือนส่วนตัว (DM) ไปยังสารวัตรที่มีเวรปฏิบัติหน้าที่วันนี้เรียบร้อยแล้ว',
+      color: options.dryRun ? '#F1C40F' : '#2ECC71',
+      actor: options.actor || (options.dryRun ? '🧪 โหมดทดสอบ (Dry-Run)' : '⚙️ ระบบตั้งเวลาอัตโนมัติ (06:30 น.)'),
+      fields: [
+        { name: '📅 วันที่ / ผลัดเป้าหมาย', value: `${todayThaiDate}\nรหัส: \`${targetCodes.join(', ')}\``, inline: true },
+        { name: '📊 จำนวนที่แจ้งเตือน', value: `สำเร็จ: **${sentCount}** นาย\nจากทั้งหมด: **${members.length}** นาย`, inline: true },
+        {
+          name: `👮 รายชื่อสารวัตรที่ได้รับการแจ้งเตือน (${remindedList.length} นาย)`,
+          value: remindedList.length > 0 ? remindedList.slice(0, 15).join('\n') + (remindedList.length > 15 ? `\n...และอีก ${remindedList.length - 15} นาย` : '') : 'ไม่มีสารวัตรเข้าเวรในผลัดนี้',
+          inline: false
+        }
+      ]
+    }).catch(e => console.warn('[LOG] Error logging duty reminder:', e.message));
   }
 
   return {
@@ -899,6 +1236,7 @@ async function sendDailyDutyReminders(guild, options = { dryRun: false, forceDay
     count: sentCount,
     totalTargeted: members.length,
     codes: targetCodes,
+    remindedList,
     errors
   };
 }
@@ -2049,6 +2387,108 @@ client.on('interactionCreate', async (interaction) => {
     // ==========================================================
     if (interaction.isChatInputCommand()) {
       const { commandName } = interaction;
+
+      if (commandName === 'test-duty') {
+        const mode = interaction.options.getString('mode') || 'dry_run';
+        const day = interaction.options.getString('day') || 'today';
+        const forceDay = (day && day !== 'today') ? day : null;
+        const actorName = `👮 คุณ${interaction.member?.displayName || interaction.user.username}`;
+
+        if (mode === 'self') {
+          const { data: callerMember } = await supabase
+            .from('members')
+            .select('*')
+            .eq('discord_id', interaction.user.id)
+            .maybeSingle();
+
+          const sampleMember = callerMember || {
+            id: 'sample-test-id',
+            nickname: interaction.user.username,
+            first_name: interaction.user.username,
+            last_name: '(ทดสอบระบบ)',
+            duty_id: 'TEST-01',
+            duty_day: forceDay || 'TS'
+          };
+
+          const todayThaiDate = new Date().toLocaleDateString('th-TH', {
+            weekday: 'long',
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric',
+            timeZone: 'Asia/Bangkok'
+          });
+          const baseDay = sampleMember.duty_day === 'TSS' ? 'Ts' : sampleMember.duty_day.replace(/S+$/, '');
+          const shiftLabel = getShiftLabel(sampleMember.duty_day);
+
+          const sampleEmbed = new EmbedBuilder()
+            .setTitle('🔔 [ทดสอบ] แจ้งเตือนเวรสารวัตรนักเรียนประจำวัน')
+            .setDescription(
+              `# ☀️ วันนี้เป็นเวรปฏิบัติหน้าที่ของคุณ! (ข้อความทดสอบ)\n\n` +
+              `### 👮 [${sampleMember.duty_id}] คุณ${sampleMember.nickname} (${sampleMember.first_name} ${sampleMember.last_name})\n` +
+              `📅 **ประจำวัน:** **${todayThaiDate}** (${shiftLabel})\n` +
+              `⏰ **ข้อปฏิบัติ:** สวมปลอกแขน/เครื่องแบบสารวัตร และเข้าประจำจุดตรวจตามเวลา\n\n` +
+              `━━━━━━━━━━━━━━━━━━━━\n` +
+              `### ⚠️ หากติดภารกิจและต้องการลาเวร\n` +
+              `กดปุ่ม **"📝 ขอลาเวรวันนี้"** ด้านล่างได้ทันทีเพื่อเลือกประเภทการลาและระบุหมายเหตุ`
+            )
+            .setColor('#F39C12')
+            .setFooter({ text: `[โหมดทดสอบ] เวร${DAY_NAMES[baseDay] || sampleMember.duty_day} • กลุ่มงานสารวัตรนักเรียน` })
+            .setTimestamp();
+
+          const sampleRow = new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+              .setCustomId(`btn_dm_quick_leave_${sampleMember.id}`)
+              .setLabel('📝 ขอลาเวรวันนี้ (ทดสอบกดได้)')
+              .setStyle(ButtonStyle.Danger)
+          );
+
+          try {
+            await interaction.user.send({ embeds: [sampleEmbed], components: [sampleRow] });
+            await sendBotActionLog(interaction.guild, {
+              title: '🧪 [ทดสอบแจ้งเตือนเวร] ส่งตัวอย่างเข้า DM ผู้สั่งการ',
+              description: 'ผู้ดูแลระบบได้ทำการทดสอบส่งการ์ดแจ้งเตือนเวรประจำวันเข้าสู่ DM ส่วนตัวเพื่อตรวจสอบความเรียบร้อย',
+              color: '#3498DB',
+              actor: actorName,
+              fields: [
+                { name: '👤 เป้าหมาย', value: `<@${interaction.user.id}> (${interaction.user.tag})`, inline: true },
+                { name: '🏷️ ผลัดเวรที่ทดสอบ', value: `${forceDay || 'เวรวันนี้'} (${shiftLabel})`, inline: true }
+              ]
+            });
+            await interaction.reply({
+              content: `✅ ส่งตัวอย่างการ์ดแจ้งเตือนเวรเข้าสู่ DM ของคุณ (<@${interaction.user.id}>) เรียบร้อยแล้ว! ตรวจสอบกล่องข้อความส่วนตัวได้เลยครับ`,
+              ephemeral: true
+            });
+          } catch (dmErr) {
+            await interaction.reply({
+              content: '⚠️ ไม่สามารถส่งข้อความเข้า DM ของคุณได้ กรุณาเปิดการตั้งค่า "Allow direct messages from server members" ใน Discord ครับ',
+              ephemeral: true
+            });
+          }
+          return;
+        }
+
+        // Mode: dry_run or all
+        await interaction.deferReply({ ephemeral: true });
+        const isDryRun = mode === 'dry_run';
+        const res = await sendDailyDutyReminders(interaction.guild, {
+          dryRun: isDryRun,
+          forceDay: forceDay,
+          actor: actorName
+        });
+
+        await interaction.editReply({
+          content: isDryRun
+            ? `🧪 **ผลการจำลองแจ้งเตือนเวร (Dry-Run):**\n` +
+              `• ผลัดเวรเป้าหมาย: \`${res.codes?.join(', ') || '-'}\`\n` +
+              `• พบสารวัตรที่มีเวร: **${res.count || 0}** นาย (ทั้งหมดในตาราง: ${res.totalTargeted || 0} นาย)\n` +
+              `• *ระบบไม่ได้ส่งข้อความจริงไปยังผู้ใช้ (บันทึก Log เรียบร้อย)*`
+            : `🔔 **ส่งแจ้งเตือนเวรประจำวันสำเร็จแล้ว!**\n` +
+              `• ผลัดเวรเป้าหมาย: \`${res.codes?.join(', ') || '-'}\`\n` +
+              `• ส่งสำเร็จจริง: **${res.count || 0}** นาย\n` +
+              `• บันทึกข้อมูลและรายชื่อลงห้อง **Log** เรียบร้อยแล้ว`
+        });
+        return;
+      }
 
       if (commandName === 'status') {
         const { count: memberCount } = await supabase.from('members').select('*', { count: 'exact', head: true });
@@ -3905,45 +4345,29 @@ client.on('interactionCreate', async (interaction) => {
         status: 'NOTIFIED'
       });
 
-      const { data: heads } = await supabase
-        .from('members')
-        .select('*')
-        .eq('duty_day', member.duty_day)
-        .in('shift_role', ['SHIFT_HEAD', 'SHIFT_DEPUTY'])
-        .not('discord_id', 'is', null)
-        .eq('status', 'ACTIVE');
+      // 🚀 ส่งและอัปเดตการ์ดสรุปยอดลาเวรประจำผลัดแบบ Realtime รวมเป็น Card เดียวให้หัวหน้าเวรและห้องเวร
+      const targetGuild = interaction.guild || client.guilds.cache.get(process.env.GUILD_ID) || client.guilds.cache.first();
+      await broadcastConsolidatedShiftLeaveCard(targetGuild, member.duty_day, {
+        member_id: member.id,
+        nickname: member.nickname,
+        first_name: member.first_name,
+        last_name: member.last_name,
+        duty_id: member.duty_id,
+        grade_class: member.grade_class,
+        leave_type: leaveType,
+        shift_period: shiftPeriod,
+        reason: reason,
+        substitute: substitute
+      }, `👮 [${member.duty_id || 'สารวัตร'}] คุณ${member.nickname}`);
 
-      const dmEmbed = new EmbedBuilder()
-        .setTitle('🔔 [แจ้งเตือนการลาเวร] มีสมาชิกขอลาเวร')
-        .setColor('#E74C3C')
-        .setDescription(
-          `# 🔔 มีสารวัตรแจ้งขอลาเวรด่วน\n\n` +
-          `### 👮 [${member.duty_id || 'สารวัตร'}] คุณ${member.nickname} (${member.first_name} ${member.last_name})\n` +
-          `🏷️ **ประเภทการลา:** **${leaveType}**\n` +
-          `📅 **วันที่ขอลา:** ${leaveDate} (${shiftPeriod})\n` +
-          `📝 **หมายเหตุ:** ${reason}\n` +
-          `🔄 **ผู้เข้าเวรแทน:** ${substitute}\n` +
-          `📞 **เบอร์โทรติดต่อ:** ${member.phone_number || '-'}`
-        )
-        .setFooter({ text: `เวร${DAY_NAMES[member.duty_day] || member.duty_day} • โรงเรียนพระนารายณ์` });
-
-      let dmSentCount = 0;
-      if (heads && heads.length > 0) {
-        for (const head of heads) {
-          try {
-            const user = await client.users.fetch(head.discord_id);
-            await user.send({ embeds: [dmEmbed] });
-            dmSentCount++;
-          } catch (e) {}
-        }
-      }
-
+      const baseDay = member.duty_day === 'TSS' ? 'Ts' : member.duty_day.replace(/S+$/, '');
       await interaction.editReply({
         content: `# ✅ ส่งคำขอลาเวรเรียบร้อยแล้ว\n` +
-                 `- **ผู้ลา:** [${member.duty_id}] ${member.nickname} (${member.first_name})\n` +
-                 `- **ประเภท:** ${leaveType}\n` +
-                 `- **หมายเหตุ:** ${reason}\n` +
-                 `📨 ส่งข้อความแจ้งเตือนหาหัวหน้าเวรและรองหัวหน้าเวรแล้ว (${dmSentCount} ท่าน)`
+                 `- **ผู้ขอลา:** [${member.duty_id || 'สารวัตร'}] คุณ${member.nickname} (${member.first_name})\n` +
+                 `- **ผลัดเวร:** เวร${DAY_NAMES[baseDay] || member.duty_day} (${shiftPeriod})\n` +
+                 `- **ประเภท:** ${leaveType} (เหตุผล: ${reason})\n` +
+                 `━━━━━━━━━━━━━━━━━━━━\n` +
+                 `📋 **การ์ดสรุปยอดเวร:** ระบบได้รวบรวมข้อมูลให้อยู่ในการ์ดเดียว และอัปเดตแบบ Realtime ไปยังห้องเวรและหัวหน้าเวรเรียบร้อยแล้ว!`
       });
       return;
     }
@@ -4695,6 +5119,91 @@ client.on('interactionCreate', async (interaction) => {
       );
 
       await interaction.editReply({ embeds: [embed], components: [row] });
+      return;
+    }
+
+    // 🔄 ปุ่มรีเฟรชยอดการลาเวรประจำผลัดแบบ Realtime
+    if (interaction.isButton() && interaction.customId.startsWith('btn_refresh_shift_leaves_')) {
+      await interaction.deferReply({ ephemeral: true });
+      const shiftDay = interaction.customId.replace('btn_refresh_shift_leaves_', '');
+      const targetGuild = interaction.guild || client.guilds.cache.get(process.env.GUILD_ID) || client.guilds.cache.first();
+      const res = await broadcastConsolidatedShiftLeaveCard(targetGuild, shiftDay, null, `👮 คุณ${interaction.member?.displayName || interaction.user.username} (กดรีเฟรช)`);
+      await interaction.editReply({
+        content: `✅ รีเฟรชยอดการลาเวรประจำผลัด **${shiftDay}** แบบ Realtime เรียบร้อยแล้ว!\n• กำลังพลทั้งหมด: ${res.total} นาย\n• ขอลา: ${res.leaveCount} นาย\n• พร้อมเข้าเวร: ${res.onDutyCount} นาย (${res.readinessPct}%)`
+      });
+      return;
+    }
+
+    // 📨 ปุ่มทดสอบส่งการ์ดแจ้งเตือนเวรเข้า DM ของฉัน
+    if (interaction.isButton() && interaction.customId === 'btn_test_reminder_self') {
+      await interaction.deferReply({ ephemeral: true });
+      const { data: callerMember } = await supabase
+        .from('members')
+        .select('*')
+        .eq('discord_id', interaction.user.id)
+        .maybeSingle();
+
+      const sampleMember = callerMember || {
+        id: 'sample-test-id',
+        nickname: interaction.user.username,
+        first_name: interaction.user.username,
+        last_name: '(ทดสอบระบบ)',
+        duty_id: 'TEST-01',
+        duty_day: 'TS'
+      };
+
+      const todayThaiDate = new Date().toLocaleDateString('th-TH', {
+        weekday: 'long',
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+        timeZone: 'Asia/Bangkok'
+      });
+      const baseDay = sampleMember.duty_day === 'TSS' ? 'Ts' : sampleMember.duty_day.replace(/S+$/, '');
+      const shiftLabel = getShiftLabel(sampleMember.duty_day);
+
+      const sampleEmbed = new EmbedBuilder()
+        .setTitle('🔔 [ทดสอบ] แจ้งเตือนเวรสารวัตรนักเรียนประจำวัน')
+        .setDescription(
+          `# ☀️ วันนี้เป็นเวรปฏิบัติหน้าที่ของคุณ! (ข้อความทดสอบ)\n\n` +
+          `### 👮 [${sampleMember.duty_id}] คุณ${sampleMember.nickname} (${sampleMember.first_name} ${sampleMember.last_name})\n` +
+          `📅 **ประจำวัน:** **${todayThaiDate}** (${shiftLabel})\n` +
+          `⏰ **ข้อปฏิบัติ:** สวมปลอกแขน/เครื่องแบบสารวัตร และเข้าประจำจุดตรวจตามเวลา\n\n` +
+          `━━━━━━━━━━━━━━━━━━━━\n` +
+          `### ⚠️ หากติดภารกิจและต้องการลาเวร\n` +
+          `กดปุ่ม **"📝 ขอลาเวรวันนี้"** ด้านล่างได้ทันทีเพื่อเลือกประเภทการลาและระบุหมายเหตุ`
+        )
+        .setColor('#F39C12')
+        .setFooter({ text: `[โหมดทดสอบ] เวร${DAY_NAMES[baseDay] || sampleMember.duty_day} • กลุ่มงานสารวัตรนักเรียน` })
+        .setTimestamp();
+
+      const sampleRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`btn_dm_quick_leave_${sampleMember.id}`)
+          .setLabel('📝 ขอลาเวรวันนี้ (ทดสอบกดได้)')
+          .setStyle(ButtonStyle.Danger)
+      );
+
+      try {
+        await interaction.user.send({ embeds: [sampleEmbed], components: [sampleRow] });
+        await sendBotActionLog(interaction.guild, {
+          title: '🧪 [ทดสอบแจ้งเตือนเวร] ส่งตัวอย่างเข้า DM ผู้สั่งการ',
+          description: 'ผู้ดูแลระบบได้ทำการทดสอบส่งการ์ดแจ้งเตือนเวรประจำวันเข้าสู่ DM ส่วนตัวเพื่อตรวจสอบความเรียบร้อย',
+          color: '#3498DB',
+          actor: `👮 คุณ${interaction.member?.displayName || interaction.user.username}`,
+          fields: [
+            { name: '👤 ผู้รับการทดสอบ', value: `<@${interaction.user.id}> (${interaction.user.tag})`, inline: true },
+            { name: '🏷️ ผลัดเวรตัวอย่าง', value: `${shiftLabel}`, inline: true }
+          ]
+        });
+        await interaction.editReply({
+          content: `✅ ส่งตัวอย่างการ์ดแจ้งเตือนเวรเข้าสู่ DM ของคุณ (<@${interaction.user.id}>) เรียบร้อยแล้ว! ตรวจสอบกล่องข้อความส่วนตัวได้เลยครับ`
+        });
+      } catch (dmErr) {
+        await interaction.editReply({
+          content: '⚠️ ไม่สามารถส่งข้อความเข้า DM ของคุณได้ กรุณาเปิดการตั้งค่า "Allow direct messages from server members" ใน Discord ครับ'
+        });
+      }
       return;
     }
 
@@ -6754,5 +7263,8 @@ module.exports = {
   pendingPhotoUploads,
   pendingLostReports,
   getUploadDir,
-  getWebDashboardUrl
+  getWebDashboardUrl,
+  getOrCreateLogChannel,
+  sendBotActionLog,
+  broadcastConsolidatedShiftLeaveCard
 };
