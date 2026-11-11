@@ -6281,13 +6281,13 @@ function getAttendanceDates(dayCode, count = 12) {
   return dates;
 }
 
-// ฟังก์ชันสร้างหน้าเว็บใบเช็คชื่อ A4 มาตรฐาน พร้อมระบุชื่อหัวหน้า/รองหัวหน้าบนหัวกระดาษ
+// ฟังก์ชันสร้างหน้าเว็บใบเช็คชื่อ A4 มาตรฐาน พร้อมระบุชื่อหัวหน้า/รองหัวหน้าบนหัวกระดาษ (OMR + Vision Anchor)
 function generateAttendanceSheetHTML(dayCode, dayName, members) {
   const head = members.find(m => m.shift_role === 'SHIFT_HEAD');
   const deputy = members.find(m => m.shift_role === 'SHIFT_DEPUTY');
 
-  const headText = head ? `[${head.duty_id}] ${head.nickname} (${head.first_name} ${head.last_name})` : 'ยังไม่ได้แต่งตั้ง';
-  const deputyText = deputy ? `[${deputy.duty_id}] ${deputy.nickname} (${deputy.first_name} ${deputy.last_name})` : 'ยังไม่ได้แต่งตั้ง';
+  const headText = head ? `[${head.duty_id || '-'}] ${head.nickname || '-'} (${head.first_name || ''} ${head.last_name || ''})` : 'ยังไม่ได้แต่งตั้ง';
+  const deputyText = deputy ? `[${deputy.duty_id || '-'}] ${deputy.nickname || '-'} (${deputy.first_name || ''} ${deputy.last_name || ''})` : 'ยังไม่ได้แต่งตั้ง';
   const logoBase64 = getSarawatLogoBase64();
   const englishDay = getEnglishDayName(dayCode);
   const isSpecial = dayCode === 'S';
@@ -6296,24 +6296,55 @@ function generateAttendanceSheetHTML(dayCode, dayName, members) {
   const tableColspanHeader = isSpecial 
     ? 'บันทึกการมาปฏิบัติหน้าที่ (สัปดาห์ที่ 1 ถึง 12)' 
     : 'บันทึกการมาปฏิบัติหน้าที่ (เดือน/วัน)';
-  const dateHeaders = isSpecial
-    ? Array.from({ length: 12 }).map((_, i) => `<th style="width: 27px; font-size: 10px;">ส.${i + 1}</th>`).join('')
-    : dates.map(d => `<th style="width: 27px; font-size: 10px; cursor: pointer;" contenteditable="true" title="คลิกเพื่อแก้ไขวันที่">${d}</th>`).join('');
+  const dateHeaders = dates.map((d, idx) => 
+    `<th class="date-header" style="width: 27px; font-size: 7.5pt;" title="สัปดาห์ที่ ${idx + 1}: ${d}">${d}</th>`
+  ).join('');
 
-  const rows = members.map((m, idx) => {
-    const roleTag = m.shift_role === 'SHIFT_HEAD' ? ' <span style="color:#d35400; font-size:10px;">(หัวหน้า)</span>' : (m.shift_role === 'SHIFT_DEPUTY' ? ' <span style="color:#27ae60; font-size:10px;">(รอง)</span>' : '');
-    return `
+  let rows = '';
+  if (members.length > 0) {
+    rows = members.map(m => {
+      const roleTag = m.shift_role === 'SHIFT_HEAD' 
+        ? ' <span style="color: #b91c1c; font-weight: bold; font-size: 7.5pt;">(หัวหน้า)</span>' 
+        : (m.shift_role === 'SHIFT_DEPUTY' ? ' <span style="color: #0284c7; font-weight: bold; font-size: 7.5pt;">(รอง)</span>' : '');
+
+      const dateCells = dates.map((dStr, wIdx) => `
+        <td style="padding: 2px 1px; text-align: center; vertical-align: middle;">
+          <div class="omr-circle" data-duty="${m.duty_id || ''}" data-col="${wIdx}" onclick="this.classList.toggle('marked-present')" title="${m.duty_id || ''} วันที่ ${dStr}: ฝนดำเมื่อมาปฏิบัติหน้าที่ (ม)">
+            ม
+          </div>
+        </td>
+      `).join('');
+
+      return `
+        <tr>
+          <td style="font-family: 'JetBrains Mono', monospace; font-size: 8pt; font-weight: 600; text-align: center;">${m.grade_class || '-'} (${m.student_no || '-'})</td>
+          <td style="font-weight: 700; color: #1a5276; white-space: nowrap; text-align: center;">${m.nickname || '-'}${roleTag}</td>
+          <td style="text-align: left; padding-left: 6px; white-space: nowrap;">${m.first_name || ''} ${m.last_name || ''}</td>
+          <td style="font-family: 'JetBrains Mono', monospace; font-weight: 700; color: #d97706; font-size: 8.5pt; text-align: center;">${m.duty_id || '-'}</td>
+          ${dateCells}
+          <td style="font-size: 7.5pt; color: #64748b; text-align: center;">${m.post || '-'}</td>
+        </tr>
+      `;
+    }).join('');
+  } else {
+    const emptyCells = dates.map(() => `
+      <td style="padding: 2px 1px; text-align: center; vertical-align: middle;">
+        <div class="omr-circle">ม</div>
+      </td>
+    `).join('');
+    rows = Array.from({ length: 3 }).map(() => `
       <tr>
-        <td style="text-align: center; font-weight: bold;">${idx + 1}</td>
-        <td style="font-weight: bold; color: #1a5276;">[${m.duty_id || '-'}] ${m.nickname}${roleTag}</td>
-        <td>${m.first_name} ${m.last_name}</td>
-        <td style="text-align: center;">${m.grade_class} (${m.student_no})</td>
-        ${Array.from({ length: 12 }).map(() => '<td style="text-align: center; width: 28px; height: 26px;">&nbsp;</td>').join('')}
-        <td style="text-align: center;">&nbsp;</td>
-        <td>&nbsp;</td>
+        <td style="text-align: center; color: #999;">-</td>
+        <td style="text-align: center; color: #999;">-</td>
+        <td style="text-align: center; color: #999;">(ว่าง)</td>
+        <td style="text-align: center; color: #999;">-</td>
+        ${emptyCells}
+        <td style="text-align: center; color: #999;">-</td>
       </tr>
-    `;
-  }).join('');
+    `).join('');
+  }
+
+  const qrPayload = `https://sarawat-pranarai-web.onrender.com/attendance-sheet?shift=${dayCode}&q=1`;
 
   return `<!DOCTYPE html>
 <html lang="th">
@@ -6322,221 +6353,385 @@ function generateAttendanceSheetHTML(dayCode, dayName, members) {
   <title>ใบเช็คชื่อ - ${dayName} (${dayCode})</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Chakra+Petch:ital,wght@0,300;0,400;0,500;0,600;0,700;1,300;1,400;1,500;1,600;1,700&family=Rubik:ital,wght@0,300..900;1,300..900&family=Zen+Antique&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Chakra+Petch:ital,wght@0,300;0,400;0,500;0,600;0,700;1,300;1,400;1,500;1,600;1,700&family=Prompt:wght@400;600;700&family=Rubik:ital,wght@0,300..900;1,300..900&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
   <style>
     @page {
       size: A4 landscape;
-      margin: 10mm 10mm;
+      margin: 6mm 8mm;
+    }
+    * {
+      box-sizing: border-box;
     }
     body {
       font-family: 'Sarabun', 'TH Sarabun New', sans-serif;
       margin: 0;
-      padding: 10px 15px;
-      color: #111;
+      padding: 10px;
+      color: #0f172a;
       font-size: 13px;
+      background: #f1f5f9;
+    }
+    .sheet-page {
+      width: 297mm;
+      min-height: 204mm;
+      max-height: 204mm;
+      padding: 6mm 10mm;
+      margin: 0 auto;
+      background: #ffffff;
+      box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);
+      border-radius: 4px;
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      page-break-after: always;
+      break-after: page;
+      overflow: hidden;
+    }
+
+    /* 4 Corner Fiducial Markers for Computer Vision */
+    .fiducial-marker {
+      position: absolute;
+      width: 12mm;
+      height: 12mm;
+      pointer-events: none;
+    }
+    .fiducial-tl { top: 3mm; left: 3mm; }
+    .fiducial-tr { top: 3mm; right: 3mm; }
+    .fiducial-bl { bottom: 3mm; left: 3mm; }
+    .fiducial-br { bottom: 3mm; right: 3mm; }
+
+    .crosshair {
+      width: 100%;
+      height: 100%;
       position: relative;
     }
+    .crosshair::before {
+      content: '';
+      position: absolute;
+      top: 50%;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background: #000000;
+      transform: translateY(-50%);
+    }
+    .crosshair::after {
+      content: '';
+      position: absolute;
+      left: 50%;
+      top: 0;
+      bottom: 0;
+      width: 2px;
+      background: #000000;
+      transform: translateX(-50%);
+    }
+    .corner-target {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 5mm;
+      height: 5mm;
+      background: #000000;
+      transform: translate(-50%, -50%);
+    }
+
+    /* Sheet Corner Tag */
     .sheet-corner-tag {
       position: absolute;
-      top: 10px;
-      right: 15px;
+      top: 6mm;
+      right: 10mm;
       text-align: right;
       border: 1.5px solid #1a5276;
       border-radius: 6px;
-      padding: 4px 10px;
+      padding: 3px 10px;
       background-color: #f8fafc;
       box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+      line-height: 1.1;
     }
     .sheet-corner-tag .tag-english {
       font-family: 'Bebas Neue', 'Chakra Petch', 'Rubik', sans-serif;
-      font-size: 22px;
+      font-size: 20px;
       font-weight: 400;
       color: #1a5276;
       letter-spacing: 1.5px;
-      line-height: 1;
     }
     .sheet-corner-tag .tag-code {
       font-family: 'Chakra Petch', monospace;
       font-size: 11px;
       font-weight: 700;
       color: #d35400;
-      line-height: 1.1;
     }
-    .header {
-      margin-bottom: 8px;
-      padding-right: 110px;
-      padding-left: 20px;
+
+    /* Table Styles with High-Precision Corner Markers */
+    .attendance-table-wrapper {
+      position: relative;
+      margin-top: 3px;
     }
-    .header-content {
+    .table-fiducial {
+      position: absolute;
+      width: 5mm;
+      height: 5mm;
+      pointer-events: none;
+      z-index: 10;
+    }
+    .table-fiducial-tl {
+      top: -2.5mm;
+      left: -2.5mm;
+      border-top: 2.5px solid #000;
+      border-left: 2.5px solid #000;
+    }
+    .table-fiducial-tr {
+      top: -2.5mm;
+      right: -2.5mm;
+      border-top: 2.5px solid #000;
+      border-right: 2.5px solid #000;
+    }
+    .table-fiducial-bl {
+      bottom: -2.5mm;
+      left: -2.5mm;
+      border-bottom: 2.5px solid #000;
+      border-left: 2.5px solid #000;
+    }
+    .table-fiducial-br {
+      bottom: -2.5mm;
+      right: -2.5mm;
+      border-bottom: 2.5px solid #000;
+      border-right: 2.5px solid #000;
+    }
+    .table-fiducial::after {
+      content: '';
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 2.2mm;
+      height: 2.2mm;
+      background: #000;
+      transform: translate(-50%, -50%);
+    }
+
+    table.attendance-table {
+      width: 100%;
+      border-collapse: collapse;
+      border: 1.5px solid #000000;
+      font-size: 8.5pt;
+      margin-top: 0;
+    }
+    table.attendance-table th, table.attendance-table td {
+      border: 1px solid #334155;
+      padding: 3.5px 3px;
+      text-align: center;
+      vertical-align: middle;
+    }
+    table.attendance-table th {
+      background-color: #f1f5f9;
+      color: #0f172a;
+      font-weight: 700;
+      font-family: 'Chakra Petch', 'Prompt', sans-serif;
+    }
+    table.attendance-table th.date-header {
+      font-size: 7.5pt;
+      font-family: 'JetBrains Mono', monospace;
+      min-width: 25px;
+      width: 27px;
+      background-color: #e2e8f0;
+    }
+
+    /* OMR Single Circle: [ ○ ] (ม) มาปฏิบัติหน้าที่ */
+    .omr-circle {
+      width: 14px;
+      height: 14px;
+      border: 1.5px solid #475569;
+      border-radius: 50%;
       display: flex;
       align-items: center;
       justify-content: center;
-      gap: 12px;
-    }
-    .sarawat-logo {
-      width: 52px;
-      height: 52px;
-      border-radius: 50%;
-      object-fit: cover;
-      border: 2px solid #1a5276;
-      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-      flex-shrink: 0;
-    }
-    .header-titles {
-      text-align: center;
-    }
-    .title {
-      font-family: 'Chakra Petch', 'Sarabun', sans-serif;
-      font-size: 22px;
+      font-size: 7pt;
+      font-family: 'Prompt', sans-serif;
       font-weight: 700;
-      color: #0f172a;
-      margin-bottom: 2px;
-      letter-spacing: 0.5px;
-    }
-    .subtitle {
-      font-size: 13px;
-      color: #1e3a8a;
-      font-weight: 600;
-      margin-bottom: 2px;
-    }
-    .sub-meta {
-      font-size: 11.5px;
       color: #475569;
+      cursor: pointer;
+      user-select: none;
+      background: #ffffff;
+      margin: 0 auto;
+      transition: all 0.12s ease;
     }
-    .leadership-bar {
-      background-color: #f8f9f9;
-      border: 1px solid #d5dbdb;
-      padding: 5px 12px;
-      border-radius: 4px;
-      margin-bottom: 8px;
+    .omr-circle:hover {
+      border-color: #0f172a;
+      box-shadow: 0 0 0 2px rgba(15, 23, 42, 0.2);
+    }
+    .omr-circle.marked-present {
+      background-color: #0f172a !important;
+      color: #ffffff !important;
+      border-color: #0f172a !important;
+    }
+
+    /* Signatures footer */
+    .signatures-row {
       display: flex;
       justify-content: space-around;
-      font-size: 13px;
-      font-weight: bold;
-    }
-    .meta-box {
-      display: flex;
-      justify-content: space-between;
-      margin-bottom: 8px;
-      font-size: 12px;
-      color: #444;
-    }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      margin-bottom: 12px;
-    }
-    th, td {
-      border: 1px solid #333;
-      padding: 5px 4px;
-      font-size: 12px;
-    }
-    th {
-      background-color: #eaecee;
+      margin-top: 8px;
       text-align: center;
-      font-weight: bold;
-    }
-    th[contenteditable]:hover {
-      background-color: #fef3c7;
-    }
-    .footer {
-      display: flex;
-      justify-content: space-around;
-      margin-top: 18px;
-      font-size: 13px;
-      text-align: center;
+      font-size: 8pt;
     }
     .sig-line {
-      margin-top: 28px;
-      border-bottom: 1px dotted #333;
-      width: 190px;
+      margin-top: 18px;
+      border-bottom: 1px dotted #334155;
+      width: 180px;
       display: inline-block;
     }
-    @media print {
-      .no-print { display: none; }
-      body { padding: 0; }
-      th[contenteditable] { outline: none; }
-    }
+
     .btn-print {
       background-color: #27ae60;
       color: white;
       border: none;
-      padding: 8px 16px;
-      font-size: 14px;
+      padding: 7px 14px;
+      font-size: 13px;
+      font-weight: bold;
       border-radius: 4px;
       cursor: pointer;
-      margin-bottom: 10px;
+    }
+    .btn-print:hover {
+      background-color: #219653;
+    }
+
+    @media print {
+      body {
+        background: transparent !important;
+        padding: 0 !important;
+        margin: 0 !important;
+      }
+      .sheet-page {
+        box-shadow: none !important;
+        padding: 5mm 8mm !important;
+        margin: 0 !important;
+        border-radius: 0 !important;
+        width: 100% !important;
+        min-height: 200mm !important;
+        max-height: 200mm !important;
+      }
+      .no-print {
+        display: none !important;
+      }
     }
   </style>
 </head>
 <body>
-  <div class="sheet-corner-tag">
-    <div class="tag-english">${englishDay}</div>
-    <div class="tag-code">[${dayCode}]</div>
-  </div>
+  <section class="sheet-page" id="shift-${dayCode}">
+    <!-- 4 Corner Fiducial Markers for Computer Vision -->
+    <div class="fiducial-marker fiducial-tl"><div class="crosshair"><div class="corner-target"></div></div></div>
+    <div class="fiducial-marker fiducial-tr"><div class="crosshair"><div class="corner-target"></div></div></div>
+    <div class="fiducial-marker fiducial-bl"><div class="crosshair"><div class="corner-target"></div></div></div>
+    <div class="fiducial-marker fiducial-br"><div class="crosshair"><div class="corner-target"></div></div></div>
 
-  <div class="no-print" style="text-align: right;">
-    <button class="btn-print" onclick="window.print()">สั่งพิมพ์เอกสารนี้ (Print A4)</button>
-  </div>
+    <!-- Sheet Corner Tag -->
+    <div class="sheet-corner-tag">
+      <div class="tag-english">${englishDay}</div>
+      <div class="tag-code">[${dayCode}]</div>
+    </div>
 
-  <div class="header">
-    <div class="header-content">
-      ${logoBase64 ? `<img src="${logoBase64}" class="sarawat-logo" alt="ตราสารวัตรนักเรียน โรงเรียนพระนารายณ์">` : ''}
-      <div class="header-titles">
-        <div class="title">ใบเช็คชื่อ</div>
-        <div class="subtitle">กลุ่มงานกิจการนักเรียน • ฝ่ายสารวัตรนักเรียน</div>
-        <div class="sub-meta">โรงเรียนพระนารายณ์ • ภาคเรียนที่ ..... / ปีการศึกษา 2569 • ประจำเดือน .................... • ไตรมาสที่ ........</div>
+    <!-- Content Container -->
+    <div>
+      <div class="no-print" style="text-align: right; margin-bottom: 4px;">
+        <button class="btn-print" onclick="window.print()">สั่งพิมพ์เอกสารนี้ (Print A4)</button>
+      </div>
+
+      <!-- Header Section -->
+      <div style="text-align: center; margin-bottom: 4px; padding-right: 90px; padding-left: 10px;">
+        <div style="display: flex; align-items: center; justify-content: center; gap: 10px;">
+          ${logoBase64 ? `<img src="${logoBase64}" style="width: 44px; height: 44px; object-fit: contain; border-radius: 50%; border: 1.5px solid #1a5276;" alt="ตราสารวัตร">` : ''}
+          <div>
+            <div style="font-family: 'Chakra Petch', 'Sarabun', sans-serif; font-size: 18pt; font-weight: 700; color: #0f172a; margin: 0; line-height: 1;">
+              ใบเช็คชื่อ
+            </div>
+            <div style="font-size: 9.5pt; color: #1e3a8a; font-weight: 600; margin-top: 1px;">
+              กลุ่มงานกิจการนักเรียน • ฝ่ายสารวัตรนักเรียน
+            </div>
+            <div style="font-size: 8pt; color: #475569;">
+              โรงเรียนพระนารายณ์ • ภาคเรียนที่ 2 / ปีการศึกษา 2569 • ประจำไตรมาสที่ 1 (12 สัปดาห์)
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Leadership Bar -->
+      <div style="background-color: #f8fafc; border: 1px solid #cbd5e1; padding: 3px 14px; border-radius: 4px; margin-bottom: 4px; display: flex; justify-content: space-around; font-size: 8.5pt;">
+        <span><strong>หัวหน้าเวร:</strong> ${headText}</span>
+        <span><strong>รองหัวหน้าเวร:</strong> ${deputyText}</span>
+      </div>
+
+      <!-- Meta Line & Machine QR Code Anchor -->
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; font-size: 8.5pt; color: #334155;">
+        <div>
+          <span><strong>รอบเวร:</strong> ${dayName} (${dayCode})</span>
+          <span style="margin-left: 14px;"><strong>จำนวนสมาชิกในเวร:</strong> ${members.length} นาย</span>
+          <span style="margin-left: 14px; color: #047857; font-size: 8pt; font-weight: 600;">* ฝนดำในวงกลม [○] (ม) = มาปฏิบัติหน้าที่ | ช่องว่าง = มาสาย (ส) | การลาเวรให้แจ้งผ่านระบบ Discord *</span>
+        </div>
+
+        <!-- Machine QR Session Anchor -->
+        <div style="display: flex; align-items: center; gap: 5px;">
+          <div style="font-family: 'JetBrains Mono', monospace; font-size: 6.5pt; text-align: right; line-height: 1.1; color: #64748b;">
+            <span>Q1-${dayCode}-2026</span><br>
+            <span style="color: #047857; font-weight: 700;">DAILY-SCAN OK</span>
+          </div>
+          <div style="border: 1px solid #000000; padding: 1.5px; background: #ffffff; border-radius: 2px;">
+            <img src="https://api.qrserver.com/v1/create-qr-code/?size=38x38&data=${encodeURIComponent(qrPayload)}" width="38" height="38" alt="QR" style="display:block;">
+          </div>
+        </div>
+      </div>
+
+      <!-- 12-WEEK QUARTER ATTENDANCE TABLE (MATCHING PDF STRUCTURE) -->
+      <div class="attendance-table-wrapper">
+        <div class="table-fiducial table-fiducial-tl" title="TL Marker"></div>
+        <div class="table-fiducial table-fiducial-tr" title="TR Marker"></div>
+        <div class="table-fiducial table-fiducial-bl" title="BL Marker"></div>
+        <div class="table-fiducial table-fiducial-br" title="BR Marker"></div>
+
+        <table class="attendance-table">
+          <thead>
+            <tr>
+              <th rowspan="2" style="width: 58px;">ห้อง/เลขที่</th>
+              <th rowspan="2" style="width: 75px;">ชื่อเล่น</th>
+              <th rowspan="2" style="width: 140px; text-align: left; padding-left: 6px;">ชื่อ - สกุลจริง</th>
+              <th rowspan="2" style="width: 55px;">รหัสประจำตัว</th>
+              <th colspan="12" style="background-color: #f1f5f9; font-weight: bold;">${tableColspanHeader}</th>
+              <th rowspan="2" style="width: 80px;">หมายเหตุ</th>
+            </tr>
+            <tr>
+              ${dateHeaders}
+            </tr>
+          </thead>
+          <tbody>
+            ${rows}
+          </tbody>
+        </table>
       </div>
     </div>
-  </div>
 
-  <div class="leadership-bar">
-    <span><strong>หัวหน้าเวร:</strong> ${headText}</span>
-    <span><strong>รองหัวหน้าเวร:</strong> ${deputyText}</span>
-  </div>
+    <!-- Signatures Row -->
+    <div style="margin-top: 6px;">
+      <div class="signatures-row">
+        <div>
+          <div>ลงชื่อ..................................................................</div>
+          <div style="margin-top: 2px;">( ${head ? `${head.first_name} ${head.last_name}` : '......................................................'} )<br>หัวหน้า${dayName}</div>
+        </div>
+        <div>
+          <div>ลงชื่อ..................................................................</div>
+          <div style="margin-top: 2px;">( ...................................................... )<br>ประธานสารวัตรนักเรียน</div>
+        </div>
+        <div>
+          <div>ลงชื่อ..................................................................</div>
+          <div style="margin-top: 2px;">( ...................................................... )<br>ครูหัวหน้าสารวัตรนักเรียน</div>
+        </div>
+      </div>
 
-  <div class="meta-box">
-    <span><strong>รอบเวร:</strong> ${dayName} (${dayCode})</span>
-    <span><strong>จำนวนสมาชิกในเวร:</strong> ${members.length} นาย</span>
-  </div>
-
-  <table>
-    <thead>
-      <tr>
-        <th rowspan="2" style="width: 30px;">ลำดับ</th>
-        <th rowspan="2" style="width: 100px;">รหัสเวร+ชื่อเล่น</th>
-        <th rowspan="2" style="width: 145px;">ชื่อ - สกุลจริง</th>
-        <th rowspan="2" style="width: 80px;">ชั้น (เลขที่)</th>
-        <th colspan="12">${tableColspanHeader}</th>
-        <th rowspan="2" style="width: 48px;">รวมมา</th>
-        <th rowspan="2" style="width: 80px;">หมายเหตุ</th>
-      </tr>
-      <tr>
-        ${dateHeaders}
-      </tr>
-    </thead>
-    <tbody>
-      ${rows}
-    </tbody>
-  </table>
-
-  <div class="footer">
-    <div>
-      ลงชื่อ<span class="sig-line"></span><br>
-      ( ${head ? `${head.first_name} ${head.last_name}` : '......................................................'} )<br>
-      หัวหน้า${dayName}
+      <!-- Footer Machine Stamp -->
+      <div style="display: flex; justify-content: space-between; align-items: center; border-top: 1px solid #cbd5e1; padding-top: 3px; margin-top: 6px; font-size: 6.5pt; font-family: 'JetBrains Mono', monospace; color: #64748b;">
+        <span>SARAWAT PRANARAI COMMAND OS // 12-WEEK QUARTER ATTENDANCE SYSTEM</span>
+        <span>PAGE 1 OF 1 • A4 LANDSCAPE (297 x 210 mm)</span>
+        <span>SHA256: QUARTER_1_${dayCode}_VERIFIED</span>
+      </div>
     </div>
-    <div>
-      ลงชื่อ<span class="sig-line"></span><br>
-      (......................................................)<br>
-      ประธานสารวัตรนักเรียน
-    </div>
-    <div>
-      ลงชื่อ<span class="sig-line"></span><br>
-      (......................................................)<br>
-      ครูหัวหน้าสารวัตรนักเรียน
-    </div>
-  </div>
+  </section>
 </body>
 </html>`;
 }
@@ -6562,8 +6757,8 @@ function generateCombinedAttendanceSheetHTML(allMembers) {
     const head = shiftMembers.find(m => m.shift_role === 'SHIFT_HEAD');
     const deputy = shiftMembers.find(m => m.shift_role === 'SHIFT_DEPUTY');
 
-    const headText = head ? `[${head.duty_id}] ${head.nickname} (${head.first_name} ${head.last_name})` : 'ยังไม่ได้แต่งตั้ง';
-    const deputyText = deputy ? `[${deputy.duty_id}] ${deputy.nickname} (${deputy.first_name} ${deputy.last_name})` : 'ยังไม่ได้แต่งตั้ง';
+    const headText = head ? `[${head.duty_id || '-'}] ${head.nickname || '-'} (${head.first_name || ''} ${head.last_name || ''})` : 'ยังไม่ได้แต่งตั้ง';
+    const deputyText = deputy ? `[${deputy.duty_id || '-'}] ${deputy.nickname || '-'} (${deputy.first_name || ''} ${deputy.last_name || ''})` : 'ยังไม่ได้แต่งตั้ง';
     const englishDay = getEnglishDayName(shift.code);
     const isSpecial = shift.code === 'S';
     const dates = getAttendanceDates(shift.code, 12);
@@ -6571,103 +6766,166 @@ function generateCombinedAttendanceSheetHTML(allMembers) {
     const tableColspanHeader = isSpecial 
       ? 'บันทึกการมาปฏิบัติหน้าที่ (สัปดาห์ที่ 1 ถึง 12)' 
       : 'บันทึกการมาปฏิบัติหน้าที่ (เดือน/วัน)';
-    const dateHeaders = isSpecial
-      ? Array.from({ length: 12 }).map((_, i) => `<th style="width: 27px; font-size: 10px;">ส.${i + 1}</th>`).join('')
-      : dates.map(d => `<th style="width: 27px; font-size: 10px; cursor: pointer;" contenteditable="true" title="คลิกเพื่อแก้ไขวันที่">${d}</th>`).join('');
+    const dateHeaders = dates.map((d, idx) => 
+      `<th class="date-header" style="width: 27px; font-size: 7.5pt;" title="สัปดาห์ที่ ${idx + 1}: ${d}">${d}</th>`
+    ).join('');
 
     let rows = '';
     if (shiftMembers.length > 0) {
-      rows = shiftMembers.map((m, idx) => {
-        const roleTag = m.shift_role === 'SHIFT_HEAD' ? ' <span style="color:#d35400; font-size:10px;">(หัวหน้า)</span>' : (m.shift_role === 'SHIFT_DEPUTY' ? ' <span style="color:#27ae60; font-size:10px;">(รอง)</span>' : '');
+      rows = shiftMembers.map(m => {
+        const roleTag = m.shift_role === 'SHIFT_HEAD' 
+          ? ' <span style="color: #b91c1c; font-weight: bold; font-size: 7.5pt;">(หัวหน้า)</span>' 
+          : (m.shift_role === 'SHIFT_DEPUTY' ? ' <span style="color: #0284c7; font-weight: bold; font-size: 7.5pt;">(รอง)</span>' : '');
+
+        const dateCells = dates.map((dStr, wIdx) => `
+          <td style="padding: 2px 1px; text-align: center; vertical-align: middle;">
+            <div class="omr-circle" data-duty="${m.duty_id || ''}" data-col="${wIdx}" onclick="this.classList.toggle('marked-present')" title="${m.duty_id || ''} วันที่ ${dStr}: ฝนดำเมื่อมาปฏิบัติหน้าที่ (ม)">
+              ม
+            </div>
+          </td>
+        `).join('');
+
         return `
           <tr>
-            <td style="text-align: center; font-weight: bold;">${idx + 1}</td>
-            <td style="font-weight: bold; color: #1a5276;">[${m.duty_id || '-'}] ${m.nickname}${roleTag}</td>
-            <td>${m.first_name} ${m.last_name}</td>
-            <td style="text-align: center;">${m.grade_class} (${m.student_no})</td>
-            ${Array.from({ length: 12 }).map(() => '<td style="text-align: center; width: 28px; height: 26px;">&nbsp;</td>').join('')}
-            <td style="text-align: center;">&nbsp;</td>
-            <td>&nbsp;</td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-size: 8pt; font-weight: 600; text-align: center;">${m.grade_class || '-'} (${m.student_no || '-'})</td>
+            <td style="font-weight: 700; color: #1a5276; white-space: nowrap; text-align: center;">${m.nickname || '-'}${roleTag}</td>
+            <td style="text-align: left; padding-left: 6px; white-space: nowrap;">${m.first_name || ''} ${m.last_name || ''}</td>
+            <td style="font-family: 'JetBrains Mono', monospace; font-weight: 700; color: #d97706; font-size: 8.5pt; text-align: center;">${m.duty_id || '-'}</td>
+            ${dateCells}
+            <td style="font-size: 7.5pt; color: #64748b; text-align: center;">${m.post || '-'}</td>
           </tr>
         `;
       }).join('');
     } else {
-      rows = Array.from({ length: 3 }).map((_, idx) => `
+      const emptyCells = dates.map(() => `
+        <td style="padding: 2px 1px; text-align: center; vertical-align: middle;">
+          <div class="omr-circle">ม</div>
+        </td>
+      `).join('');
+      rows = Array.from({ length: 3 }).map(() => `
         <tr>
-          <td style="text-align: center; color: #888;">${idx + 1}</td>
+          <td style="text-align: center; color: #999;">-</td>
           <td style="text-align: center; color: #999;">-</td>
           <td style="text-align: center; color: #999;">(ว่าง)</td>
-          <td style="text-align: center;">-</td>
-          ${Array.from({ length: 12 }).map(() => '<td style="text-align: center; width: 28px; height: 26px;">&nbsp;</td>').join('')}
-          <td>&nbsp;</td>
-          <td>&nbsp;</td>
+          <td style="text-align: center; color: #999;">-</td>
+          ${emptyCells}
+          <td style="text-align: center; color: #999;">-</td>
         </tr>
       `).join('');
     }
 
+    const qrPayload = `https://sarawat-pranarai-web.onrender.com/attendance-sheet?shift=${shift.code}&q=1`;
+
     return `
       <section class="sheet-page" id="shift-${shift.code}">
+        <!-- 4 Corner Fiducial Markers for Computer Vision -->
+        <div class="fiducial-marker fiducial-tl"><div class="crosshair"><div class="corner-target"></div></div></div>
+        <div class="fiducial-marker fiducial-tr"><div class="crosshair"><div class="corner-target"></div></div></div>
+        <div class="fiducial-marker fiducial-bl"><div class="crosshair"><div class="corner-target"></div></div></div>
+        <div class="fiducial-marker fiducial-br"><div class="crosshair"><div class="corner-target"></div></div></div>
+
+        <!-- Sheet Corner Tag -->
         <div class="sheet-corner-tag">
           <div class="tag-english">${englishDay}</div>
           <div class="tag-code">[${shift.code}]</div>
         </div>
 
-        <div class="header">
-          <div class="header-content">
-            ${logoBase64 ? `<img src="${logoBase64}" class="sarawat-logo" alt="ตราสารวัตรนักเรียน โรงเรียนพระนารายณ์">` : ''}
-            <div class="header-titles">
-              <div class="title">ใบเช็คชื่อ</div>
-              <div class="subtitle">กลุ่มงานกิจการนักเรียน • ฝ่ายสารวัตรนักเรียน</div>
-              <div class="sub-meta">โรงเรียนพระนารายณ์ • ภาคเรียนที่ ..... / ปีการศึกษา 2569 • ประจำเดือน .................... • ไตรมาสที่ ........</div>
+        <!-- Content Container -->
+        <div>
+          <!-- Header Section -->
+          <div style="text-align: center; margin-bottom: 4px; padding-right: 90px; padding-left: 10px;">
+            <div style="display: flex; align-items: center; justify-content: center; gap: 10px;">
+              ${logoBase64 ? `<img src="${logoBase64}" style="width: 44px; height: 44px; object-fit: contain; border-radius: 50%; border: 1.5px solid #1a5276;" alt="ตราสารวัตร">` : ''}
+              <div>
+                <div style="font-family: 'Chakra Petch', 'Sarabun', sans-serif; font-size: 18pt; font-weight: 700; color: #0f172a; margin: 0; line-height: 1;">
+                  ใบเช็คชื่อ
+                </div>
+                <div style="font-size: 9.5pt; color: #1e3a8a; font-weight: 600; margin-top: 1px;">
+                  กลุ่มงานกิจการนักเรียน • ฝ่ายสารวัตรนักเรียน
+                </div>
+                <div style="font-size: 8pt; color: #475569;">
+                  โรงเรียนพระนารายณ์ • ภาคเรียนที่ 2 / ปีการศึกษา 2569 • ประจำไตรมาสที่ 1 (12 สัปดาห์)
+                </div>
+              </div>
             </div>
           </div>
-        </div>
 
-        <div class="leadership-bar">
-          <span><strong>หัวหน้าเวร:</strong> ${headText}</span>
-          <span><strong>รองหัวหน้าเวร:</strong> ${deputyText}</span>
-        </div>
-
-        <div class="meta-box">
-          <span><strong>รอบเวร:</strong> ${shift.name} (${shift.code})</span>
-          <span><strong>จำนวนสมาชิกในเวร:</strong> ${shiftMembers.length} นาย</span>
-        </div>
-
-        <table>
-          <thead>
-            <tr>
-              <th rowspan="2" style="width: 30px;">ลำดับ</th>
-              <th rowspan="2" style="width: 100px;">รหัสเวร+ชื่อเล่น</th>
-              <th rowspan="2" style="width: 145px;">ชื่อ - สกุลจริง</th>
-              <th rowspan="2" style="width: 80px;">ชั้น (เลขที่)</th>
-              <th colspan="12">${tableColspanHeader}</th>
-              <th rowspan="2" style="width: 48px;">รวมมา</th>
-              <th rowspan="2" style="width: 80px;">หมายเหตุ</th>
-            </tr>
-            <tr>
-              ${dateHeaders}
-            </tr>
-          </thead>
-          <tbody>
-            ${rows}
-          </tbody>
-        </table>
-
-        <div class="footer">
-          <div>
-            ลงชื่อ<span class="sig-line"></span><br>
-            ( ${head ? `${head.first_name} ${head.last_name}` : '......................................................'} )<br>
-            หัวหน้า${shift.name}
+          <!-- Leadership Bar -->
+          <div style="background-color: #f8fafc; border: 1px solid #cbd5e1; padding: 3px 14px; border-radius: 4px; margin-bottom: 4px; display: flex; justify-content: space-around; font-size: 8.5pt;">
+            <span><strong>หัวหน้าเวร:</strong> ${headText}</span>
+            <span><strong>รองหัวหน้าเวร:</strong> ${deputyText}</span>
           </div>
-          <div>
-            ลงชื่อ<span class="sig-line"></span><br>
-            (......................................................)<br>
-            ประธานสารวัตรนักเรียน
+
+          <!-- Meta Line & Machine QR Code Anchor -->
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; font-size: 8.5pt; color: #334155;">
+            <div>
+              <span><strong>รอบเวร:</strong> ${shift.name} (${shift.code})</span>
+              <span style="margin-left: 14px;"><strong>จำนวนสมาชิกในเวร:</strong> ${shiftMembers.length} นาย</span>
+              <span style="margin-left: 14px; color: #047857; font-size: 8pt; font-weight: 600;">* ฝนดำในวงกลม [○] (ม) = มาปฏิบัติหน้าที่ | ช่องว่าง = มาสาย (ส) | การลาเวรให้แจ้งผ่านระบบ Discord *</span>
+            </div>
+
+            <!-- Machine QR Session Anchor -->
+            <div style="display: flex; align-items: center; gap: 5px;">
+              <div style="font-family: 'JetBrains Mono', monospace; font-size: 6.5pt; text-align: right; line-height: 1.1; color: #64748b;">
+                <span>Q1-${shift.code}-2026</span><br>
+                <span style="color: #047857; font-weight: 700;">DAILY-SCAN OK</span>
+              </div>
+              <div style="border: 1px solid #000000; padding: 1.5px; background: #ffffff; border-radius: 2px;">
+                <img src="https://api.qrserver.com/v1/create-qr-code/?size=38x38&data=${encodeURIComponent(qrPayload)}" width="38" height="38" alt="QR" style="display:block;">
+              </div>
+            </div>
           </div>
-          <div>
-            ลงชื่อ<span class="sig-line"></span><br>
-            (......................................................)<br>
-            ครูหัวหน้าสารวัตรนักเรียน
+
+          <!-- 12-WEEK QUARTER ATTENDANCE TABLE WITH CORNER FIDUCIAL MARKERS -->
+          <div class="attendance-table-wrapper">
+            <div class="table-fiducial table-fiducial-tl" title="TL Marker"></div>
+            <div class="table-fiducial table-fiducial-tr" title="TR Marker"></div>
+            <div class="table-fiducial table-fiducial-bl" title="BL Marker"></div>
+            <div class="table-fiducial table-fiducial-br" title="BR Marker"></div>
+
+            <table class="attendance-table">
+              <thead>
+                <tr>
+                  <th rowspan="2" style="width: 58px;">ห้อง/เลขที่</th>
+                  <th rowspan="2" style="width: 75px;">ชื่อเล่น</th>
+                  <th rowspan="2" style="width: 140px; text-align: left; padding-left: 6px;">ชื่อ - สกุลจริง</th>
+                  <th rowspan="2" style="width: 55px;">รหัสประจำตัว</th>
+                  <th colspan="12" style="background-color: #f1f5f9; font-weight: bold;">${tableColspanHeader}</th>
+                  <th rowspan="2" style="width: 80px;">หมายเหตุ</th>
+                </tr>
+                <tr>
+                  ${dateHeaders}
+                </tr>
+              </thead>
+              <tbody>
+                ${rows}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Signatures Row -->
+        <div style="margin-top: 6px;">
+          <div class="signatures-row">
+            <div>
+              <div>ลงชื่อ..................................................................</div>
+              <div style="margin-top: 2px;">( ${head ? `${head.first_name} ${head.last_name}` : '......................................................'} )<br>หัวหน้า${shift.name}</div>
+            </div>
+            <div>
+              <div>ลงชื่อ..................................................................</div>
+              <div style="margin-top: 2px;">( ...................................................... )<br>ประธานสารวัตรนักเรียน</div>
+            </div>
+            <div>
+              <div>ลงชื่อ..................................................................</div>
+              <div style="margin-top: 2px;">( ...................................................... )<br>ครูหัวหน้าสารวัตรนักเรียน</div>
+            </div>
+          </div>
+
+          <!-- Footer Machine Stamp -->
+          <div style="display: flex; justify-content: space-between; align-items: center; border-top: 1px solid #cbd5e1; padding-top: 3px; margin-top: 6px; font-size: 6.5pt; font-family: 'JetBrains Mono', monospace; color: #64748b;">
+            <span>SARAWAT PRANARAI COMMAND OS // 12-WEEK QUARTER ATTENDANCE SYSTEM</span>
+            <span>PAGE 1 OF 1 • A4 LANDSCAPE (297 x 210 mm)</span>
+            <span>SHA256: QUARTER_1_${shift.code}_VERIFIED</span>
           </div>
         </div>
       </section>
@@ -6681,151 +6939,239 @@ function generateCombinedAttendanceSheetHTML(allMembers) {
   <title>ใบเช็คชื่อ - รวมทุกรอบเวร</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Chakra+Petch:ital,wght@0,300;0,400;0,500;0,600;0,700;1,300;1,400;1,500;1,600;1,700&family=Rubik:ital,wght@0,300..900;1,300..900&family=Zen+Antique&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Chakra+Petch:ital,wght@0,300;0,400;0,500;0,600;0,700;1,300;1,400;1,500;1,600;1,700&family=Prompt:wght@400;600;700&family=Rubik:ital,wght@0,300..900;1,300..900&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
   <style>
     @page {
       size: A4 landscape;
-      margin: 10mm 10mm;
+      margin: 6mm 8mm;
+    }
+    * {
+      box-sizing: border-box;
     }
     body {
       font-family: 'Sarabun', 'TH Sarabun New', sans-serif;
       margin: 0;
       padding: 10px;
-      color: #111;
+      color: #0f172a;
       font-size: 13px;
       background: #f1f5f9;
     }
     .sheet-page {
-      position: relative;
+      width: 297mm;
+      min-height: 204mm;
+      max-height: 204mm;
+      padding: 6mm 10mm;
+      margin: 0 auto 20px auto;
       background: #ffffff;
-      padding: 15px 20px;
-      margin-bottom: 25px;
       box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);
-      border-radius: 6px;
+      border-radius: 4px;
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
       page-break-after: always;
       break-after: page;
+      overflow: hidden;
     }
     .sheet-page:last-child {
       page-break-after: auto;
       break-after: auto;
       margin-bottom: 0;
     }
+
+    /* 4 Corner Fiducial Markers for Computer Vision */
+    .fiducial-marker {
+      position: absolute;
+      width: 12mm;
+      height: 12mm;
+      pointer-events: none;
+    }
+    .fiducial-tl { top: 3mm; left: 3mm; }
+    .fiducial-tr { top: 3mm; right: 3mm; }
+    .fiducial-bl { bottom: 3mm; left: 3mm; }
+    .fiducial-br { bottom: 3mm; right: 3mm; }
+
+    .crosshair {
+      width: 100%;
+      height: 100%;
+      position: relative;
+    }
+    .crosshair::before {
+      content: '';
+      position: absolute;
+      top: 50%;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background: #000000;
+      transform: translateY(-50%);
+    }
+    .crosshair::after {
+      content: '';
+      position: absolute;
+      left: 50%;
+      top: 0;
+      bottom: 0;
+      width: 2px;
+      background: #000000;
+      transform: translateX(-50%);
+    }
+    .corner-target {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 5mm;
+      height: 5mm;
+      background: #000000;
+      transform: translate(-50%, -50%);
+    }
+
+    /* Sheet Corner Tag */
     .sheet-corner-tag {
       position: absolute;
-      top: 10px;
-      right: 15px;
+      top: 6mm;
+      right: 10mm;
       text-align: right;
       border: 1.5px solid #1a5276;
       border-radius: 6px;
-      padding: 4px 10px;
+      padding: 3px 10px;
       background-color: #f8fafc;
       box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+      line-height: 1.1;
     }
     .sheet-corner-tag .tag-english {
       font-family: 'Bebas Neue', 'Chakra Petch', 'Rubik', sans-serif;
-      font-size: 22px;
+      font-size: 20px;
       font-weight: 400;
       color: #1a5276;
       letter-spacing: 1.5px;
-      line-height: 1;
     }
     .sheet-corner-tag .tag-code {
       font-family: 'Chakra Petch', monospace;
       font-size: 11px;
       font-weight: 700;
       color: #d35400;
-      line-height: 1.1;
     }
-    .header {
-      margin-bottom: 8px;
-      padding-right: 110px;
-      padding-left: 20px;
+
+    /* Table Styles with High-Precision Corner Markers */
+    .attendance-table-wrapper {
+      position: relative;
+      margin-top: 3px;
     }
-    .header-content {
+    .table-fiducial {
+      position: absolute;
+      width: 5mm;
+      height: 5mm;
+      pointer-events: none;
+      z-index: 10;
+    }
+    .table-fiducial-tl {
+      top: -2.5mm;
+      left: -2.5mm;
+      border-top: 2.5px solid #000;
+      border-left: 2.5px solid #000;
+    }
+    .table-fiducial-tr {
+      top: -2.5mm;
+      right: -2.5mm;
+      border-top: 2.5px solid #000;
+      border-right: 2.5px solid #000;
+    }
+    .table-fiducial-bl {
+      bottom: -2.5mm;
+      left: -2.5mm;
+      border-bottom: 2.5px solid #000;
+      border-left: 2.5px solid #000;
+    }
+    .table-fiducial-br {
+      bottom: -2.5mm;
+      right: -2.5mm;
+      border-bottom: 2.5px solid #000;
+      border-right: 2.5px solid #000;
+    }
+    .table-fiducial::after {
+      content: '';
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 2.2mm;
+      height: 2.2mm;
+      background: #000;
+      transform: translate(-50%, -50%);
+    }
+
+    table.attendance-table {
+      width: 100%;
+      border-collapse: collapse;
+      border: 1.5px solid #000000;
+      font-size: 8.5pt;
+      margin-top: 0;
+    }
+    table.attendance-table th, table.attendance-table td {
+      border: 1px solid #334155;
+      padding: 3.5px 3px;
+      text-align: center;
+      vertical-align: middle;
+    }
+    table.attendance-table th {
+      background-color: #f1f5f9;
+      color: #0f172a;
+      font-weight: 700;
+      font-family: 'Chakra Petch', 'Prompt', sans-serif;
+    }
+    table.attendance-table th.date-header {
+      font-size: 7.5pt;
+      font-family: 'JetBrains Mono', monospace;
+      min-width: 25px;
+      width: 27px;
+      background-color: #e2e8f0;
+    }
+
+    /* OMR Single Circle: [ ○ ] (ม) มาปฏิบัติหน้าที่ */
+    .omr-circle {
+      width: 14px;
+      height: 14px;
+      border: 1.5px solid #475569;
+      border-radius: 50%;
       display: flex;
       align-items: center;
       justify-content: center;
-      gap: 12px;
-    }
-    .sarawat-logo {
-      width: 52px;
-      height: 52px;
-      border-radius: 50%;
-      object-fit: cover;
-      border: 2px solid #1a5276;
-      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-      flex-shrink: 0;
-    }
-    .header-titles {
-      text-align: center;
-    }
-    .title {
-      font-family: 'Chakra Petch', 'Sarabun', sans-serif;
-      font-size: 22px;
+      font-size: 7pt;
+      font-family: 'Prompt', sans-serif;
       font-weight: 700;
-      color: #0f172a;
-      margin-bottom: 2px;
-      letter-spacing: 0.5px;
-    }
-    .subtitle {
-      font-size: 13px;
-      color: #1e3a8a;
-      font-weight: 600;
-      margin-bottom: 2px;
-    }
-    .sub-meta {
-      font-size: 11.5px;
       color: #475569;
+      cursor: pointer;
+      user-select: none;
+      background: #ffffff;
+      margin: 0 auto;
+      transition: all 0.12s ease;
     }
-    .leadership-bar {
-      background-color: #f8f9f9;
-      border: 1px solid #d5dbdb;
-      padding: 5px 12px;
-      border-radius: 4px;
-      margin-bottom: 8px;
+    .omr-circle:hover {
+      border-color: #0f172a;
+      box-shadow: 0 0 0 2px rgba(15, 23, 42, 0.2);
+    }
+    .omr-circle.marked-present {
+      background-color: #0f172a !important;
+      color: #ffffff !important;
+      border-color: #0f172a !important;
+    }
+
+    /* Signatures footer */
+    .signatures-row {
       display: flex;
       justify-content: space-around;
-      font-size: 13px;
-      font-weight: bold;
-    }
-    .meta-box {
-      display: flex;
-      justify-content: space-between;
-      margin-bottom: 8px;
-      font-size: 12px;
-      color: #444;
-    }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      margin-bottom: 12px;
-    }
-    th, td {
-      border: 1px solid #333;
-      padding: 5px 4px;
-      font-size: 12px;
-    }
-    th {
-      background-color: #eaecee;
+      margin-top: 8px;
       text-align: center;
-      font-weight: bold;
-    }
-    th[contenteditable]:hover {
-      background-color: #fef3c7;
-    }
-    .footer {
-      display: flex;
-      justify-content: space-around;
-      margin-top: 18px;
-      font-size: 13px;
-      text-align: center;
+      font-size: 8pt;
     }
     .sig-line {
-      margin-top: 28px;
-      border-bottom: 1px dotted #333;
-      width: 190px;
+      margin-top: 18px;
+      border-bottom: 1px dotted #334155;
+      width: 180px;
       display: inline-block;
     }
+
+    /* Nav bar for combined sheet */
     .nav-bar {
       position: sticky;
       top: 0;
@@ -6872,6 +7218,7 @@ function generateCombinedAttendanceSheetHTML(allMembers) {
     .btn-print:hover {
       background-color: #219653;
     }
+
     @media print {
       body {
         background: transparent !important;
@@ -6880,14 +7227,16 @@ function generateCombinedAttendanceSheetHTML(allMembers) {
       }
       .sheet-page {
         box-shadow: none !important;
-        padding: 0 !important;
+        padding: 5mm 8mm !important;
         margin: 0 !important;
         border-radius: 0 !important;
+        width: 100% !important;
+        min-height: 200mm !important;
+        max-height: 200mm !important;
       }
       .no-print {
         display: none !important;
       }
-      th[contenteditable] { outline: none; }
     }
   </style>
 </head>
