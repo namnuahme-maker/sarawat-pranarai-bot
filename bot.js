@@ -950,8 +950,10 @@ async function sendBotActionLog(guild, {
 async function broadcastConsolidatedShiftLeaveCard(guild, dutyDay, newLeave = null, actor = null) {
   if (!guild || !dutyDay) return { success: false, reason: 'Missing guild or dutyDay' };
 
-  const baseDay = dutyDay === 'TSS' ? 'Ts' : dutyDay.replace(/S+$/, '');
-  const matchingCodes = [baseDay, baseDay === 'Ts' ? 'TSS' : `${baseDay}S`, 'S'];
+  const baseDay = dutyDay === 'S' ? 'S' : (dutyDay === 'TSS' ? 'Ts' : (dutyDay.replace(/S+$/, '') || dutyDay));
+  const matchingCodes = baseDay === 'S'
+    ? ['S', 'MS', 'TS', 'WS', 'TSS', 'FS']
+    : [baseDay, baseDay === 'Ts' ? 'TSS' : `${baseDay}S`, 'S'];
 
   // 1. ดึงสมาชิกทั้งหมดที่สังกัดเวรนี้
   const { data: shiftMembers = [] } = await supabase
@@ -3889,7 +3891,7 @@ client.on('interactionCreate', async (interaction) => {
               if (member.role === 'VICE_PRESIDENT' && ROLE_IDS.VICE_PRESIDENT) rolesToAdd.push(ROLE_IDS.VICE_PRESIDENT);
               
               // แจกยศหัวหน้าเวร / รองหัวหน้าเวรประจำวันนั้นๆ
-              const baseDay = member.duty_day === 'TSS' ? 'Ts' : member.duty_day.replace(/S+$/, '');
+              const baseDay = member.duty_day === 'S' ? 'S' : (member.duty_day === 'TSS' ? 'Ts' : (member.duty_day.replace(/S+$/, '') || member.duty_day));
               if (member.shift_role === 'SHIFT_HEAD') {
                 if (ROLE_IDS.HEADS[baseDay]) rolesToAdd.push(ROLE_IDS.HEADS[baseDay]);
                 if (member.duty_day.endsWith('S') && ROLE_IDS.HEAD_S) rolesToAdd.push(ROLE_IDS.HEAD_S);
@@ -4045,9 +4047,9 @@ client.on('interactionCreate', async (interaction) => {
         const attachment = new AttachmentBuilder(buffer, { name: 'ตารางเช็คชื่อ_รวมทุกเวร_12สัปดาห์.html' });
 
         const embed = new EmbedBuilder()
-          .setTitle('📄 ตารางเช็คชื่อ: รวมทุกรอบเวร (M, T, W, Ts, F, S)')
+          .setTitle('📄 ตารางเช็คชื่อ: รวมทุกรอบเวร (M, T, W, Ts, F)')
           .setDescription(
-            `เวร: รวมทุกรอบเวร (6 รอบเวร)\n` +
+            `เวร: รวมทุกรอบเวร (5 รอบเวร วันจันทร์ - ศุกร์)\n` +
             `สมาชิกทั้งหมด: ${members.length} นาย\n` +
             `ลิงก์ออนไลน์: ${onlineUrl}\n` +
             `อายุลิงก์: 30 นาที (ลบอัตโนมัติ)\n` +
@@ -4080,13 +4082,12 @@ client.on('interactionCreate', async (interaction) => {
         .setCustomId('select_attendance_sheet_day')
         .setPlaceholder('📅 เลือกเวรที่ต้องการพิมพ์ใบตารางเช็คชื่อ')
         .addOptions([
-          { label: '📑 ขอรวม (ทุกรอบเวร M, T, W, Ts, F, S)', value: 'ALL', description: 'รวมสมาชิกทุกรอบเวรในเอกสารเดียว', emoji: '📑' },
+          { label: '📑 ขอรวม (ทุกรอบเวร M, T, W, Ts, F)', value: 'ALL', description: 'รวมสมาชิกทุกรอบเวรในเอกสารเดียว (5 กะ วันจันทร์ - ศุกร์)', emoji: '📑' },
           { label: 'วันจันทร์ (M)', value: 'M', description: 'ใบเช็คชื่อสารวัตรเวรวันจันทร์', emoji: '🔵' },
           { label: 'วันอังคาร (T)', value: 'T', description: 'ใบเช็คชื่อสารวัตรเวรวันอังคาร', emoji: '🟣' },
           { label: 'วันพุธ (W)', value: 'W', description: 'ใบเช็คชื่อสารวัตรเวรวันพุธ', emoji: '🟢' },
           { label: 'วันพฤหัสบดี (Ts)', value: 'Ts', description: 'ใบเช็คชื่อสารวัตรเวรวันพฤหัสบดี', emoji: '🟠' },
-          { label: 'วันศุกร์ (F)', value: 'F', description: 'ใบเช็คชื่อสารวัตรเวรวันศุกร์', emoji: '🔴' },
-          { label: 'เวรพิเศษทุกวัน (S)', value: 'S', description: 'ใบเช็คชื่อสารวัตรเวรพิเศษ (มาทุกวัน)', emoji: '⭐' }
+          { label: 'วันศุกร์ (F)', value: 'F', description: 'ใบเช็คชื่อสารวัตรเวรวันศุกร์', emoji: '🔴' }
         ]);
 
       const row = new ActionRowBuilder().addComponents(selectMenu);
@@ -4128,9 +4129,9 @@ client.on('interactionCreate', async (interaction) => {
         const attachment = new AttachmentBuilder(buffer, { name: 'ตารางเช็คชื่อ_รวมทุกเวร_12สัปดาห์.html' });
 
         const embed = new EmbedBuilder()
-          .setTitle('📄 ตารางเช็คชื่อ: รวมทุกรอบเวร (M, T, W, Ts, F, S)')
+          .setTitle('📄 ตารางเช็คชื่อ: รวมทุกรอบเวร (M, T, W, Ts, F)')
           .setDescription(
-            `เวร: รวมทุกรอบเวร (6 รอบเวร)\n` +
+            `เวร: รวมทุกรอบเวร (5 รอบเวร วันจันทร์ - ศุกร์)\n` +
             `สมาชิกทั้งหมด: ${members.length} นาย\n` +
             `ลิงก์ออนไลน์: ${onlineUrl}\n` +
             `อายุลิงก์: 30 นาที (ลบอัตโนมัติ)\n` +
@@ -4376,7 +4377,7 @@ client.on('interactionCreate', async (interaction) => {
         substitute: substitute
       }, `👮 [${member.duty_id || 'สารวัตร'}] คุณ${member.nickname}`);
 
-      const baseDay = member.duty_day === 'TSS' ? 'Ts' : member.duty_day.replace(/S+$/, '');
+      const baseDay = member.duty_day === 'S' ? 'S' : (member.duty_day === 'TSS' ? 'Ts' : (member.duty_day.replace(/S+$/, '') || member.duty_day));
       await interaction.editReply({
         content: `# ✅ ส่งคำขอลาเวรเรียบร้อยแล้ว\n` +
                  `- **ผู้ขอลา:** [${member.duty_id || 'สารวัตร'}] คุณ${member.nickname} (${member.first_name})\n` +
@@ -5059,8 +5060,10 @@ client.on('interactionCreate', async (interaction) => {
       });
 
       // ค้นหาหัวหน้าเวรและรองหัวหน้าเวรประจำวัน
-      const baseDay = member.duty_day === 'TSS' ? 'Ts' : member.duty_day.replace(/S+$/, '');
-      const targetDays = [member.duty_day, baseDay].filter(Boolean);
+      const baseDay = member.duty_day === 'S' ? 'S' : (member.duty_day === 'TSS' ? 'Ts' : (member.duty_day.replace(/S+$/, '') || member.duty_day));
+      const targetDays = baseDay === 'S'
+        ? ['S', 'MS', 'TS', 'WS', 'TSS', 'FS']
+        : [member.duty_day, baseDay].filter(Boolean);
       const { data: heads } = await supabase
         .from('members')
         .select('*')
@@ -6743,8 +6746,7 @@ function generateCombinedAttendanceSheetHTML(allMembers) {
     { code: 'T', name: 'เวรวันอังคาร' },
     { code: 'W', name: 'เวรวันพุธ' },
     { code: 'Ts', name: 'เวรวันพฤหัสบดี' },
-    { code: 'F', name: 'เวรวันศุกร์' },
-    { code: 'S', name: 'เวรพิเศษ (ทุกวัน)' }
+    { code: 'F', name: 'เวรวันศุกร์' }
   ];
 
   const sectionsHtml = shifts.map(shift => {
@@ -7252,7 +7254,6 @@ function generateCombinedAttendanceSheetHTML(allMembers) {
       <a href="#shift-W" class="nav-btn">พุธ</a>
       <a href="#shift-Ts" class="nav-btn">พฤหัสบดี</a>
       <a href="#shift-F" class="nav-btn">ศุกร์</a>
-      <a href="#shift-S" class="nav-btn">เวรพิเศษ</a>
       <button class="btn-print" onclick="window.print()">สั่งพิมพ์เอกสารทั้งหมด (Print All A4)</button>
     </div>
   </div>
