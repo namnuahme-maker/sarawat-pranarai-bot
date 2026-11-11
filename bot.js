@@ -550,6 +550,10 @@ async function sendAttendancePanel(channel) {
       .setLabel('🚨 ขอออกปฏิบัติหน้าที่')
       .setStyle(ButtonStyle.Primary),
     new ButtonBuilder()
+      .setLabel('⚡ สแกนเช็คชื่อ AI')
+      .setStyle(ButtonStyle.Link)
+      .setURL(`${getWebDashboardUrl()}/attendance-scan`),
+    new ButtonBuilder()
       .setLabel('🌐 เข้าสู่เว็บไซต์ระบบ')
       .setStyle(ButtonStyle.Link)
       .setURL(getWebDashboardUrl())
@@ -4055,7 +4059,11 @@ client.on('interactionCreate', async (interaction) => {
           new ButtonBuilder()
             .setLabel('🌐 เปิดดู / สั่งพิมพ์ออนไลน์')
             .setStyle(ButtonStyle.Link)
-            .setURL(onlineUrl)
+            .setURL(onlineUrl),
+          new ButtonBuilder()
+            .setLabel('⚡ สแกนเช็คชื่อด้วย AI')
+            .setStyle(ButtonStyle.Link)
+            .setURL(`${getWebDashboardUrl()}/attendance-scan`)
         );
 
         await interaction.editReply({
@@ -4134,7 +4142,11 @@ client.on('interactionCreate', async (interaction) => {
           new ButtonBuilder()
             .setLabel('🌐 เปิดดู / สั่งพิมพ์ออนไลน์')
             .setStyle(ButtonStyle.Link)
-            .setURL(onlineUrl)
+            .setURL(onlineUrl),
+          new ButtonBuilder()
+            .setLabel('⚡ สแกนเช็คชื่อด้วย AI')
+            .setStyle(ButtonStyle.Link)
+            .setURL(`${getWebDashboardUrl()}/attendance-scan`)
         );
 
         await interaction.editReply({
@@ -4201,7 +4213,11 @@ client.on('interactionCreate', async (interaction) => {
         new ButtonBuilder()
           .setLabel('🌐 เปิดดู / สั่งพิมพ์ออนไลน์')
           .setStyle(ButtonStyle.Link)
-          .setURL(onlineUrl)
+          .setURL(onlineUrl),
+        new ButtonBuilder()
+          .setLabel('⚡ สแกนเช็คชื่อด้วย AI')
+          .setStyle(ButtonStyle.Link)
+          .setURL(`${getWebDashboardUrl()}/attendance-scan?shift=${selectedDay}`)
       );
 
       await interaction.editReply({
