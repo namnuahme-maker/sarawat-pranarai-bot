@@ -781,10 +781,23 @@ async function refreshAllChannelsAndPanels(guild, options = { purge: true }) {
 }
 
 /**
- * 📅 ดึงรหัสเวรที่ต้องปฏิบัติหน้าที่สำหรับวันนี้
+ * 🇹🇭 คำนวณวันในสัปดาห์ตามเวลาประเทศไทย (Asia/Bangkok, UTC+7) เสมอ
+ * ป้องกันปัญหา Server บน Cloud (เช่น Render/Docker) รัน Timezone เป็น UTC
  */
-function getTodayDutyCodes() {
-  const dayNum = new Date().getDay(); // 0 = Sun, 1 = Mon, ..., 5 = Fri, 6 = Sat
+function getThaiDayOfWeek(date = new Date()) {
+  const weekday = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Bangkok',
+    weekday: 'short'
+  }).format(date);
+  const dayIndexMap = { 'Sun': 0, 'Mon': 1, 'Tue': 2, 'Wed': 3, 'Thu': 4, 'Fri': 5, 'Sat': 6 };
+  return dayIndexMap[weekday] ?? 0;
+}
+
+/**
+ * 📅 ดึงรหัสเวรที่ต้องปฏิบัติหน้าที่สำหรับวันนี้ (อิงเวลาประเทศไทย UTC+7 เสมอ)
+ */
+function getTodayDutyCodes(referenceDate = new Date()) {
+  const dayNum = getThaiDayOfWeek(referenceDate);
   const dayMap = {
     1: ['M', 'MS', 'S'],
     2: ['T', 'TS', 'S'],
@@ -833,7 +846,8 @@ async function sendDailyDutyReminders(guild, options = { dryRun: false, forceDay
     weekday: 'long',
     year: 'numeric',
     month: 'long',
-    day: 'numeric'
+    day: 'numeric',
+    timeZone: 'Asia/Bangkok'
   });
 
   let sentCount = 0;
@@ -992,7 +1006,7 @@ async function runSystemDiagnostics(guild) {
 
   // 5. ตรวจสอบระบบแจ้งเตือนเวรและเวรประจำวัน
   const todayCodes = getTodayDutyCodes();
-  const dayName = new Date().toLocaleDateString('th-TH', { weekday: 'long' });
+  const dayName = new Date().toLocaleDateString('th-TH', { weekday: 'long', timeZone: 'Asia/Bangkok' });
   try {
     const { count: dutyCount } = await supabase
       .from('members')
@@ -1319,21 +1333,30 @@ client.once(Events.ClientReady || 'ready', async () => {
   }, 1000 * 60 * 60 * 24 * 3);
   if (pingTimer.unref) pingTimer.unref();
 
-  // ⏰ ระบบแจ้งเตือนเวรประจำวันอัตโนมัติ (Daily Duty Reminder) เวลา 06:30 น.
+  // ⏰ ระบบแจ้งเตือนเวรประจำวันอัตโนมัติ (Daily Duty Reminder) เวลา 06:30 น. (เวลาไทย UTC+7)
   let lastReminderDate = '';
   const reminderTimer = setInterval(async () => {
     try {
       const now = new Date();
-      const thaiTime = new Date(now.getTime() + (7 * 60 * 60 * 1000));
-      const hours = thaiTime.getUTCHours();
-      const minutes = thaiTime.getUTCMinutes();
-      const todayKey = thaiTime.toISOString().slice(0, 10);
+      const bkkParts = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Asia/Bangkok',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false
+      }).formatToParts(now).reduce((acc, p) => { acc[p.type] = p.value; return acc; }, {});
+
+      const hours = parseInt(bkkParts.hour, 10);
+      const minutes = parseInt(bkkParts.minute, 10);
+      const todayKey = `${bkkParts.year}-${bkkParts.month}-${bkkParts.day}`;
 
       if (hours === 6 && minutes >= 30 && lastReminderDate !== todayKey) {
         lastReminderDate = todayKey;
         const targetGuild = client.guilds.cache.get(process.env.GUILD_ID) || client.guilds.cache.first();
         if (targetGuild) {
-          console.log(`[SCHEDULE] ⏰ เริ่มส่งข้อความแจ้งเตือนเวรประจำวันอัตโนมัติ (${todayKey})`);
+          console.log(`[SCHEDULE] ⏰ เริ่มส่งข้อความแจ้งเตือนเวรประจำวันอัตโนมัติ (${todayKey}) [เวลาไทย: ${bkkParts.hour}:${bkkParts.minute}]`);
           await sendDailyDutyReminders(targetGuild, { dryRun: false });
         }
       }
@@ -5719,7 +5742,7 @@ function getAttendanceDates(dayCode, count = 12) {
   const targetDay = dayIndexMap[baseDay] || 1;
 
   const now = new Date();
-  const currentDay = now.getDay();
+  const currentDay = getThaiDayOfWeek(now);
   const diff = targetDay - currentDay;
   const start = new Date(now);
   start.setDate(now.getDate() + diff);
@@ -6710,6 +6733,7 @@ module.exports = {
   executeDDay,
   executeKillFile,
   refreshAllChannelsAndPanels,
+  getThaiDayOfWeek,
   getTodayDutyCodes,
   sendDailyDutyReminders,
   runSystemDiagnostics,

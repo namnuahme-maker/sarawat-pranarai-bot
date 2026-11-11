@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const { ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
 const {
+  getThaiDayOfWeek,
   getTodayDutyCodes,
   sendDailyDutyReminders,
   runSystemDiagnostics,
@@ -13,6 +14,28 @@ const {
 test('getTodayDutyCodes returns valid codes for weekdays', () => {
   const codes = getTodayDutyCodes();
   assert.ok(Array.isArray(codes), 'should return an array');
+});
+
+test('getTodayDutyCodes correctly resolves Wednesday morning (UTC previous day night)', () => {
+  // 2026-11-10T23:30:00Z = 2026-11-11 06:30:00 AM in Thailand (Asia/Bangkok)
+  const wedMorningThai = new Date('2026-11-10T23:30:00.000Z');
+  const dayNum = getThaiDayOfWeek(wedMorningThai);
+  assert.strictEqual(dayNum, 3, 'Thai day of week must be 3 (Wednesday)');
+
+  const codes = getTodayDutyCodes(wedMorningThai);
+  assert.deepStrictEqual(codes, ['W', 'WS', 'S'], 'Should only target Wednesday duty codes');
+  assert.ok(!codes.includes('T'), 'Must NOT include Tuesday code T');
+  assert.ok(!codes.includes('TS'), 'Must NOT include Tuesday special code TS');
+});
+
+test('getTodayDutyCodes correctly resolves Tuesday morning (UTC Monday night)', () => {
+  // 2026-11-09T23:30:00Z = 2026-11-10 06:30:00 AM in Thailand (Asia/Bangkok)
+  const tueMorningThai = new Date('2026-11-09T23:30:00.000Z');
+  const dayNum = getThaiDayOfWeek(tueMorningThai);
+  assert.strictEqual(dayNum, 2, 'Thai day of week must be 2 (Tuesday)');
+
+  const codes = getTodayDutyCodes(tueMorningThai);
+  assert.deepStrictEqual(codes, ['T', 'TS', 'S'], 'Should only target Tuesday duty codes');
 });
 
 test('Quick Leave from DM Modal complies with Discord character limits (<= 45)', () => {
