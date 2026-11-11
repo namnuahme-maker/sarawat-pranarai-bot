@@ -441,4 +441,38 @@ describe('SARAWAT-BOT New Shift & Combined Duty ID Verification', () => {
     assert.equal(typeof broadcastConsolidatedShiftLeaveCard, 'function');
   });
 
+  test('getCurrentQuarterAndYear accurately calculates quarters for Thai school calendar', () => {
+    const { getCurrentQuarterAndYear } = require('../bot.js');
+    
+    // Q1: Nov 12, 2026 -> Quarter 1, Semester 2, 2569
+    const q1 = getCurrentQuarterAndYear(new Date('2026-11-12T10:00:00Z'));
+    assert.equal(q1.quarter, 1);
+    assert.equal(q1.semester, 2);
+    assert.equal(q1.academicYear, 2569);
+
+    // Q1 in Jan: Jan 15, 2027 -> Quarter 1, Semester 2, 2569
+    const q1Jan = getCurrentQuarterAndYear(new Date('2027-01-15T10:00:00Z'));
+    assert.equal(q1Jan.quarter, 1);
+    assert.equal(q1Jan.semester, 2);
+    assert.equal(q1Jan.academicYear, 2569);
+
+    // Q2: Feb 20, 2027 -> Quarter 2, Semester 2, 2569
+    const q2 = getCurrentQuarterAndYear(new Date('2027-02-20T10:00:00Z'));
+    assert.equal(q2.quarter, 2);
+    assert.equal(q2.semester, 2);
+    assert.equal(q2.academicYear, 2569);
+
+    // Q3: Jun 10, 2027 -> Quarter 3, Semester 1, 2570
+    const q3 = getCurrentQuarterAndYear(new Date('2027-06-10T10:00:00Z'));
+    assert.equal(q3.quarter, 3);
+    assert.equal(q3.semester, 1);
+    assert.equal(q3.academicYear, 2570);
+
+    // Q4: Sep 5, 2027 -> Quarter 4, Semester 1, 2570
+    const q4 = getCurrentQuarterAndYear(new Date('2027-09-05T10:00:00Z'));
+    assert.equal(q4.quarter, 4);
+    assert.equal(q4.semester, 1);
+    assert.equal(q4.academicYear, 2570);
+  });
+
 });

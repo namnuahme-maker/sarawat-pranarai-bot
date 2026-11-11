@@ -44,22 +44,136 @@ const { generateCardHTML } = require('./card_template');
 const PORT = process.env.PORT || 10000;
 
 const SETTINGS_FILE = path.join(__dirname, 'settings.json');
+
+/**
+ * 📅 ตรวจจับไตรมาส ปีการศึกษา และภาคเรียนโดยอัตโนมัติตามปฏิทินจริง (เวลาไทย UTC+7)
+ * - ไตรมาสที่ 1 (พ.ย. - ม.ค.): ภาคเรียนที่ 2 ช่วงแรก
+ * - ไตรมาสที่ 2 (ก.พ. - เม.ย.): ภาคเรียนที่ 2 ช่วงปลาย
+ * - ไตรมาสที่ 3 (พ.ค. - ก.ค.): ภาคเรียนที่ 1 ช่วงแรก
+ * - ไตรมาสที่ 4 (ส.ค. - ต.ค.): ภาคเรียนที่ 1 ช่วงปลาย
+ */
+function getCurrentQuarterAndYear(d = new Date()) {
+  const thaiDate = new Date(d.toLocaleString('en-US', { timeZone: 'Asia/Bangkok' }));
+  const month = thaiDate.getMonth() + 1; // 1 - 12
+  const ceYear = thaiDate.getFullYear(); // เช่น 2026
+
+  let quarter = 1;
+  let semester = 2;
+  let academicYear = ceYear + 543;
+
+  if (month >= 11 || month === 1) {
+    quarter = 1;
+    semester = 2;
+    academicYear = month === 1 ? (ceYear - 1) + 543 : ceYear + 543;
+  } else if (month >= 2 && month <= 4) {
+    quarter = 2;
+    semester = 2;
+    academicYear = (ceYear - 1) + 543;
+  } else if (month >= 5 && month <= 7) {
+    quarter = 3;
+    semester = 1;
+    academicYear = ceYear + 543;
+  } else {
+    quarter = 4;
+    semester = 1;
+    academicYear = ceYear + 543;
+  }
+
+  const quarterMonths = {
+    1: 'พ.ย. - ม.ค.',
+    2: 'ก.พ. - เม.ย.',
+    3: 'พ.ค. - ก.ค.',
+    4: 'ส.ค. - ต.ค.'
+  };
+
+  return {
+    quarter,
+    semester,
+    academicYear,
+    buddhistYear: ceYear + 543,
+    ceYear,
+    quarterName: `ไตรมาสที่ ${quarter} (${quarterMonths[quarter]})`,
+    semesterName: `ภาคเรียนที่ ${semester} ปีการศึกษา ${academicYear}`,
+    fullLabel: `ภาคเรียนที่ ${semester} / ปีการศึกษา ${academicYear} • ประจำไตรมาสที่ ${quarter} (12 สัปดาห์)`
+  };
+}
+
 function getSettings() {
   try {
     if (fs.existsSync(SETTINGS_FILE)) {
       return JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8'));
     }
   } catch (e) {}
-  return { current_semester: 'ภาคเรียนที่ 2 ปีการศึกษา 2569' };
+  const auto = getCurrentQuarterAndYear();
+  return {
+    mode: 'auto',
+    academic_year: auto.academicYear,
+    quarter: auto.quarter,
+    current_semester: auto.semesterName
+  };
 }
 
-function updateSemester(semester, userId) {
+function getAcademicPeriod() {
+  const auto = getCurrentQuarterAndYear(new Date());
   const settings = getSettings();
-  settings.current_semester = semester;
+
+  if (settings.mode === 'manual' && settings.academic_year && settings.quarter) {
+    const q = parseInt(settings.quarter, 10) || auto.quarter;
+    const y = parseInt(settings.academic_year, 10) || auto.academicYear;
+    const sem = (q === 3 || q === 4) ? 1 : 2;
+    const quarterMonths = { 1: 'พ.ย. - ม.ค.', 2: 'ก.พ. - เม.ย.', 3: 'พ.ค. - ก.ค.', 4: 'ส.ค. - ต.ค.' };
+    return {
+      quarter: q,
+      semester: sem,
+      academicYear: y,
+      isAuto: false,
+      quarterName: `ไตรมาสที่ ${q} (${quarterMonths[q] || ''})`,
+      semesterName: settings.current_semester || `ภาคเรียนที่ ${sem} ปีการศึกษา ${y}`,
+      fullLabel: `ภาคเรียนที่ ${sem} / ปีการศึกษา ${y} • ประจำไตรมาสที่ ${q} (12 สัปดาห์)`
+    };
+  }
+
+  return {
+    ...auto,
+    isAuto: true
+  };
+}
+
+function updateAcademicPeriod({ academicYear, quarter, semester, mode = 'manual' }, userId = null) {
+  const settings = getSettings();
+  if (mode === 'auto') {
+    settings.mode = 'auto';
+    delete settings.academic_year;
+    delete settings.quarter;
+    const auto = getCurrentQuarterAndYear(new Date());
+    settings.current_semester = auto.semesterName;
+  } else {
+    settings.mode = 'manual';
+    if (academicYear) settings.academic_year = parseInt(academicYear, 10);
+    if (quarter) settings.quarter = parseInt(quarter, 10);
+    if (semester) {
+      settings.current_semester = semester;
+    } else {
+      const q = settings.quarter || 1;
+      const semNum = (q === 3 || q === 4) ? 1 : 2;
+      settings.current_semester = `ภาคเรียนที่ ${semNum} ปีการศึกษา ${settings.academic_year}`;
+    }
+  }
   settings.updated_by = userId;
   settings.updated_at = new Date().toISOString();
   fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2), 'utf8');
-  return settings;
+
+  // ซิงค์ไปยัง web/settings.json ด้วยถ้ามีโฟลเดอร์ web
+  try {
+    const webSettingsPath = path.join(__dirname, '..', 'web', 'settings.json');
+    fs.writeFileSync(webSettingsPath, JSON.stringify(settings, null, 2), 'utf8');
+  } catch (e) {}
+
+  return getAcademicPeriod();
+}
+
+function updateSemester(semester, userId) {
+  return updateAcademicPeriod({ semester, mode: 'manual' }, userId);
 }
 
 // ==========================================================
@@ -2582,15 +2696,33 @@ client.on('interactionCreate', async (interaction) => {
 
 
       if (commandName === 'semester') {
-        const sem = getSettings().current_semester;
+        const period = getAcademicPeriod();
+        const modeText = period.isAuto ? '✨ ตรวจจับอัตโนมัติตามปฏิทิน' : '🛠️ กำหนดเองโดยผู้ดูแล (Manual)';
+
+        const embed = new EmbedBuilder()
+          .setTitle('🎓 ข้อมูลปีการศึกษาและไตรมาสปฏิบัติหน้าที่')
+          .setDescription(
+            `• 📅 **ไตรมาสปัจจุบัน:** **${period.quarterName}**\n` +
+            `• 🎓 **ปีการศึกษา:** **${period.academicYear}** (พ.ศ.)\n` +
+            `• 🏫 **ภาคเรียน:** **${period.semesterName}**\n` +
+            `• ⚙️ **โหมดระบบ:** \`${modeText}\`\n\n` +
+            `_ระบบจะตรวจจับไตรมาสและปีการศึกษาอัตโนมัติตามวันปัจจุบัน หรือสามารถกดปุ่มตั้งค่าเองได้_`
+          )
+          .setColor('#3498DB');
+
         const row = new ActionRowBuilder().addComponents(
           new ButtonBuilder()
             .setCustomId('btn_set_semester')
-            .setLabel('🎓 กำหนดภาคเรียนใหม่')
-            .setStyle(ButtonStyle.Primary)
+            .setLabel('⚙️ ตั้งค่า ปี/ไตรมาส')
+            .setEmoji('📅')
+            .setStyle(ButtonStyle.Primary),
+          new ButtonBuilder()
+            .setCustomId('btn_reset_semester_auto')
+            .setLabel('🔄 คืนค่าตรวจจับอัตโนมัติ')
+            .setStyle(ButtonStyle.Secondary)
         );
         await interaction.reply({
-          content: `🎓 **ภาคเรียนปัจจุบัน:** \`${sem}\` (กำหนดโดยประธานสารวัตรนักเรียน)`,
+          embeds: [embed],
           components: [row],
           ephemeral: true
         });
@@ -2937,28 +3069,72 @@ client.on('interactionCreate', async (interaction) => {
         return;
       }
 
+      const period = getAcademicPeriod();
       const modal = new ModalBuilder()
         .setCustomId('modal_set_semester')
-        .setTitle('🎓 กำหนดภาคเรียนปัจจุบัน');
+        .setTitle('⚙️ ตั้งค่า ปีการศึกษา และ ไตรมาส');
 
-      const semInput = new TextInputBuilder()
-        .setCustomId('input_semester')
-        .setLabel('ภาคเรียน (เช่น ภาคเรียนที่ 1 ปีการศึกษา 2569)')
-        .setValue(getSettings().current_semester)
+      const yearInput = new TextInputBuilder()
+        .setCustomId('input_academic_year')
+        .setLabel('ปีการศึกษา (พ.ศ. เช่น 2569)')
+        .setValue(String(period.academicYear))
         .setStyle(TextInputStyle.Short)
         .setRequired(true);
 
-      modal.addComponents(new ActionRowBuilder().addComponents(semInput));
+      const quarterInput = new TextInputBuilder()
+        .setCustomId('input_quarter')
+        .setLabel('ไตรมาส (ระบุเลข 1, 2, 3 หรือ 4)')
+        .setValue(String(period.quarter))
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true);
+
+      const semInput = new TextInputBuilder()
+        .setCustomId('input_semester')
+        .setLabel('ชื่อภาคเรียน (เช่น ภาค 2 ปี 2569)')
+        .setValue(period.semesterName)
+        .setStyle(TextInputStyle.Short)
+        .setRequired(false);
+
+      modal.addComponents(
+        new ActionRowBuilder().addComponents(yearInput),
+        new ActionRowBuilder().addComponents(quarterInput),
+        new ActionRowBuilder().addComponents(semInput)
+      );
       await interaction.showModal(modal);
       return;
     }
 
+    if (interaction.isButton() && interaction.customId === 'btn_reset_semester_auto') {
+      const newPeriod = updateAcademicPeriod({ mode: 'auto' }, interaction.user.id);
+      await interaction.reply({
+        content: `✅ **คืนค่าตรวจจับอัตโนมัติตามปฏิทินเรียบร้อยแล้ว!**\n` +
+                 `• 📅 **ไตรมาส:** ${newPeriod.quarterName}\n` +
+                 `• 🎓 **ปีการศึกษา:** ${newPeriod.academicYear}\n` +
+                 `• 🏫 **ภาคเรียน:** ${newPeriod.semesterName}`,
+        ephemeral: true
+      });
+      return;
+    }
+
     if (interaction.isModalSubmit() && interaction.customId === 'modal_set_semester') {
-      const newSemester = interaction.fields.getTextInputValue('input_semester').trim();
-      updateSemester(newSemester, interaction.user.id);
+      const acadYear = interaction.fields.getTextInputValue('input_academic_year').trim();
+      const quarter = interaction.fields.getTextInputValue('input_quarter').trim();
+      const newSemester = interaction.fields.fields.has('input_semester')
+        ? interaction.fields.getTextInputValue('input_semester').trim()
+        : null;
+
+      const newPeriod = updateAcademicPeriod({
+        academicYear: parseInt(acadYear, 10) || 2569,
+        quarter: parseInt(quarter, 10) || 1,
+        semester: newSemester,
+        mode: 'manual'
+      }, interaction.user.id);
 
       await interaction.reply({
-        content: `✅ **บันทึกภาคเรียนสำเร็จ!**\nขณะนี้ระบบถูกกำหนดเป็น: **${newSemester}**`,
+        content: `✅ **บันทึกปีการศึกษาและไตรมาสสำเร็จ!**\n` +
+                 `• 📅 **ไตรมาส:** ${newPeriod.quarterName}\n` +
+                 `• 🎓 **ปีการศึกษา:** ${newPeriod.academicYear}\n` +
+                 `• 🏫 **ภาคเรียน:** ${newPeriod.semesterName}`,
         ephemeral: true
       });
 
@@ -2966,11 +3142,13 @@ client.on('interactionCreate', async (interaction) => {
       const leaderRoom = interaction.guild.channels.cache.find(c => c.name.includes('ห้องประชุมหัวหน้า'));
 
       const announceEmbed = new EmbedBuilder()
-        .setTitle('🎓 ประกาศภาคเรียนปฏิบัติหน้าที่')
+        .setTitle('🎓 ประกาศ: กำหนดปีการศึกษาและไตรมาสปฏิบัติหน้าที่')
         .setDescription(
-          `ประธานสารวัตรนักเรียน <@${interaction.user.id}> ได้กำหนดภาคเรียนปัจจุบัน:\n\n` +
-          `🌟 **${newSemester}**\n\n` +
-          `*แบบบันทึกการลงเวลา A4 และระบบสารวัตรทั้งหมดจะอัปเดตเป็นภาคเรียนนี้อัตโนมัติ*`
+          `ประธานสารวัตรนักเรียน <@${interaction.user.id}> ได้กำหนดช่วงเวลาปฏิบัติหน้าที่ใหม่:\n\n` +
+          `• 📅 **ไตรมาส:** **${newPeriod.quarterName}**\n` +
+          `• 🎓 **ปีการศึกษา:** **${newPeriod.academicYear}**\n` +
+          `• 🏫 **ภาคเรียน:** **${newPeriod.semesterName}**\n\n` +
+          `*แบบตารางเช็คชื่อ A4 และระบบสแกนเช็คชื่อทั้งหมดจะอัปเดตเป็นช่วงเวลานี้อัตโนมัติ*`
         )
         .setColor('#F1C40F')
         .setTimestamp();
@@ -6264,21 +6442,31 @@ function getEnglishDayName(dayCode) {
   }
 }
 
-function getAttendanceDates(dayCode, count = 12) {
-  const dayIndexMap = { 'M': 1, 'T': 2, 'W': 3, 'Ts': 4, 'F': 5, 'S': 1 };
-  const baseDay = dayCode === 'TSS' ? 'Ts' : dayCode.replace(/S+$/, '') || 'M';
-  const targetDay = dayIndexMap[baseDay] || 1;
+function getAttendanceDates(dayCode, count = 12, qNumber = null, acadYear = null) {
+  const period = getAcademicPeriod();
+  const q = qNumber || period.quarter || 1;
+  const y = acadYear || period.academicYear || 2569;
+  const ceYear = y - 543;
 
-  const now = new Date();
-  const currentDay = getThaiDayOfWeek(now);
-  const diff = targetDay - currentDay;
-  const start = new Date(now);
-  start.setDate(now.getDate() + diff);
+  const dayIndexMap = { 'M': 0, 'T': 1, 'W': 2, 'Ts': 3, 'F': 4, 'S': 0 };
+  const baseDay = dayCode === 'TSS' ? 'Ts' : (dayCode.replace(/S+$/, '') || 'M');
+  const offsetDays = dayIndexMap[baseDay] ?? 0;
 
+  let baseMonday;
+  if (q === 1) {
+    baseMonday = new Date(ceYear, 10, 9); // เช่น 11/9 สำหรับ 2026
+  } else if (q === 2) {
+    baseMonday = new Date(new Date(ceYear, 10, 9).getTime() + 12 * 7 * 86400000);
+  } else if (q === 3) {
+    baseMonday = new Date(ceYear, 4, 18);
+  } else {
+    baseMonday = new Date(new Date(ceYear, 4, 18).getTime() + 12 * 7 * 86400000);
+  }
+
+  const start = new Date(baseMonday.getTime() + offsetDays * 86400000);
   const dates = [];
   for (let i = 0; i < count; i++) {
-    const d = new Date(start);
-    d.setDate(start.getDate() + (i * 7));
+    const d = new Date(start.getTime() + (i * 7) * 86400000);
     dates.push(`${d.getMonth() + 1}/${d.getDate()}`);
   }
   return dates;
@@ -6286,6 +6474,7 @@ function getAttendanceDates(dayCode, count = 12) {
 
 // ฟังก์ชันสร้างหน้าเว็บใบเช็คชื่อ A4 มาตรฐาน พร้อมระบุชื่อหัวหน้า/รองหัวหน้าบนหัวกระดาษ (OMR + Vision Anchor)
 function generateAttendanceSheetHTML(dayCode, dayName, members) {
+  const period = getAcademicPeriod();
   const head = members.find(m => m.shift_role === 'SHIFT_HEAD');
   const deputy = members.find(m => m.shift_role === 'SHIFT_DEPUTY');
 
@@ -6294,7 +6483,7 @@ function generateAttendanceSheetHTML(dayCode, dayName, members) {
   const logoBase64 = getSarawatLogoBase64();
   const englishDay = getEnglishDayName(dayCode);
   const isSpecial = dayCode === 'S';
-  const dates = getAttendanceDates(dayCode, 12);
+  const dates = getAttendanceDates(dayCode, 12, period.quarter, period.academicYear);
 
   const tableColspanHeader = isSpecial 
     ? 'บันทึกการมาปฏิบัติหน้าที่ (สัปดาห์ที่ 1 ถึง 12)' 
@@ -6347,7 +6536,7 @@ function generateAttendanceSheetHTML(dayCode, dayName, members) {
     `).join('');
   }
 
-  const qrPayload = `https://sarawat-pranarai-web.onrender.com/attendance-sheet?shift=${dayCode}&q=1`;
+  const qrPayload = `${getWebDashboardUrl()}/attendance-sheet?shift=${dayCode}&q=${period.quarter}&year=${period.academicYear}`;
 
   return `<!DOCTYPE html>
 <html lang="th">
@@ -6650,7 +6839,7 @@ function generateAttendanceSheetHTML(dayCode, dayName, members) {
               กลุ่มงานกิจการนักเรียน • ฝ่ายสารวัตรนักเรียน
             </div>
             <div style="font-size: 8pt; color: #475569;">
-              โรงเรียนพระนารายณ์ • ภาคเรียนที่ 2 / ปีการศึกษา 2569 • ประจำไตรมาสที่ 1 (12 สัปดาห์)
+              โรงเรียนพระนารายณ์ • ${period.fullLabel}
             </div>
           </div>
         </div>
@@ -6673,7 +6862,7 @@ function generateAttendanceSheetHTML(dayCode, dayName, members) {
         <!-- Machine QR Session Anchor -->
         <div style="display: flex; align-items: center; gap: 5px;">
           <div style="font-family: 'JetBrains Mono', monospace; font-size: 6.5pt; text-align: right; line-height: 1.1; color: #64748b;">
-            <span>Q1-${dayCode}-2026</span><br>
+            <span>Q${period.quarter}-${dayCode}-${period.academicYear}</span><br>
             <span style="color: #047857; font-weight: 700;">DAILY-SCAN OK</span>
           </div>
           <div style="border: 1px solid #000000; padding: 1.5px; background: #ffffff; border-radius: 2px;">
@@ -6731,7 +6920,7 @@ function generateAttendanceSheetHTML(dayCode, dayName, members) {
       <div style="display: flex; justify-content: space-between; align-items: center; border-top: 1px solid #cbd5e1; padding-top: 3px; margin-top: 6px; font-size: 6.5pt; font-family: 'JetBrains Mono', monospace; color: #64748b;">
         <span>SARAWAT PRANARAI COMMAND OS // 12-WEEK QUARTER ATTENDANCE SYSTEM</span>
         <span>PAGE 1 OF 1 • A4 LANDSCAPE (297 x 210 mm)</span>
-        <span>SHA256: QUARTER_1_${dayCode}_VERIFIED</span>
+        <span>SHA256: QUARTER_${period.quarter}_${period.academicYear}_${dayCode}_VERIFIED</span>
       </div>
     </div>
   </section>
@@ -6740,6 +6929,7 @@ function generateAttendanceSheetHTML(dayCode, dayName, members) {
 }
 
 function generateCombinedAttendanceSheetHTML(allMembers) {
+  const period = getAcademicPeriod();
   const logoBase64 = getSarawatLogoBase64();
   const shifts = [
     { code: 'M', name: 'เวรวันจันทร์' },
@@ -6763,7 +6953,7 @@ function generateCombinedAttendanceSheetHTML(allMembers) {
     const deputyText = deputy ? `[${deputy.duty_id || '-'}] ${deputy.nickname || '-'} (${deputy.first_name || ''} ${deputy.last_name || ''})` : 'ยังไม่ได้แต่งตั้ง';
     const englishDay = getEnglishDayName(shift.code);
     const isSpecial = shift.code === 'S';
-    const dates = getAttendanceDates(shift.code, 12);
+    const dates = getAttendanceDates(shift.code, 12, period.quarter, period.academicYear);
 
     const tableColspanHeader = isSpecial 
       ? 'บันทึกการมาปฏิบัติหน้าที่ (สัปดาห์ที่ 1 ถึง 12)' 
@@ -6816,7 +7006,7 @@ function generateCombinedAttendanceSheetHTML(allMembers) {
       `).join('');
     }
 
-    const qrPayload = `https://sarawat-pranarai-web.onrender.com/attendance-sheet?shift=${shift.code}&q=1`;
+    const qrPayload = `${getWebDashboardUrl()}/attendance-sheet?shift=${shift.code}&q=${period.quarter}&year=${period.academicYear}`;
 
     return `
       <section class="sheet-page" id="shift-${shift.code}">
@@ -6846,7 +7036,7 @@ function generateCombinedAttendanceSheetHTML(allMembers) {
                   กลุ่มงานกิจการนักเรียน • ฝ่ายสารวัตรนักเรียน
                 </div>
                 <div style="font-size: 8pt; color: #475569;">
-                  โรงเรียนพระนารายณ์ • ภาคเรียนที่ 2 / ปีการศึกษา 2569 • ประจำไตรมาสที่ 1 (12 สัปดาห์)
+                  โรงเรียนพระนารายณ์ • ${period.fullLabel}
                 </div>
               </div>
             </div>
@@ -6869,7 +7059,7 @@ function generateCombinedAttendanceSheetHTML(allMembers) {
             <!-- Machine QR Session Anchor -->
             <div style="display: flex; align-items: center; gap: 5px;">
               <div style="font-family: 'JetBrains Mono', monospace; font-size: 6.5pt; text-align: right; line-height: 1.1; color: #64748b;">
-                <span>Q1-${shift.code}-2026</span><br>
+                <span>Q${period.quarter}-${shift.code}-${period.academicYear}</span><br>
                 <span style="color: #047857; font-weight: 700;">DAILY-SCAN OK</span>
               </div>
               <div style="border: 1px solid #000000; padding: 1.5px; background: #ffffff; border-radius: 2px;">
@@ -6927,7 +7117,7 @@ function generateCombinedAttendanceSheetHTML(allMembers) {
           <div style="display: flex; justify-content: space-between; align-items: center; border-top: 1px solid #cbd5e1; padding-top: 3px; margin-top: 6px; font-size: 6.5pt; font-family: 'JetBrains Mono', monospace; color: #64748b;">
             <span>SARAWAT PRANARAI COMMAND OS // 12-WEEK QUARTER ATTENDANCE SYSTEM</span>
             <span>PAGE 1 OF 1 • A4 LANDSCAPE (297 x 210 mm)</span>
-            <span>SHA256: QUARTER_1_${shift.code}_VERIFIED</span>
+            <span>SHA256: QUARTER_${period.quarter}_${period.academicYear}_${shift.code}_VERIFIED</span>
           </div>
         </div>
       </section>
@@ -7632,5 +7822,8 @@ module.exports = {
   getWebDashboardUrl,
   getOrCreateLogChannel,
   sendBotActionLog,
-  broadcastConsolidatedShiftLeaveCard
+  broadcastConsolidatedShiftLeaveCard,
+  getCurrentQuarterAndYear,
+  getAcademicPeriod,
+  updateAcademicPeriod
 };
