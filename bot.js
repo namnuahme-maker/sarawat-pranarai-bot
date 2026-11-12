@@ -6880,7 +6880,7 @@ function generateAttendanceSheetHTML(dayCode, dayName, members) {
         : (m.shift_role === 'SHIFT_DEPUTY' ? ' <span style="color: #0284c7; font-weight: bold; font-size: 7.5pt;">(รอง)</span>' : '');
 
       const dateCells = dates.map((dStr, wIdx) => `
-        <td style="padding: 2px 1px; text-align: center; vertical-align: middle;">
+        <td style="padding: 5px 2px; text-align: center; vertical-align: middle;">
           <div class="omr-circle" data-duty="${m.duty_id || ''}" data-col="${wIdx}" onclick="this.classList.toggle('marked-present')" title="${m.duty_id || ''} วันที่ ${dStr}: ฝนดำเมื่อมาปฏิบัติหน้าที่ (ม)">
             ม
           </div>
@@ -7090,7 +7090,7 @@ function generateAttendanceSheetHTML(dayCode, dayName, members) {
     }
     table.attendance-table th, table.attendance-table td {
       border: 1px solid #334155;
-      padding: 3.5px 3px;
+      padding: 5px 3px;
       text-align: center;
       vertical-align: middle;
     }
@@ -7108,19 +7108,19 @@ function generateAttendanceSheetHTML(dayCode, dayName, members) {
       background-color: #e2e8f0;
     }
 
-    /* OMR Single Circle: [ ○ ] (ม) มาปฏิบัติหน้าที่ */
+    /* OMR Single Circle: [ ○ ] (ม) มาปฏิบัติหน้าที่ (สีเทาอ่อน #BFBFBF เพื่อไม่รบกวน OMR) */
     .omr-circle {
       width: 14px;
       height: 14px;
-      border: 1.5px solid #475569;
+      border: 1.5px solid #bfbfbf;
       border-radius: 50%;
       display: flex;
       align-items: center;
       justify-content: center;
       font-size: 7pt;
       font-family: 'Prompt', sans-serif;
-      font-weight: 700;
-      color: #475569;
+      font-weight: 500;
+      color: #bfbfbf;
       cursor: pointer;
       user-select: none;
       background: #ffffff;
@@ -7681,7 +7681,7 @@ function generateCombinedAttendanceSheetHTML(allMembers) {
     }
     table.attendance-table th, table.attendance-table td {
       border: 1px solid #334155;
-      padding: 3.5px 3px;
+      padding: 5px 3px;
       text-align: center;
       vertical-align: middle;
     }
@@ -7699,19 +7699,19 @@ function generateCombinedAttendanceSheetHTML(allMembers) {
       background-color: #e2e8f0;
     }
 
-    /* OMR Single Circle: [ ○ ] (ม) มาปฏิบัติหน้าที่ */
+    /* OMR Single Circle: [ ○ ] (ม) มาปฏิบัติหน้าที่ (สีเทาอ่อน #BFBFBF เพื่อไม่รบกวน OMR) */
     .omr-circle {
       width: 14px;
       height: 14px;
-      border: 1.5px solid #475569;
+      border: 1.5px solid #bfbfbf;
       border-radius: 50%;
       display: flex;
       align-items: center;
       justify-content: center;
       font-size: 7pt;
       font-family: 'Prompt', sans-serif;
-      font-weight: 700;
-      color: #475569;
+      font-weight: 500;
+      color: #bfbfbf;
       cursor: pointer;
       user-select: none;
       background: #ffffff;
