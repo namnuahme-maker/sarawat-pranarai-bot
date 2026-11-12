@@ -474,6 +474,14 @@ const slashCommands = [
     .setName('killfile')
     .setDescription('🗑️ ลบข้อมูลสิ่งของที่มีอยู่ในระบบของหายทั้งหมด เริ่มใหม่แต่ 0 (Admin Only)'),
   new SlashCommandBuilder()
+    .setName('demote')
+    .setDescription('⛔ ปลดหน้าที่หรือถอดยศสารวัตรนักเรียน (Admin/ประธาน)')
+    .addUserOption(opt =>
+      opt.setName('target')
+        .setDescription('เลือกสารวัตรที่ต้องการปลดหน้าที่')
+        .setRequired(false)
+    ),
+  new SlashCommandBuilder()
     .setName('test-duty')
     .setDescription('🔔 ทดสอบระบบแจ้งเตือนเวรประจำวัน และตรวจสอบรายชื่อสารวัตร (Admin)')
     .addStringOption(opt =>
@@ -684,8 +692,9 @@ async function sendAppointPanel(channel) {
       '*(สงวนสิทธิ์เฉพาะประธานสารวัตร, รองประธาน และคณะผู้บริหารเท่านั้น)*\n\n' +
       '━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n' +
       '👑 **แต่งตั้งผู้นำฝ่ายและหัวหน้าเวร**\n' +
-      'แต่งตั้งตำแหน่ง **ประธาน**, **รองประธาน**, **หัวหน้าเวร** หรือ **รองหัวหน้าเวร**\n' +
-      'ระบบจะอัปเดตบทบาทในฐานข้อมูล และแจก/ปรับยศใน Discord ให้อัตโนมัติทันที\n\n' +
+      'แต่งตั้งตำแหน่ง **ประธาน**, **รองประธาน**, **หัวหน้าเวร** หรือ **รองหัวหน้าเวร**\n\n' +
+      '⛔ **ปลดหน้าที่และถอดยศ**\n' +
+      'ปลดยศผู้นำกลับเป็นสมาชิกทั่วไป หรือปลดพ้นสภาพสารวัตรนักเรียน คืนรหัสเวร\n\n' +
       '👥 **ตรวจสอบทำเนียบสารวัตร**\n' +
       'ดูรายชื่อสารวัตรทั้งหมดที่ปฏิบัติหน้าที่อยู่ในปัจจุบัน แยกตามผลัดเวร\n\n' +
       '🌐 **ศูนย์บัญชาการสารวัตรนักเรียน (Web Command)**\n' +
@@ -708,15 +717,19 @@ async function sendAppointPanel(channel) {
       .setLabel('👑 แต่งตั้งตำแหน่ง')
       .setStyle(ButtonStyle.Success),
     new ButtonBuilder()
+      .setCustomId('btn_open_demote_menu')
+      .setLabel('⛔ ปลดหน้าที่ / ถอดยศ')
+      .setStyle(ButtonStyle.Danger),
+    new ButtonBuilder()
       .setCustomId('btn_inspect_roster')
-      .setLabel('👥 ตรวจสอบทำเนียบสารวัตร')
+      .setLabel('👥 ตรวจสอบทำเนียบ')
       .setStyle(ButtonStyle.Secondary),
     new ButtonBuilder()
       .setCustomId('btn_set_semester')
-      .setLabel('🎓 กำหนดภาคเรียน')
+      .setLabel('🎓 ภาคเรียน')
       .setStyle(ButtonStyle.Primary),
     new ButtonBuilder()
-      .setLabel('🌐 เข้าสู่ระบบแดชบอร์ด (Web)')
+      .setLabel('🌐 แดชบอร์ด (Web)')
       .setStyle(ButtonStyle.Link)
       .setURL(getWebDashboardUrl())
   );
@@ -1737,6 +1750,307 @@ async function executeKillFile(guild, executorUser) {
 
   console.log(`[KILLFILE] 🗑️ ล้างระบบของหายสำเร็จโดย ${executorUser?.tag || 'Admin'}: สิ่งของ ${result.deletedItems} ชิ้น, คำร้อง ${result.deletedClaims} รายการ`);
   return result;
+}
+
+/**
+ * 🔻 ปลดตำแหน่งผู้นำของสารวัตร (กลับเป็นสารวัตรทั่วไป MEMBER)
+ */
+async function executeDemoteLeader(memberId, operatorId, guild) {
+  const { data: member, error } = await supabase
+    .from('members')
+    .select('*')
+    .eq('id', memberId)
+    .single();
+
+  if (error || !member) {
+    throw new Error('ไม่พบข้อมูลสารวัตรในระบบ');
+  }
+
+  const prevRole = member.role;
+  const prevShiftRole = member.shift_role;
+
+  await supabase
+    .from('members')
+    .update({
+      role: 'MEMBER',
+      shift_role: 'MEMBER',
+      updated_at: new Date()
+    })
+    .eq('id', memberId);
+
+  // ปรับยศใน Discord
+  if (member.discord_id && guild) {
+    try {
+      const guildMember = await guild.members.fetch(member.discord_id).catch(() => null);
+      if (guildMember) {
+        const leadershipRoles = [
+          ROLE_IDS.PRESIDENT,
+          ROLE_IDS.VICE_PRESIDENT,
+          ROLE_IDS.HEAD_S,
+          ROLE_IDS.DEPUTY_S,
+          ...Object.values(ROLE_IDS.HEADS || {}),
+          ...Object.values(ROLE_IDS.DEPUTIES || {})
+        ].filter(Boolean);
+
+        for (const rid of leadershipRoles) {
+          if (guildMember.roles?.cache?.has(rid)) {
+            await guildMember.roles.remove(rid).catch(() => {});
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[DEMOTE_LEADER] Discord role remove error:', e.message);
+    }
+  }
+
+  // บันทึก Log ไปยังห้อง #log
+  await sendBotActionLog(guild, {
+    title: '🔻 ปลดตำแหน่งผู้นำ (กลับเป็นสารวัตรทั่วไป)',
+    description: `ปลดตำแหน่งผู้นำของ **[${member.duty_id || '-'}] ${member.nickname} (${member.first_name} ${member.last_name})** กลับสู่สถานะสารวัตรนักเรียนทั่วไปประจำผลัดเวร`,
+    fields: [
+      { name: '👤 สารวัตร', value: `[${member.duty_id || '-'}] ${member.nickname} (<@${member.discord_id}>)`, inline: true },
+      { name: '🎖️ ตำแหน่งเดิม', value: `${prevRole === 'PRESIDENT' ? 'ประธาน' : prevRole === 'VICE_PRESIDENT' ? 'รองประธาน' : prevShiftRole === 'SHIFT_HEAD' ? 'หัวหน้าเวร' : prevShiftRole === 'SHIFT_DEPUTY' ? 'รองหัวหน้าเวร' : 'ผู้นำ'}`, inline: true },
+      { name: '🛡️ สถานะใหม่', value: 'สารวัตรนักเรียนทั่วไป (MEMBER)', inline: true }
+    ],
+    color: '#E67E22',
+    actor: operatorId ? `<@${operatorId}>` : '⚙️ ระบบอัตโนมัติ'
+  });
+
+  return { success: true, member, prevRole, prevShiftRole };
+}
+
+/**
+ * 🚫 ปลดพ้นสภาพสารวัตรนักเรียน (คืนรหัสเวร, ถอดยศทั้งหมด, ปลดประจำการ)
+ */
+async function executeDismissMember(memberId, operatorId, guild) {
+  const { data: member, error } = await supabase
+    .from('members')
+    .select('*')
+    .eq('id', memberId)
+    .single();
+
+  if (error || !member) {
+    throw new Error('ไม่พบข้อมูลสารวัตรในระบบ');
+  }
+
+  const freedDutyId = member.duty_id;
+  const freedDay = member.duty_day;
+
+  await supabase
+    .from('members')
+    .update({
+      status: 'INACTIVE',
+      duty_id: null,
+      duty_day: null,
+      role: 'MEMBER',
+      shift_role: 'MEMBER',
+      profile_image_url: null,
+      updated_at: new Date()
+    })
+    .eq('id', memberId);
+
+  // ปรับยศใน Discord
+  if (member.discord_id && guild) {
+    try {
+      const guildMember = await guild.members.fetch(member.discord_id).catch(() => null);
+      if (guildMember) {
+        const rolesToRemove = [
+          ROLE_IDS.VERIFIED,
+          ROLE_IDS.PRESIDENT,
+          ROLE_IDS.VICE_PRESIDENT,
+          ROLE_IDS.HEAD_S,
+          ROLE_IDS.DEPUTY_S,
+          ROLE_IDS.DAY_S,
+          ...Object.values(ROLE_IDS.DAYS || {}),
+          ...Object.values(ROLE_IDS.HEADS || {}),
+          ...Object.values(ROLE_IDS.DEPUTIES || {})
+        ].filter(Boolean);
+
+        for (const rid of rolesToRemove) {
+          if (guildMember.roles?.cache?.has(rid)) {
+            await guildMember.roles.remove(rid).catch(() => {});
+          }
+        }
+
+        if (ROLE_IDS.UNVERIFIED) {
+          await guildMember.roles.add(ROLE_IDS.UNVERIFIED).catch(() => {});
+        }
+
+        // ลบ prefix [Duty ID] ออกจากชื่อเล่น
+        if (guildMember.nickname && guildMember.nickname.startsWith('[')) {
+          const cleanedNick = guildMember.nickname.replace(/^\[.*?\]\s*/, '');
+          await guildMember.setNickname(cleanedNick.slice(0, 32)).catch(() => {});
+        }
+      }
+    } catch (e) {
+      console.warn('[DISMISS_MEMBER] Discord role/nick error:', e.message);
+    }
+  }
+
+  // บันทึก Log ไปยังห้อง #log
+  await sendBotActionLog(guild, {
+    title: '🚫 ปลดพ้นสภาพสารวัตรนักเรียน (คืนรหัสเวร)',
+    description: `ปลดพ้นสภาพสารวัตรนักเรียนของ **${member.first_name} ${member.last_name} (${member.nickname})** คืนรหัสเวร \`[${freedDutyId || '-'}]\` สู่ระบบแล้ว`,
+    fields: [
+      { name: '👤 อดีตสารวัตร', value: `${member.first_name} ${member.last_name} (${member.nickname})`, inline: true },
+      { name: '🆔 รหัสเวรที่คืน', value: `\`${freedDutyId || '-'}\``, inline: true },
+      { name: '📅 ผลัดเวรเดิม', value: `${getDayName(freedDay)}`, inline: true }
+    ],
+    color: '#C0392B',
+    actor: operatorId ? `<@${operatorId}>` : '⚙️ ระบบอัตโนมัติ'
+  });
+
+  return { success: true, member, freedDutyId, freedDay };
+}
+
+/**
+ * ⛔ เมนูหลักเปิดระบบปลดหน้าที่ (รองรับทั้ง /demote และกดปุ่ม)
+ */
+async function handleOpenDemoteMenu(interaction, targetUser = null) {
+  if (interaction.deferred || interaction.replied) {
+    // already handled
+  } else {
+    await interaction.deferReply({ ephemeral: true });
+  }
+
+  if (targetUser) {
+    const { data: member } = await supabase
+      .from('members')
+      .select('*')
+      .eq('discord_id', targetUser.id)
+      .eq('status', 'ACTIVE')
+      .maybeSingle();
+
+    if (!member) {
+      await interaction.editReply({
+        content: `⚠️ ไม่พบข้อมูลสารวัตรสถานะปกติของ <@${targetUser.id}> ในฐานข้อมูล (อาจยังไม่ได้รับการอนุมัติ หรือพ้นสภาพไปแล้ว)`,
+        embeds: [],
+        components: []
+      });
+      return;
+    }
+
+    return await renderDemoteLevelSelection(interaction, member);
+  }
+
+  const { data: members, error } = await supabase
+    .from('members')
+    .select('*')
+    .eq('status', 'ACTIVE')
+    .order('duty_day')
+    .order('duty_id');
+
+  if (error || !members || members.length === 0) {
+    await interaction.editReply({
+      content: '⚠️ ไม่มีข้อมูลสารวัตรที่ปฏิบัติหน้าที่อยู่ในระบบขณะนี้',
+      embeds: [],
+      components: []
+    });
+    return;
+  }
+
+  const selectMenu = new StringSelectMenuBuilder()
+    .setCustomId('select_demote_target_member')
+    .setPlaceholder('🔍 เลือกสารวัตรที่ต้องการปลดหน้าที่ / ถอดยศ');
+
+  members.slice(0, 25).forEach(m => {
+    const dayText = getDayName(m.duty_day);
+    const curRole = m.role === 'PRESIDENT' ? '👑 ประธาน' :
+                    m.role === 'VICE_PRESIDENT' ? '🎖️ รองประธาน' :
+                    m.shift_role === 'SHIFT_HEAD' ? '👑 หัวหน้าเวร' :
+                    m.shift_role === 'SHIFT_DEPUTY' ? '🎖️ รองหัวหน้าเวร' : 'สารวัตรทั่วไป';
+
+    selectMenu.addOptions({
+      label: `[${m.duty_id || '-'}] ${m.nickname} (${m.first_name} ${m.last_name})`.slice(0, 100),
+      description: `${dayText} | ตำแหน่ง: ${curRole}`.slice(0, 100),
+      value: m.id
+    });
+  });
+
+  const row = new ActionRowBuilder().addComponents(selectMenu);
+  const cancelRow = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId('btn_cancel_demote')
+      .setLabel('❌ ยกเลิก')
+      .setStyle(ButtonStyle.Secondary)
+  );
+
+  const embed = new EmbedBuilder()
+    .setTitle('⛔ เมนูปลดหน้าที่และถอดยศสารวัตรนักเรียน')
+    .setDescription(
+      'โปรดเลือกสารวัตรที่ต้องการดำเนินการจากเมนูด้านล่าง:\n\n' +
+      '• **ระดับ 1 (🔻):** ปลดเฉพาะตำแหน่งผู้นำ (ประธาน/รองประธาน/หัวหน้าเวร) กลับเป็นสารวัตรทั่วไป\n' +
+      '• **ระดับ 2 (🚫):** ปลดพ้นสภาพสารวัตร คืนรหัสเวรว่าง และถอดยศสารวัตรทั้งหมด'
+    )
+    .setColor('#E74C3C')
+    .setFooter({ text: 'SARAWAT Command Center • ระบบปลดหน้าที่' });
+
+  await interaction.editReply({
+    embeds: [embed],
+    components: [row, cancelRow]
+  });
+}
+
+/**
+ * 📋 แสดงตัวเลือก ระดับ 1 (ปลดผู้นำ) vs ระดับ 2 (ปลดพ้นสภาพ) ให้ผู้ใช้เลือก
+ */
+async function renderDemoteLevelSelection(interaction, member) {
+  const dayText = getDayName(member.duty_day);
+  const isLeader = member.role === 'PRESIDENT' ||
+                   member.role === 'VICE_PRESIDENT' ||
+                   member.shift_role === 'SHIFT_HEAD' ||
+                   member.shift_role === 'SHIFT_DEPUTY';
+
+  const roleText = member.role === 'PRESIDENT' ? '👑 ประธานสารวัตรนักเรียน' :
+                   member.role === 'VICE_PRESIDENT' ? '🎖️ รองประธานสารวัตรนักเรียน' :
+                   member.shift_role === 'SHIFT_HEAD' ? '👑 หัวหน้าเวร' :
+                   member.shift_role === 'SHIFT_DEPUTY' ? '🎖️ รองหัวหน้าเวร' : '🛡️ สารวัตรนักเรียนทั่วไป';
+
+  const embed = new EmbedBuilder()
+    .setTitle('⛔ จัดการปลดหน้าที่ / ถอดยศสารวัตร')
+    .setDescription(
+      `👤 **สารวัตร:** **${member.first_name} ${member.last_name} (${member.nickname})**\n` +
+      `🆔 **รหัสเวร:** \`[${member.duty_id || '-'}]\` | **ผลัดเวร:** ${dayText}\n` +
+      `🎖️ **ตำแหน่งปัจจุบัน:** **${roleText}**\n` +
+      `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+      `กรุณาเลือกระดับการปลดหน้าที่ที่ต้องการดำเนินการ:`
+    )
+    .setColor('#E67E22')
+    .setFooter({ text: 'SARAWAT Demote System • โปรดยืนยันก่อนดำเนินการ' });
+
+  const btnLevel1 = new ButtonBuilder()
+    .setCustomId(`btn_demote_level_1_${member.id}`)
+    .setLabel('🔻 ระดับ 1: ปลดเฉพาะตำแหน่งผู้นำ')
+    .setStyle(ButtonStyle.Primary);
+
+  if (!isLeader) {
+    btnLevel1.setDisabled(true);
+    btnLevel1.setLabel('🔻 ระดับ 1: ไม่ได้ดำรงตำแหน่งผู้นำ');
+  }
+
+  const btnLevel2 = new ButtonBuilder()
+    .setCustomId(`btn_demote_level_2_${member.id}`)
+    .setLabel('🚫 ระดับ 2: ปลดพ้นสภาพสารวัตร (ถอดยศ/คืนรหัส)')
+    .setStyle(ButtonStyle.Danger);
+
+  const btnCancel = new ButtonBuilder()
+    .setCustomId('btn_cancel_demote')
+    .setLabel('❌ ยกเลิก')
+    .setStyle(ButtonStyle.Secondary);
+
+  const row = new ActionRowBuilder().addComponents(btnLevel1, btnLevel2, btnCancel);
+
+  if (interaction.isStringSelectMenu() || interaction.isButton()) {
+    await interaction.update({
+      embeds: [embed],
+      components: [row]
+    });
+  } else {
+    await interaction.editReply({
+      embeds: [embed],
+      components: [row]
+    });
+  }
 }
 
 client.once(Events.ClientReady || 'ready', async () => {
@@ -2913,6 +3227,25 @@ client.on('interactionCreate', async (interaction) => {
         );
 
         await interaction.reply({ embeds: [killEmbed], components: [killRow], ephemeral: true });
+        return;
+      }
+
+      if (commandName === 'demote') {
+        const isLeadership = interaction.member?.permissions.has(PermissionsBitField.Flags.Administrator) ||
+                             interaction.member?.roles.cache.has(ROLE_IDS.PRESIDENT) ||
+                             interaction.member?.roles.cache.has(ROLE_IDS.VICE_PRESIDENT) ||
+                             interaction.guild?.ownerId === interaction.user.id;
+
+        if (!isLeadership) {
+          await interaction.reply({
+            content: '⛔ สงวนสิทธิ์เฉพาะผู้บริหาร, ประธาน และรองประธานสารวัตรเท่านั้นในการสั่งการปลดหน้าที่',
+            ephemeral: true
+          });
+          return;
+        }
+
+        const targetUser = interaction.options.getUser('target');
+        await handleOpenDemoteMenu(interaction, targetUser);
         return;
       }
     }
@@ -6077,153 +6410,200 @@ client.on('interactionCreate', async (interaction) => {
       return;
     }
 
-    // 9. ระบบลบข้อมูล / ถอดถอนสารวัตร (Remove Member / Leave Sarawat)
-    if (interaction.isButton() && interaction.customId === 'btn_open_remove_member_menu') {
-      const isLeadership = interaction.member.permissions.has(PermissionsBitField.Flags.Administrator) ||
-                           interaction.member.roles.cache.has(ROLE_IDS.PRESIDENT) ||
-                           interaction.member.roles.cache.has(ROLE_IDS.VICE_PRESIDENT);
+    // 9. ระบบปลดหน้าที่ / ถอดยศ / ปลดพ้นสภาพสารวัตร (Demote & Dismiss System)
+    if (interaction.isButton() && (interaction.customId === 'btn_open_demote_menu' || interaction.customId === 'btn_open_remove_member_menu')) {
+      const isLeadership = interaction.member?.permissions.has(PermissionsBitField.Flags.Administrator) ||
+                           interaction.member?.roles.cache.has(ROLE_IDS.PRESIDENT) ||
+                           interaction.member?.roles.cache.has(ROLE_IDS.VICE_PRESIDENT) ||
+                           interaction.guild?.ownerId === interaction.user.id;
 
       if (!isLeadership) {
         await interaction.reply({
-          content: 'ไม่มีสิทธิ์: เฉพาะประธานและผู้บริหาร',
+          content: '⛔ สงวนสิทธิ์เฉพาะผู้บริหาร, ประธาน และรองประธานสารวัตรเท่านั้นในการสั่งการปลดหน้าที่',
           ephemeral: true
         });
         return;
       }
 
-      await interaction.deferReply({ ephemeral: true });
+      await handleOpenDemoteMenu(interaction);
+      return;
+    }
 
-      const { data: members } = await supabase
-        .from('members')
-        .select('*')
-        .eq('status', 'ACTIVE')
-        .order('duty_day')
-        .order('duty_id');
+    if (interaction.isStringSelectMenu() && interaction.customId === 'select_demote_target_member') {
+      const memberId = interaction.values[0];
+      const { data: member } = await supabase.from('members').select('*').eq('id', memberId).single();
+      if (!member) {
+        await interaction.update({ content: '❌ ไม่พบข้อมูลสมาชิก', embeds: [], components: [] });
+        return;
+      }
+      return await renderDemoteLevelSelection(interaction, member);
+    }
 
-      if (!members || members.length === 0) {
-        await interaction.editReply({
-          content: 'ไม่มีข้อมูล: ยังไม่มีสารวัตรในระบบ'
-        });
+    // เลือกระดับ 1: ปลดตำแหน่งผู้นำ
+    if (interaction.isButton() && interaction.customId.startsWith('btn_demote_level_1_')) {
+      const memberId = interaction.customId.replace('btn_demote_level_1_', '');
+      const { data: member } = await supabase.from('members').select('*').eq('id', memberId).single();
+      if (!member) {
+        await interaction.update({ content: '❌ ไม่พบข้อมูลสมาชิก', embeds: [], components: [] });
         return;
       }
 
-      const selectMenu = new StringSelectMenuBuilder()
-        .setCustomId('select_remove_member_target')
-        .setPlaceholder('เลือกสารวัตรที่ต้องการลบข้อมูล / ให้ออก');
+      const curRoleText = member.role === 'PRESIDENT' ? '👑 ประธานสารวัตร' :
+                          member.role === 'VICE_PRESIDENT' ? '🎖️ รองประธานสารวัตร' :
+                          member.shift_role === 'SHIFT_HEAD' ? '👑 หัวหน้าเวร' :
+                          member.shift_role === 'SHIFT_DEPUTY' ? '🎖️ รองหัวหน้าเวร' : 'ผู้นำ';
 
-      members.slice(0, 25).forEach(m => {
-        const dayText = getDayName(m.duty_day);
-        selectMenu.addOptions({
-          label: `[${m.duty_id || '-'}] ${m.nickname} (${m.first_name} ${m.last_name})`,
-          description: `${dayText} | ม.${m.grade_class} #${m.student_no}`,
-          value: m.id
-        });
-      });
+      const confirmEmbed = new EmbedBuilder()
+        .setTitle('⚠️ ยืนยันการปลดตำแหน่งผู้นำ (ระดับ 1)')
+        .setDescription(
+          `คุณกำลังจะปลดตำแหน่งผู้นำของ **[${member.duty_id || '-'}] ${member.nickname} (${member.first_name} ${member.last_name})**:\n\n` +
+          `• 🎖️ **ตำแหน่งเดิม:** ${curRoleText}\n` +
+          `• 🔻 **ผลการปลด:** ปรับยศกลับเป็น **"สารวัตรนักเรียนทั่วไป (MEMBER)"**\n` +
+          `• 🛡️ **ยศ Discord:** ถอดยศประธาน / รองประธาน / หัวหน้าเวร / รองหัวหน้าเวร ออก\n` +
+          `• ✅ **สิ่งที่คงเดิม:** ยังคงเป็นสารวัตรนักเรียน, คงรหัสเวร \`[${member.duty_id || '-'}]\`, และเข้าเวรผลัดเดิมตามปกติ\n` +
+          `• 📋 **การบันทึก:** บันทึกประวัติลงห้อง #log อัตโนมัติ (ไม่มีการส่ง DM แจ้งเตือน)\n\n` +
+          `**หากต้องการดำเนินการต่อ โปรดยืนยันด้านล่าง**`
+        )
+        .setColor('#E67E22')
+        .setFooter({ text: 'SARAWAT Demote System • ระดับ 1 ปลดตำแหน่งผู้นำ' });
 
-      const row = new ActionRowBuilder().addComponents(selectMenu);
-      await interaction.editReply({
-        content: 'เลือกสารวัตรที่ต้องการลบข้อมูล (ถอดถอนออกจากสารวัตร):',
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`btn_confirm_demote_LEADER_${member.id}`)
+          .setLabel('⚠️ ยืนยันปลดตำแหน่งผู้นำ')
+          .setStyle(ButtonStyle.Danger),
+        new ButtonBuilder()
+          .setCustomId('btn_cancel_demote')
+          .setLabel('❌ ยกเลิก')
+          .setStyle(ButtonStyle.Secondary)
+      );
+
+      await interaction.update({
+        embeds: [confirmEmbed],
         components: [row]
       });
       return;
     }
 
-    if (interaction.isStringSelectMenu() && interaction.customId === 'select_remove_member_target') {
-      const memberId = interaction.values[0];
+    // เลือกระดับ 2: ปลดพ้นสภาพสารวัตร (ถอดถอน/คืนรหัส)
+    if (interaction.isButton() && interaction.customId.startsWith('btn_demote_level_2_')) {
+      const memberId = interaction.customId.replace('btn_demote_level_2_', '');
       const { data: member } = await supabase.from('members').select('*').eq('id', memberId).single();
-      const dayText = getDayName(member.duty_day);
+      if (!member) {
+        await interaction.update({ content: '❌ ไม่พบข้อมูลสมาชิก', embeds: [], components: [] });
+        return;
+      }
 
-      const confirmRow = new ActionRowBuilder().addComponents(
+      const confirmEmbed = new EmbedBuilder()
+        .setTitle('🚨 ยืนยันการปลดพ้นสภาพสารวัตร (ระดับ 2 - DESTRUCTIVE)')
+        .setDescription(
+          `⚠️ **คำเตือนความปลอดภัย (ปลดถาวร/คืนรหัสเวร)**\n\n` +
+          `คุณกำลังจะปลดพ้นสภาพสารวัตรของ **[${member.duty_id || '-'}] ${member.nickname} (${member.first_name} ${member.last_name})**:\n\n` +
+          `• 🚫 **ผลการปลด:** พ้นสภาพจากการเป็นสารวัตรนักเรียน (\`status: INACTIVE\`)\n` +
+          `• 🔄 **รหัสเวร:** ปลดและคืนรหัสเวร \`[${member.duty_id || '-'}]\` กลับสู่ระบบเป็นสล็อตว่าง\n` +
+          `• 🛡️ **ยศ Discord:** ถอดยศสารวัตรทั้งหมด (ยศยืนยัน, ยศผลัดเวร, ยศผู้นำ) และรีเซ็ตชื่อเล่น\n` +
+          `• 📋 **การบันทึก:** บันทึกประวัติลงห้อง #log อัตโนมัติ (ไม่มีการส่ง DM แจ้งเตือน)\n\n` +
+          `**หากแน่ใจ ให้กดปุ่มยืนยันด้านล่างเพื่อดำเนินการทันที**`
+        )
+        .setColor('#C0392B')
+        .setFooter({ text: 'SARAWAT Demote System • ระดับ 2 ปลดพ้นสภาพ' });
+
+      const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
-          .setCustomId(`btn_confirm_remove_${member.id}`)
-          .setLabel('ยืนยันลบข้อมูล')
+          .setCustomId(`btn_confirm_demote_DISMISS_${member.id}`)
+          .setLabel('🚨 ยืนยันปลดพ้นสภาพสารวัตร')
           .setStyle(ButtonStyle.Danger),
         new ButtonBuilder()
-          .setCustomId('btn_cancel_remove')
-          .setLabel('ยกเลิก')
+          .setCustomId('btn_cancel_demote')
+          .setLabel('❌ ยกเลิก')
           .setStyle(ButtonStyle.Secondary)
       );
 
       await interaction.update({
-        content: `ยืนยันลบข้อมูล\nชื่อ: [${member.duty_id || '-'}] ${member.nickname} (${member.first_name} ${member.last_name})\nชั้น: ม.${member.grade_class} #${member.student_no} | เวร: ${dayText}\n\nผล: ปลดรหัสเวร ${member.duty_id || ''}, ปลดยศทั้งหมด, คืนสล็อตเวรสู่ระบบ`,
-        components: [confirmRow]
+        embeds: [confirmEmbed],
+        components: [row]
       });
       return;
     }
 
-    if (interaction.isButton() && interaction.customId.startsWith('btn_confirm_remove_')) {
+    // ยืนยันปลดระดับ 1: ผู้นำ -> สมาชิกทั่วไป
+    if (interaction.isButton() && interaction.customId.startsWith('btn_confirm_demote_LEADER_')) {
       await interaction.deferUpdate();
-      const memberId = interaction.customId.replace('btn_confirm_remove_', '');
-      const { data: member } = await supabase.from('members').select('*').eq('id', memberId).single();
+      const memberId = interaction.customId.replace('btn_confirm_demote_LEADER_', '');
 
-      const freedDutyId = member.duty_id;
-      const freedDay = member.duty_day;
+      try {
+        const { member } = await executeDemoteLeader(memberId, interaction.user.id, interaction.guild);
 
-      await supabase
-        .from('members')
-        .update({
-          status: 'INACTIVE',
-          duty_id: null,
-          duty_day: null,
-          role: 'MEMBER',
-          shift_role: 'MEMBER',
-          profile_image_url: null,
-          updated_at: new Date()
-        })
-        .eq('id', memberId);
-
-      if (member.discord_id) {
-        try {
-          const guildMember = await interaction.guild.members.fetch(member.discord_id).catch(() => null);
-          if (guildMember) {
-            const rolesToRemove = [
-              ROLE_IDS.VERIFIED,
-              ROLE_IDS.PRESIDENT,
-              ROLE_IDS.VICE_PRESIDENT,
-              ROLE_IDS.DAYS[freedDay],
-              ROLE_IDS.HEADS[freedDay],
-              ROLE_IDS.DEPUTIES[freedDay]
-            ].filter(Boolean);
-
-            await guildMember.roles.remove(rolesToRemove).catch(() => {});
-            if (ROLE_IDS.UNVERIFIED) await guildMember.roles.add(ROLE_IDS.UNVERIFIED).catch(() => {});
-
-            if (guildMember.nickname && guildMember.nickname.startsWith('[')) {
-              const cleanedNick = guildMember.nickname.replace(/^\[.*?\]\s*/, '');
-              await guildMember.setNickname(cleanedNick.slice(0, 32)).catch(() => {});
-            }
-          }
-        } catch (e) {
-          console.warn('Error removing member roles:', e.message);
-        }
-      }
-
-      await interaction.editReply({
-        content: `ลบข้อมูลสำเร็จ\nชื่อ: ${member.first_name} (${member.nickname})\nสถานะ: พ้นสภาพสารวัตร\nคืนรหัส: ${freedDutyId || '-'} สู่ระบบแล้ว\nโดย: <@${interaction.user.id}>`,
-        components: []
-      });
-
-      const leaderRoom = interaction.guild.channels.cache.find(c => c.name.includes('ผู้นำ-all-in-one') || c.name.includes('ห้องประชุมหัวหน้า'));
-      if (leaderRoom) {
-        const logEmbed = new EmbedBuilder()
-          .setTitle('ถอดถอนสมาชิกสารวัตร')
+        const successEmbed = new EmbedBuilder()
+          .setTitle('✅ ปลดตำแหน่งผู้นำสำเร็จ')
           .setDescription(
-            `ชื่อ: ${member.first_name} ${member.last_name} (${member.nickname})\n` +
-            `รหัสเดิม: [${freedDutyId || '-'}]\n` +
-            `สถานะ: พ้นสภาพสารวัตร | คืนรหัสเวรว่างสู่ระบบ\n` +
-            `ผู้ดำเนินการ: <@${interaction.user.id}>`
+            `ดำเนินการปลดตำแหน่งผู้นำเรียบร้อยแล้ว:\n\n` +
+            `• 👤 **สารวัตร:** [${member.duty_id || '-'}] ${member.nickname} (${member.first_name} ${member.last_name})\n` +
+            `• 🛡️ **ตำแหน่งใหม่:** สารวัตรนักเรียนทั่วไป (MEMBER)\n` +
+            `• 📅 **ผลัดเวร:** ${getDayName(member.duty_day)} (ยังคงปฏิบัติหน้าที่ตามปกติ)\n` +
+            `• 👮 **ผู้ดำเนินการ:** <@${interaction.user.id}>\n\n` +
+            `*(บันทึกข้อมูลลงระบบและแจ้งเตือนในห้อง #log เรียบร้อยแล้ว)*`
           )
-          .setColor('#E74C3C')
+          .setColor('#2ECC71')
           .setTimestamp();
 
-        await leaderRoom.send({ embeds: [logEmbed] }).catch(() => {});
+        await interaction.editReply({
+          embeds: [successEmbed],
+          components: []
+        });
+      } catch (err) {
+        await interaction.editReply({
+          content: `❌ เกิดข้อผิดพลาดในการปลดตำแหน่ง: ${err.message}`,
+          embeds: [],
+          components: []
+        });
       }
       return;
     }
 
-    if (interaction.isButton() && interaction.customId === 'btn_cancel_remove') {
+    // ยืนยันปลดระดับ 2: พ้นสภาพสารวัตร คืนรหัสเวร
+    if (interaction.isButton() && (interaction.customId.startsWith('btn_confirm_demote_DISMISS_') || interaction.customId.startsWith('btn_confirm_remove_'))) {
+      await interaction.deferUpdate();
+      const memberId = interaction.customId.startsWith('btn_confirm_demote_DISMISS_')
+        ? interaction.customId.replace('btn_confirm_demote_DISMISS_', '')
+        : interaction.customId.replace('btn_confirm_remove_', '');
+
+      try {
+        const { member, freedDutyId } = await executeDismissMember(memberId, interaction.user.id, interaction.guild);
+
+        const successEmbed = new EmbedBuilder()
+          .setTitle('✅ ปลดพ้นสภาพสารวัตรสำเร็จ')
+          .setDescription(
+            `ดำเนินการปลดพ้นสภาพสารวัตรนักเรียนเรียบร้อยแล้ว:\n\n` +
+            `• 👤 **ชื่อ-สกุล:** ${member.first_name} ${member.last_name} (${member.nickname})\n` +
+            `• 🚫 **สถานะ:** พ้นสภาพสารวัตร (\`INACTIVE\`)\n` +
+            `• 🔄 **คืนรหัสเวร:** \`[${freedDutyId || '-'}]\` สู่ระบบ (พร้อมจัดสรรใหม่)\n` +
+            `• 🛡️ **ยศ Discord:** ถอดยศสารวัตรและรีเซ็ตชื่อเล่นแล้ว\n` +
+            `• 👮 **ผู้ดำเนินการ:** <@${interaction.user.id}>\n\n` +
+            `*(บันทึกข้อมูลลงระบบและแจ้งเตือนในห้อง #log เรียบร้อยแล้ว)*`
+          )
+          .setColor('#2ECC71')
+          .setTimestamp();
+
+        await interaction.editReply({
+          embeds: [successEmbed],
+          components: []
+        });
+      } catch (err) {
+        await interaction.editReply({
+          content: `❌ เกิดข้อผิดพลาดในการปลดพ้นสภาพ: ${err.message}`,
+          embeds: [],
+          components: []
+        });
+      }
+      return;
+    }
+
+    // ยกเลิกการปลดหน้าที่
+    if (interaction.isButton() && (interaction.customId === 'btn_cancel_demote' || interaction.customId === 'btn_cancel_remove')) {
       await interaction.update({
-        content: 'ยกเลิกรายการแล้ว',
+        content: '❌ **ยกเลิกการปลดหน้าที่เรียบร้อยแล้ว** ไม่มีการเปลี่ยนแปลงข้อมูลหรือยศใดๆ',
+        embeds: [],
         components: []
       });
       return;
@@ -7797,6 +8177,8 @@ module.exports = {
   slashCommands,
   executeDDay,
   executeKillFile,
+  executeDemoteLeader,
+  executeDismissMember,
   refreshAllChannelsAndPanels,
   getThaiDayOfWeek,
   getTodayDutyCodes,

@@ -290,16 +290,16 @@ describe('SARAWAT-BOT New Shift & Combined Duty ID Verification', () => {
     assert.equal(delta.obsoleteDayRoles.includes('role_special'), false); // Special role kept
   });
 
-  test('Slash Commands list must contain all 14 commands and valid Discord naming conventions', () => {
+  test('Slash Commands list must contain all 15 commands and valid Discord naming conventions', () => {
     const { slashCommands } = require('../bot.js');
     assert.equal(Array.isArray(slashCommands), true);
-    assert.equal(slashCommands.length, 14);
+    assert.equal(slashCommands.length, 15);
 
     const commandNames = slashCommands.map(c => c.name);
     const expected = [
       'status', 'my-card', 'sync-roles', 'semester',
       'setup-verify', 'setup-leave', 'setup-attendance',
-      'setup-photo', 'setup-appoint', 'setup-lost-found', 'setup-all', 'd-day', 'killfile', 'test-duty'
+      'setup-photo', 'setup-appoint', 'setup-lost-found', 'setup-all', 'd-day', 'killfile', 'demote', 'test-duty'
     ];
 
     for (const exp of expected) {
@@ -323,6 +323,19 @@ describe('SARAWAT-BOT New Shift & Combined Duty ID Verification', () => {
     assert.ok(killCmd);
     assert.equal(killCmd.name, 'killfile');
     assert.ok(killCmd.description.includes('ระบบของหาย'));
+  });
+
+  test('Demote functions and slash command are properly configured', () => {
+    const { executeDemoteLeader, executeDismissMember, slashCommands } = require('../bot.js');
+    assert.equal(typeof executeDemoteLeader, 'function');
+    assert.equal(typeof executeDismissMember, 'function');
+    const demoteCmd = slashCommands.find(c => c.name === 'demote');
+    assert.ok(demoteCmd);
+    assert.equal(demoteCmd.name, 'demote');
+    assert.ok(demoteCmd.description.includes('ปลดหน้าที่'));
+    const json = demoteCmd.toJSON();
+    assert.equal(json.options?.length, 1);
+    assert.equal(json.options[0].name, 'target');
   });
 
   test('D-Day confirmation gate requires exact CONFIRM D-DAY passphrase', () => {
