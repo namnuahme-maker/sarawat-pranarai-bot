@@ -23,6 +23,7 @@ const {
   ButtonBuilder, 
   ButtonStyle, 
   StringSelectMenuBuilder, 
+  UserSelectMenuBuilder, 
   ModalBuilder, 
   TextInputBuilder, 
   TextInputStyle, 
@@ -3046,6 +3047,235 @@ client.on('messageCreate', async (message) => {
 });
 
 // ==========================================================
+// 🔍 ระบบขออนุญาตออกตรวจพื้นที่ด่วน (One-Click Inspection Flow)
+// ==========================================================
+const inspectionDrafts = new Map();
+
+function getDutyPeriodNow() {
+  const now = new Date();
+  const bkkHours = (now.getUTCHours() + 7) % 24;
+  const bkkMinutes = now.getUTCMinutes();
+  const totalMins = bkkHours * 60 + bkkMinutes;
+
+  if (totalMins < 11 * 60) {
+    return 'พักเช้า / ก่อนเข้าแถว';
+  } else if (totalMins < 14 * 60 + 30) {
+    return 'พักกลางวัน';
+  } else {
+    return 'เลิกเรียน / เย็น';
+  }
+}
+
+function getInspectionDraft(userId) {
+  let draft = inspectionDrafts.get(userId);
+  if (!draft || (Date.now() - draft.updatedAt > 15 * 60 * 1000)) {
+    draft = {
+      period: getDutyPeriodNow(),
+      partnerIds: [],
+      partnersText: 'ปฏิบัติหน้าที่คนเดียว',
+      updatedAt: Date.now()
+    };
+    inspectionDrafts.set(userId, draft);
+  }
+  return draft;
+}
+
+function buildInspectionPanel(member, draft, user) {
+  const profilePhoto = member?.profile_image_url || 
+                       member?.photo_url || 
+                       member?.profile_photo_url || 
+                       user?.displayAvatarURL?.({ dynamic: true, size: 512 }) ||
+                       null;
+
+  const officerName = member
+    ? `[${member.duty_id || 'สารวัตร'}] ${member.first_name} (${member.nickname})`
+    : (user?.username || 'สารวัตรนักเรียน');
+
+  const embed = new EmbedBuilder()
+    .setTitle('📋 ขออนุญาตออกตรวจพื้นที่ (เลือกด่วน 1 คลิก)')
+    .setDescription(
+      `👮 **สารวัตรผู้ขอ:** **${officerName}**\n` +
+      `⏰ **ช่วงเวลา:** **${draft.period}** *(ระบบเลือกให้อัตโนมัติ หรือกดเปลี่ยนได้)*\n` +
+      `👥 **ผู้ร่วมตรวจ:** **${draft.partnersText}** *(ค่าเริ่มต้น: ปฏิบัติงานคนเดียว)*\n` +
+      `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+      `👇 **แตะเลือกโซนตรวจด้านล่าง 1 คลิก เพื่อเปิดเคสตรวจทันที:**`
+    )
+    .setColor('#2980B9')
+    .setFooter({ text: 'แตะเลือกโซน 1 คลิก บอทจะเปิดห้องเคสและดึงคู่หูเข้าเธรดให้ทันที' });
+
+  if (profilePhoto) {
+    embed.setThumbnail(profilePhoto);
+  }
+
+  // แถวที่ 1: 4 ปุ่มโซนตรวจหลัก (แตะแล้วสร้างเคสทันที)
+  const zoneRow = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId('btn_insp_zone_buildings')
+      .setLabel('🏢 โซนอาคารเรียน')
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setCustomId('btn_insp_zone_canteen')
+      .setLabel('🍜 โซนโรงอาหาร-สหกรณ์')
+      .setStyle(ButtonStyle.Success),
+    new ButtonBuilder()
+      .setCustomId('btn_insp_zone_stadium')
+      .setLabel('⚽ โซนสนามกีฬา')
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setCustomId('btn_insp_zone_blindspots')
+      .setLabel('🚻 โซนลับตาคน/ห้องน้ำ')
+      .setStyle(ButtonStyle.Danger)
+  );
+
+  // แถวที่ 2: สลับช่วงเวลา + ปุ่มออกตรวจคนเดียว + ปุ่มพิมพ์เอง
+  const isMorning = draft.period.includes('เช้า');
+  const isLunch = draft.period.includes('กลางวัน');
+  const isEvening = draft.period.includes('เย็น') || draft.period.includes('เลิกเรียน');
+
+  const periodRow = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId('btn_insp_time_morning')
+      .setLabel('🌅 เช้า')
+      .setStyle(isMorning ? ButtonStyle.Success : ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId('btn_insp_time_lunch')
+      .setLabel('🍱 กลางวัน')
+      .setStyle(isLunch ? ButtonStyle.Success : ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId('btn_insp_time_evening')
+      .setLabel('🌆 เย็น')
+      .setStyle(isEvening ? ButtonStyle.Success : ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId('btn_insp_solo')
+      .setLabel('👤 ออกตรวจคนเดียว')
+      .setStyle(draft.partnerIds.length === 0 ? ButtonStyle.Primary : ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId('btn_insp_custom_modal')
+      .setLabel('✏️ ระบุเอง')
+      .setStyle(ButtonStyle.Secondary)
+  );
+
+  // แถวที่ 3: เลือกเพื่อนร่วมตรวจจาก Discord โดยตรง (ไม่ต้องพิมพ์ชื่อ)
+  const partnerSelect = new UserSelectMenuBuilder()
+    .setCustomId('select_insp_partners')
+    .setPlaceholder('👥 เลือกสารวัตรที่ร่วมตรวจ (ถ้ามี - ปล่อยว่าง = คนเดียว)')
+    .setMinValues(1)
+    .setMaxValues(5);
+
+  const selectRow = new ActionRowBuilder().addComponents(partnerSelect);
+
+  return { embeds: [embed], components: [zoneRow, periodRow, selectRow], ephemeral: true };
+}
+
+async function createInspectionTicket(interaction, { target, period, officers, partnerIds = [], member }) {
+  const caseId = 'INSP-' + Math.floor(1000 + Math.random() * 9000);
+
+  const officerName = member
+    ? `[${member.duty_id || 'สารวัตร'}] ${member.first_name} (${member.nickname})`
+    : (interaction.member?.displayName || interaction.user.username);
+
+  const profilePhoto = member?.profile_image_url || 
+                       member?.photo_url || 
+                       member?.profile_photo_url || 
+                       interaction.user.displayAvatarURL({ dynamic: true, size: 512 });
+
+  // บันทึกลง Supabase cases table
+  await supabase.from('cases').insert({
+    case_id: caseId,
+    reporter_email: member?.email || `${interaction.user.id}@discord.local`,
+    reporter_name: officerName,
+    incident_date_time: new Date().toISOString(),
+    location: target,
+    category: 'ขอออกตรวจพื้นที่',
+    description: `[ปฏิบัติการขอออกตรวจพื้นที่]\nจุดตรวจ: ${target}\nช่วงเวลา: ${period}\nผู้ร่วมตรวจ: ${officers}\nผู้ขอ: ${officerName} (<@${interaction.user.id}>)`,
+    status: 'PATROL_WAITING_PHOTO',
+    assigned_duty_day: member?.duty_day || null,
+    assigned_officer_id: member?.id || null,
+    resolution_notes: `[เริ่มเคสออกตรวจ]: จุดตรวจ ${target} (${period}) โดย ${officerName}`
+  });
+
+  const guild = interaction.guild;
+  const chIncident = findChannel(guild, '📁│ติดตามและปิดคดี') ||
+                     findChannel(guild, '🚨│แจ้งเหตุใหม่-google-form') ||
+                     findChannel(guild, 'แจ้งเหตุใหม่') ||
+                     findChannel(guild, '👑│ผู้นำ-all-in-one') ||
+                     interaction.channel;
+
+  const rootEmbed = new EmbedBuilder()
+    .setTitle(`🚨 [เคสขอออกตรวจ] ${target} (${caseId})`)
+    .setAuthor({ name: `สารวัตรผู้ขอออกตรวจ: ${officerName}`, iconURL: profilePhoto })
+    .setThumbnail(profilePhoto)
+    .setDescription(
+      `👮 **สารวัตรผู้ขอออกตรวจ:** ${officerName} (<@${interaction.user.id}>)\n` +
+      `📍 **จุดตรวจ:** **${target}**\n` +
+      `⏰ **ช่วงเวลา:** **${period}**\n` +
+      `👥 **ผู้ร่วมตรวจ:** ${officers}\n` +
+      `📊 **สถานะ:** 🟡 กำลังรอส่งภาพหลักฐานการเข้าพื้นที่\n\n` +
+      `*(ห้องเคสสำหรับส่งภาพและดำเนินภารกิจได้เปิดไว้ในเธรดด้านล่างแล้ว)*`
+    )
+    .setColor('#F39C12')
+    .setFooter({ text: `INSPECTION TICKET • ${caseId}` })
+    .setTimestamp();
+
+  let thread = null;
+  if (chIncident && chIncident.isTextBased()) {
+    const rootMsg = await chIncident.send({ embeds: [rootEmbed] }).catch(() => null);
+    if (rootMsg) {
+      const safeTarget = target.replace(/[^\u0E00-\u0E7Fa-zA-Z0-9_-]/g, '').slice(0, 15);
+      thread = await rootMsg.startThread({
+        name: `🎫│ตรวจ-${safeTarget || 'พื้นที่'}-${caseId}`,
+        autoArchiveDuration: 1440
+      }).catch(() => null);
+
+      if (thread) {
+        await thread.members.add(interaction.user.id).catch(() => {});
+        if (partnerIds && Array.isArray(partnerIds)) {
+          for (const pid of partnerIds) {
+            await thread.members.add(pid).catch(() => {});
+          }
+        }
+
+        // ส่งข้อความขนาดใหญ่ในห้อง Ticket เธรด
+        await thread.send({
+          content:
+            `# 🚨 ปฏิบัติการขอออกตรวจพื้นที่: ${target}\n` +
+            `### 🎫 รหัสเคส: \`${caseId}\`\n\n` +
+            `👮 **สารวัตรรับผิดชอบ:** <@${interaction.user.id}> (${officerName})\n` +
+            `📍 **จุดตรวจ:** **${target}**\n` +
+            `⏰ **ช่วงเวลา:** **${period}**\n` +
+            `👥 **ผู้ร่วมตรวจ:** ${officers}\n` +
+            `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+            `# 📸 กรุณาส่งรูปภาพหลักฐานการเข้าพื้นที่\n` +
+            `> ให้สารวัตรถ่ายภาพจุดตรวจหรือภาพขณะเข้าพื้นที่ แล้วส่งรูปลงในเธรดนี้ได้เลยครับ\n` +
+            `> **เมื่อส่งภาพแล้ว บอทจะส่งสัญญาณขออนุมัติให้หัวหน้าตรวจเช็กทันที!**\n` +
+            `━━━━━━━━━━━━━━━━━━━━━━━━━━━━`
+        }).catch(() => {});
+      }
+    }
+  }
+
+  const responsePayload = {
+    content:
+      `# ✅ เปิดห้องเคสขอออกตรวจเรียบร้อยแล้ว!\n` +
+      `- **รหัสเคส:** \`${caseId}\`\n` +
+      `- **จุดตรวจ:** **${target}**\n` +
+      `- **ช่วงเวลา:** ${period}\n` +
+      `- **ผู้ร่วมตรวจ:** ${officers}\n` +
+      `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+      (thread ? `👉 **กดเข้าไปที่ห้องเคสได้ทันที:** <#${thread.id}>\n` : '') +
+      `กรุณาส่งภาพถ่ายหลักฐานการเข้าพื้นที่ในห้องเคสเพื่อเริ่มปฏิบัติการครับ`,
+    embeds: [],
+    components: []
+  };
+
+  if (interaction.deferred || interaction.replied) {
+    await interaction.editReply(responsePayload);
+  } else {
+    await interaction.reply({ ...responsePayload, ephemeral: true });
+  }
+}
+
+// ==========================================================
 // ⚡ จัดการ INTERACTION ทั้งหมด
 // ==========================================================
 client.on('interactionCreate', async (interaction) => {
@@ -5326,7 +5556,7 @@ client.on('interactionCreate', async (interaction) => {
     }
 
     // -------------------------------------------------------------
-    // 5.0.1 ศูนย์บริการสารวัตร: ปุ่ม +ขออนุญาตออกตรวจ (Ticket Flow)
+    // 5.0.1 ศูนย์บริการสารวัตร: ปุ่ม +ขออนุญาตออกตรวจ (One-Click Inspection Flow)
     // -------------------------------------------------------------
     if (interaction.isButton() && (interaction.customId === 'btn_service_request_inspection' || interaction.customId === 'btn_service_request_leave')) {
       const { data: member } = await supabase
@@ -5344,51 +5574,23 @@ client.on('interactionCreate', async (interaction) => {
         return;
       }
 
-      const modal = new ModalBuilder()
-        .setCustomId('modal_service_request_inspection')
-        .setTitle('📋 ขออนุญาตออกตรวจพื้นที่'.slice(0, 45));
-
-      const targetInput = new TextInputBuilder()
-        .setCustomId('input_insp_target')
-        .setLabel('สถานที่ / จุดตรวจที่ต้องการออกตรวจ')
-        .setPlaceholder('เช่น หลังอาคาร 3, บริเวณห้องน้ำ, สหกรณ์, โรงอาหาร')
-        .setStyle(TextInputStyle.Short)
-        .setRequired(true);
-
-      const periodInput = new TextInputBuilder()
-        .setCustomId('input_insp_period')
-        .setLabel('ช่วงเวลาที่ออกตรวจ (เช้า/กลางวัน/เย็น)')
-        .setValue('พักกลางวัน')
-        .setStyle(TextInputStyle.Short)
-        .setRequired(true);
-
-      const officersInput = new TextInputBuilder()
-        .setCustomId('input_insp_officers')
-        .setLabel('สารวัตรที่ร่วมออกตรวจ (ถ้ามี)')
-        .setPlaceholder('เช่น [TS2] กาย, [TS3] แบงก์ หรือระบุว่า ปฏิบัติหน้าที่คนเดียว')
-        .setStyle(TextInputStyle.Short)
-        .setRequired(false);
-
-      modal.addComponents(
-        new ActionRowBuilder().addComponents(targetInput),
-        new ActionRowBuilder().addComponents(periodInput),
-        new ActionRowBuilder().addComponents(officersInput)
-      );
-
-      await interaction.showModal(modal);
+      const draft = getInspectionDraft(interaction.user.id);
+      const panel = buildInspectionPanel(member, draft, interaction.user);
+      await interaction.reply(panel);
       return;
     }
 
-    if (interaction.isModalSubmit() && interaction.customId === 'modal_service_request_inspection') {
-      await interaction.deferReply({ ephemeral: true });
+    // 5.0.1.1 ปุ่มเลือกโซนตรวจ 4 โซนหลัก (One-Click Quick Trigger)
+    if (interaction.isButton() && interaction.customId.startsWith('btn_insp_zone_')) {
+      const zoneMap = {
+        btn_insp_zone_buildings: 'โซนอาคารเรียน',
+        btn_insp_zone_canteen: 'โซนโรงอาหาร-สหกรณ์',
+        btn_insp_zone_stadium: 'โซนสนามกีฬา',
+        btn_insp_zone_blindspots: 'โซนลับตาคน/ห้องน้ำ'
+      };
+      const target = zoneMap[interaction.customId] || 'พื้นที่โรงเรียน';
 
-      const target = interaction.fields.getTextInputValue('input_insp_target').trim();
-      const period = interaction.fields.getTextInputValue('input_insp_period').trim();
-      const officers = interaction.fields.fields.has('input_insp_officers')
-        ? (interaction.fields.getTextInputValue('input_insp_officers').trim() || 'ปฏิบัติหน้าที่คนเดียว')
-        : 'ปฏิบัติหน้าที่คนเดียว';
-
-      const caseId = 'INSP-' + Math.floor(1000 + Math.random() * 9000);
+      await interaction.deferUpdate();
 
       const { data: member } = await supabase
         .from('members')
@@ -5396,86 +5598,107 @@ client.on('interactionCreate', async (interaction) => {
         .eq('discord_id', interaction.user.id)
         .maybeSingle();
 
-      const officerName = member
-        ? `[${member.duty_id || 'สารวัตร'}] ${member.first_name} (${member.nickname})`
-        : (interaction.member?.displayName || interaction.user.username);
-
-      // บันทึกลง Supabase cases table
-      await supabase.from('cases').insert({
-        case_id: caseId,
-        reporter_email: member?.email || `${interaction.user.id}@discord.local`,
-        reporter_name: officerName,
-        incident_date_time: new Date().toISOString(),
-        location: target,
-        category: 'ขอออกตรวจพื้นที่',
-        description: `[ปฏิบัติการขอออกตรวจพื้นที่]\nจุดตรวจ: ${target}\nช่วงเวลา: ${period}\nผู้ร่วมตรวจ: ${officers}\nผู้ขอ: ${officerName} (<@${interaction.user.id}>)`,
-        status: 'PATROL_WAITING_PHOTO',
-        assigned_duty_day: member?.duty_day || null,
-        assigned_officer_id: member?.id || null,
-        resolution_notes: `[เริ่มเคสออกตรวจ]: จุดตรวจ ${target} (${period}) โดย ${officerName}`
+      const draft = getInspectionDraft(interaction.user.id);
+      await createInspectionTicket(interaction, {
+        target,
+        period: draft.period,
+        officers: draft.partnersText,
+        partnerIds: draft.partnerIds,
+        member
       });
 
-      const guild = interaction.guild;
-      const chIncident = findChannel(guild, '📁│ติดตามและปิดคดี') ||
-                         findChannel(guild, '🚨│แจ้งเหตุใหม่-google-form') ||
-                         findChannel(guild, 'แจ้งเหตุใหม่') ||
-                         findChannel(guild, '👑│ผู้นำ-all-in-one') ||
-                         interaction.channel;
+      inspectionDrafts.delete(interaction.user.id);
+      return;
+    }
 
-      const rootEmbed = new EmbedBuilder()
-        .setTitle(`🚨 [เคสขอออกตรวจ] ${target} (${caseId})`)
-        .setDescription(
-          `👮 **สารวัตรผู้ขอออกตรวจ:** ${officerName} (<@${interaction.user.id}>)\n` +
-          `📍 **จุดตรวจ:** **${target}**\n` +
-          `⏰ **ช่วงเวลา:** **${period}**\n` +
-          `👥 **ผู้ร่วมตรวจ:** ${officers}\n` +
-          `📊 **สถานะ:** 🟡 กำลังรอส่งภาพหลักฐานการเข้าพื้นที่\n\n` +
-          `*(ห้องเคสสำหรับส่งภาพและดำเนินภารกิจได้เปิดไว้ในเธรดด้านล่างแล้ว)*`
-        )
-        .setColor('#F39C12')
-        .setFooter({ text: `INSPECTION TICKET • ${caseId}` });
+    // 5.0.1.2 สลับช่วงเวลาตรวจ หรือตั้งค่าเป็นออกตรวจคนเดียว
+    if (interaction.isButton() && (
+      interaction.customId === 'btn_insp_time_morning' ||
+      interaction.customId === 'btn_insp_time_lunch' ||
+      interaction.customId === 'btn_insp_time_evening' ||
+      interaction.customId === 'btn_insp_solo'
+    )) {
+      const { data: member } = await supabase
+        .from('members')
+        .select('*')
+        .eq('discord_id', interaction.user.id)
+        .maybeSingle();
 
-      let thread = null;
-      if (chIncident && chIncident.isTextBased()) {
-        const rootMsg = await chIncident.send({ embeds: [rootEmbed] }).catch(() => null);
-        if (rootMsg) {
-          const safeTarget = target.replace(/[^\u0E00-\u0E7Fa-zA-Z0-9_-]/g, '').slice(0, 15);
-          thread = await rootMsg.startThread({
-            name: `🎫│ตรวจ-${safeTarget || 'พื้นที่'}-${caseId}`,
-            autoArchiveDuration: 1440
-          }).catch(() => null);
-
-          if (thread) {
-            await thread.members.add(interaction.user.id).catch(() => {});
-
-            // ส่งข้อความขนาดใหญ่ในห้อง Ticket เธรด
-            await thread.send({
-              content:
-                `# 🚨 ปฏิบัติการขอออกตรวจพื้นที่: ${target}\n` +
-                `### 🎫 รหัสเคส: \`${caseId}\`\n\n` +
-                `👮 **สารวัตรรับผิดชอบ:** <@${interaction.user.id}> (${officerName})\n` +
-                `📍 **จุดตรวจ:** **${target}**\n` +
-                `⏰ **ช่วงเวลา:** **${period}**\n` +
-                `👥 **ผู้ร่วมตรวจ:** ${officers}\n` +
-                `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-                `# 📸 กรุณาส่งรูปภาพหลักฐานการเข้าพื้นที่\n` +
-                `> ให้สารวัตรถ่ายภาพจุดตรวจหรือภาพขณะเข้าพื้นที่ แล้วส่งรูปลงในเธรดนี้ได้เลยครับ\n` +
-                `> **เมื่อส่งภาพแล้ว บอทจะส่งสัญญาณอนุญาตให้เริ่มตรวจทันที!**\n` +
-                `━━━━━━━━━━━━━━━━━━━━━━━━━━━━`
-            }).catch(() => {});
-          }
-        }
+      const draft = getInspectionDraft(interaction.user.id);
+      if (interaction.customId === 'btn_insp_time_morning') draft.period = 'พักเช้า / ก่อนเข้าแถว';
+      if (interaction.customId === 'btn_insp_time_lunch') draft.period = 'พักกลางวัน';
+      if (interaction.customId === 'btn_insp_time_evening') draft.period = 'เลิกเรียน / เย็น';
+      if (interaction.customId === 'btn_insp_solo') {
+        draft.partnerIds = [];
+        draft.partnersText = 'ปฏิบัติหน้าที่คนเดียว';
       }
+      draft.updatedAt = Date.now();
 
-      await interaction.editReply({
-        content:
-          `# ✅ เปิดห้องเคสขอออกตรวจเรียบร้อยแล้ว!\n` +
-          `- **รหัสเคส:** \`${caseId}\`\n` +
-          `- **จุดตรวจ:** ${target} (${period})\n` +
-          `━━━━━━━━━━━━━━━━━━━━\n` +
-          (thread ? `👉 **กรุณาเข้าไปที่ห้องเคส:** <#${thread.id}>\n` : '') +
-          `เพื่อส่งภาพถ่ายหลักฐานการเข้าพื้นที่ และรอรับสัญญาณอนุญาตจากระบบครับ`
+      const panel = buildInspectionPanel(member, draft, interaction.user);
+      await interaction.update({ embeds: panel.embeds, components: panel.components });
+      return;
+    }
+
+    // 5.0.1.3 เลือกเพื่อนร่วมตรวจจาก UserSelectMenu โดยตรง
+    if (interaction.isUserSelectMenu() && interaction.customId === 'select_insp_partners') {
+      const { data: member } = await supabase
+        .from('members')
+        .select('*')
+        .eq('discord_id', interaction.user.id)
+        .maybeSingle();
+
+      const draft = getInspectionDraft(interaction.user.id);
+      const selectedIds = interaction.values || [];
+      draft.partnerIds = selectedIds;
+      draft.partnersText = selectedIds.length > 0
+        ? selectedIds.map(id => `<@${id}>`).join(', ')
+        : 'ปฏิบัติหน้าที่คนเดียว';
+      draft.updatedAt = Date.now();
+
+      const panel = buildInspectionPanel(member, draft, interaction.user);
+      await interaction.update({ embeds: panel.embeds, components: panel.components });
+      return;
+    }
+
+    // 5.0.1.4 ปุ่มพิมพ์ระบุจุดตรวจเอง (กรณีต้องการระบุห้อง/จุดเฉพาะ)
+    if (interaction.isButton() && interaction.customId === 'btn_insp_custom_modal') {
+      const modal = new ModalBuilder()
+        .setCustomId('modal_service_request_inspection')
+        .setTitle('📋 ระบุจุดตรวจที่ต้องการออกตรวจ'.slice(0, 45));
+
+      const targetInput = new TextInputBuilder()
+        .setCustomId('input_insp_target')
+        .setLabel('สถานที่ / จุดตรวจที่ต้องการออกตรวจ')
+        .setPlaceholder('เช่น หลังอาคาร 4, ลานกิจกรรม, ห้องโสต')
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true);
+
+      modal.addComponents(new ActionRowBuilder().addComponents(targetInput));
+      await interaction.showModal(modal);
+      return;
+    }
+
+    // 5.0.1.5 รับข้อมูลจาก Modal พิมพ์เอง
+    if (interaction.isModalSubmit() && interaction.customId === 'modal_service_request_inspection') {
+      await interaction.deferReply({ ephemeral: true });
+
+      const target = interaction.fields.getTextInputValue('input_insp_target').trim();
+      const { data: member } = await supabase
+        .from('members')
+        .select('*')
+        .eq('discord_id', interaction.user.id)
+        .maybeSingle();
+
+      const draft = getInspectionDraft(interaction.user.id);
+      await createInspectionTicket(interaction, {
+        target,
+        period: draft.period,
+        officers: draft.partnersText,
+        partnerIds: draft.partnerIds,
+        member
       });
+
+      inspectionDrafts.delete(interaction.user.id);
       return;
     }
 
