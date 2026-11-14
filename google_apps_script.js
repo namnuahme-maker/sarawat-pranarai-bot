@@ -215,3 +215,55 @@ function testSendIncident() {
   };
   onFormSubmit(dummyEvent);
 }
+
+/**
+ * 📹 Web App Endpoint: รองรับการรับไฟล์ Bodycam จาก Web Dashboard เพื่อบันทึกลง Google Drive อัตโนมัติ
+ * 
+ * 📌 วิธีเปิดใช้งาน Web App ใน Google Apps Script:
+ * 1. กดปุ่มสีน้ำเงินด้านขวาบน: "ทำให้ใช้งานได้" (Deploy) -> "การทำให้ใช้งานได้รายการใหม่" (New deployment)
+ * 2. คลิกรูปฟันเฟือง ⚙️ ด้านซ้าย เลือก "เว็บแอป" (Web app)
+ * 3. กำหนดค่า:
+ *    - คำอธิบาย: Bodycam Auto Uploader
+ *    - ดำเนินการในฐานะ (Execute as): "ฉัน" (Me / บัญชี Google ของคุณ)
+ *    - ผู้ที่มีสิทธิ์เข้าถึง (Who has access): "ทุกคน" (Anyone)
+ * 4. กด "ทำให้ใช้งานได้" (Deploy) และกดยอมรับสิทธิ์
+ * 5. คัดลอก "URL ของเว็บแอป" (Web App URL) ไปใส่ในไฟล์ .env:
+ *    GOOGLE_DRIVE_WEBAPP_URL=https://script.google.com/macros/s/.../exec
+ */
+function doPost(e) {
+  try {
+    if (!e || !e.postData || !e.postData.contents) {
+      return ContentService.createTextOutput(JSON.stringify({ success: false, error: "No post data received" }))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+
+    var data = JSON.parse(e.postData.contents);
+
+    // 1. ตรวจสอบหรือสร้างโฟลเดอร์สำหรับเก็บไฟล์ Bodycam ใน Google Drive อัตโนมัติ
+    var folderName = "📹 คลังคลิป Bodycam สารวัตรนักเรียน โรงเรียนพระนารายณ์";
+    var folders = DriveApp.getFoldersByName(folderName);
+    var folder = folders.hasNext() ? folders.next() : DriveApp.createFolder(folderName);
+
+    // 2. แปลง Base64 เป็นไฟล์และบันทึกลง Google Drive
+    var decodedBytes = Utilities.base64Decode(data.base64Data);
+    var filename = "[" + (data.caseId || "GENERAL") + "] " + (data.filename || "bodycam.mp4");
+    var blob = Utilities.newBlob(decodedBytes, data.mimeType || "video/mp4", filename);
+
+    var file = folder.createFile(blob);
+    // กำหนดสิทธิ์ให้ผู้มีลิงก์สามารถเปิดดูคลิปได้
+    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+
+    return ContentService.createTextOutput(JSON.stringify({
+      success: true,
+      fileId: file.getId(),
+      fileUrl: file.getUrl(),
+      filename: filename
+    })).setMimeType(ContentService.MimeType.JSON);
+
+  } catch (err) {
+    return ContentService.createTextOutput(JSON.stringify({
+      success: false,
+      error: err.toString()
+    })).setMimeType(ContentService.MimeType.JSON);
+  }
+}

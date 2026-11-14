@@ -2247,37 +2247,82 @@ client.on('messageCreate', async (message) => {
       if (c) {
         const merged = [...(c.evidence_urls || []), ...urls];
         const isFirstPatrolPhoto = (c.status === 'PATROL_WAITING_PHOTO');
-        const newStatus = isFirstPatrolPhoto ? 'IN_PROGRESS' : c.status;
 
         await supabase.from('cases').update({
           evidence_urls: merged,
-          status: newStatus,
+          status: isFirstPatrolPhoto ? 'PATROL_WAITING_APPROVAL' : c.status,
           resolution_notes: (c.resolution_notes ? c.resolution_notes + '\n' : '') + `[แนบไฟล์หลักฐานโดย ${message.author.username}]: ${urls.join(' , ')}`
         }).eq('case_id', caseId);
 
         if (isFirstPatrolPhoto) {
-          // 🟢 ส่งสัญญาณอนุญาตออกตรวจ + ปุ่มทำการตรวจเสร็จสิ้น
-          const signalEmbed = new EmbedBuilder()
-            .setTitle('🟢 [สัญญาณอนุญาต] ได้รับภาพหลักฐานเรียบร้อยแล้ว!')
-            .setDescription(
-              `# ✅ อนุญาตให้ออกตรวจพื้นที่ได้ทันที!\n\n` +
-              `📍 **จุดตรวจ:** ${c.location}\n` +
-              `📸 **ภาพหลักฐาน:** ได้รับและบันทึกเข้าระบบแล้ว (${urls.length} รูป)\n\n` +
-              `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-              `เมื่อทำการตรวจเสร็จสิ้นแล้ว ให้กดปุ่ม **"🏁 ทำการตรวจเสร็จสิ้น"** ด้านล่างนี้เพื่อบันทึกสรุปผล`
-            )
-            .setColor('#2ECC71')
-            .setFooter({ text: `SARAWAT PATROL • ${caseId}` });
+          // ดึงข้อมูลสารวัตรผู้ขออนุมัติ
+          let requestingMember = null;
+          if (c.assigned_officer_id) {
+            const { data: m } = await supabase.from('members').select('*').eq('id', c.assigned_officer_id).maybeSingle();
+            requestingMember = m;
+          }
+          if (!requestingMember) {
+            const { data: m } = await supabase.from('members').select('*').eq('discord_id', message.author.id).maybeSingle();
+            requestingMember = m;
+          }
 
-          const finishRow = new ActionRowBuilder().addComponents(
+          const profilePhoto = requestingMember?.photo_url || requestingMember?.profile_photo_url || message.author.displayAvatarURL({ dynamic: true, size: 256 });
+          const officerDisplay = requestingMember
+            ? `[${requestingMember.duty_id || 'สารวัตร'}] คุณ${requestingMember.nickname} (${requestingMember.first_name} ${requestingMember.last_name || ''})`
+            : message.author.username;
+
+          const periodMatch = c.description ? c.description.match(/ช่วงเวลา: (.*?)\n/) : null;
+          const officersMatch = c.description ? c.description.match(/ผู้ร่วมตรวจ: (.*?)\n/) : null;
+          const periodText = periodMatch ? periodMatch[1] : 'ตามเวร';
+          const officersText = officersMatch ? officersMatch[1] : 'ปฏิบัติหน้าที่คนเดียว';
+
+          // สร้างการ์ดขออนุมัติออกตรวจ
+          const approvalEmbed = new EmbedBuilder()
+            .setTitle(`🛡️ [คำขออนุมัติออกตรวจ] รหัสเคส: ${caseId}`)
+            .setDescription(
+              `### 📋 รายละเอียดการขอออกตรวจพื้นที่\n\n` +
+              `👮 **สารวัตรผู้ขออนุมัติ:** ${officerDisplay} (<@${message.author.id}>)\n` +
+              `📍 **จุดตรวจ:** **${c.location}**\n` +
+              `⏰ **ช่วงเวลา:** **${periodText}**\n` +
+              `👥 **ผู้ร่วมตรวจ:** ${officersText}\n` +
+              `📸 **ภาพหลักฐานเข้าพื้นที่:** ได้รับแล้ว (${urls.length} ภาพ - แสดงด้านล่าง)\n\n` +
+              `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+              `⏳ **สถานะ:** **รอการตรวจสอบและอนุมัติจากหัวหน้า**\n` +
+              `*(ขอเชิญประธาน, รองประธาน หรือหัวหน้าเวร ตรวจสอบภาพและกดปุ่มอนุมัติด้านล่าง)*`
+            )
+            .setColor('#F1C40F')
+            .setThumbnail(profilePhoto)
+            .setImage(urls[0])
+            .setFooter({ text: `PATROL APPROVAL REQUIRED • ${caseId}` })
+            .setTimestamp();
+
+          const approvalRow = new ActionRowBuilder().addComponents(
             new ButtonBuilder()
-              .setCustomId(`btn_finish_inspection_${caseId}`)
-              .setLabel('🏁 ทำการตรวจเสร็จสิ้น')
+              .setCustomId(`btn_approve_insp_${caseId}`)
+              .setLabel('อนุมัติ')
               .setStyle(ButtonStyle.Success)
-              .setEmoji('🏁')
+              .setEmoji('✅'),
+            new ButtonBuilder()
+              .setCustomId(`btn_reject_insp_${caseId}`)
+              .setLabel('ไม่อนุมัติ')
+              .setStyle(ButtonStyle.Danger)
+              .setEmoji('❌')
           );
 
-          await message.channel.send({ embeds: [signalEmbed], components: [finishRow] });
+          // 1. ส่งการ์ดขออนุมัติลงในห้องเคสเธรด
+          await message.channel.send({ embeds: [approvalEmbed], components: [approvalRow] });
+
+          // 2. ส่งการ์ดแจ้งเตือนเข้าห้องประชุมหัวหน้า
+          const chLeader = findChannel(message.guild, '👑│ห้องประชุมหัวหน้า') ||
+                           findChannel(message.guild, 'ห้องประชุมหัวหน้า') ||
+                           findChannel(message.guild, '👑│ผู้นำ-all-in-one');
+          if (chLeader && chLeader.isTextBased()) {
+            await chLeader.send({
+              content: `🚨 **แจ้งเตือนหัวหน้าทุกคน:** มีคำขออนุญาตออกตรวจพื้นที่ใหม่จาก <@${message.author.id}> (${officerDisplay})\n👉 โปรดตรวจสอบภาพหลักฐานและกดอนุมัติที่การ์ดด้านล่าง หรือในเธรด <#${message.channel.id}>`,
+              embeds: [approvalEmbed],
+              components: [approvalRow]
+            }).catch(() => {});
+          }
         } else {
           await message.reply({ content: `✅ บันทึกไฟล์หลักฐาน/คลิป Bodycam จำนวน ${urls.length} ไฟล์ เข้าเคส **${caseId}** สำเร็จแล้ว!` }).catch(() => {});
         }
@@ -5432,6 +5477,177 @@ client.on('interactionCreate', async (interaction) => {
     }
 
     // -------------------------------------------------------------
+    // 5.0.1.0 ปุ่มอนุมัติการออกตรวจ (เฉพาะผู้นำ/หัวหน้า)
+    // -------------------------------------------------------------
+    if (interaction.isButton() && interaction.customId.startsWith('btn_approve_insp_')) {
+      const caseId = interaction.customId.replace('btn_approve_insp_', '');
+
+      // ตรวจสอบสิทธิ์ผู้นำ (ประธาน / รองประธาน / หัวหน้าเวร / รองหัวหน้าเวร / Admin)
+      const isLeader = interaction.member?.permissions.has(PermissionsBitField.Flags.Administrator) ||
+                       interaction.guild?.ownerId === interaction.user.id ||
+                       interaction.member?.roles.cache.some(r => r.name.includes('ประธาน') || r.name.includes('หัวหน้า'));
+
+      if (!isLeader) {
+        await interaction.reply({
+          content: '⛔ **ขออภัย:** เฉพาะประธาน, รองประธาน, หัวหน้าเวร หรือรองหัวหน้าเวรเท่านั้นที่มีสิทธิ์กดอนุมัติเคสนี้',
+          ephemeral: true
+        });
+        return;
+      }
+
+      await interaction.deferUpdate();
+
+      const { data: c } = await supabase.from('cases').select('*').eq('case_id', caseId).maybeSingle();
+
+      if (!c) {
+        await interaction.followUp({ content: '⚠️ ไม่พบข้อมูลเคสในระบบ', ephemeral: true });
+        return;
+      }
+
+      if (c.status === 'IN_PROGRESS' || c.status === 'RESOLVED') {
+        await interaction.followUp({ content: 'ℹ️ เคสนี้ได้รับการอนุมัติไปแล้วก่อนหน้านี้', ephemeral: true });
+        return;
+      }
+
+      // ดึงข้อมูลสารวัตรผู้ขอ
+      let requestingMember = null;
+      if (c.assigned_officer_id) {
+        const { data: m } = await supabase.from('members').select('*').eq('id', c.assigned_officer_id).maybeSingle();
+        requestingMember = m;
+      }
+      const officerDisplay = requestingMember
+        ? `[${requestingMember.duty_id || 'สารวัตร'}] คุณ${requestingMember.nickname} (${requestingMember.first_name} ${requestingMember.last_name || ''})`
+        : (c.reporter_name || 'สารวัตรเวร');
+      const officerPhoto = requestingMember?.photo_url || requestingMember?.profile_photo_url;
+
+      const approverName = interaction.member?.displayName || interaction.user.username;
+      const approverAvatar = interaction.user.displayAvatarURL({ dynamic: true, size: 256 });
+
+      // อัปเดตสถานะใน Supabase
+      await supabase.from('cases').update({
+        status: 'IN_PROGRESS',
+        resolution_notes: (c.resolution_notes ? c.resolution_notes + '\n' : '') + `[อนุมัติโดย ${approverName} (<@${interaction.user.id}>) เมื่อ ${new Date().toLocaleString('th-TH')}]`
+      }).eq('case_id', caseId);
+
+      // สร้าง Approved Embed
+      const approvedEmbed = new EmbedBuilder()
+        .setTitle('✅ [อนุมัติการออกตรวจเรียบร้อยแล้ว]')
+        .setDescription(
+          `# 🟢 อนุญาตให้สารวัตรออกตรวจพื้นที่ได้ทันที!\n\n` +
+          `👮 **สารวัตรผู้ปฏิบัติหน้าที่:** ${officerDisplay}\n` +
+          `👑 **ผู้อนุมัติ:** **${approverName}** (<@${interaction.user.id}>)\n` +
+          `⏰ **เวลาอนุมัติ:** <t:${Math.floor(Date.now() / 1000)}:T>\n` +
+          `📍 **จุดตรวจ:** **${c.location}**\n\n` +
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+          `เมื่อทำการตรวจพื้นที่เสร็จสิ้น ให้กดปุ่ม **"🏁 ทำการตรวจเสร็จสิ้น"** ด้านล่างนี้เพื่อบันทึกสรุปผลและส่งคลิป Bodycam`
+        )
+        .setColor('#2ECC71')
+        .setThumbnail(officerPhoto || approverAvatar)
+        .setFooter({ text: `SARAWAT PATROL APPROVED • ${caseId} • อนุมัติโดย ${approverName}` })
+        .setTimestamp();
+
+      const finishRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`btn_finish_inspection_${caseId}`)
+          .setLabel('🏁 ทำการตรวจเสร็จสิ้น')
+          .setStyle(ButtonStyle.Success)
+          .setEmoji('🏁')
+      );
+
+      // ค้นหาเธรดของเคสนี้
+      const guild = interaction.guild;
+      const targetThread = interaction.channel.isThread()
+        ? interaction.channel
+        : guild.channels.cache.find(ch => ch.isThread && ch.isThread() && ch.name.includes(caseId));
+
+      if (targetThread && targetThread.isTextBased()) {
+        await targetThread.send({ embeds: [approvedEmbed], components: [finishRow] });
+      }
+
+      // ปิดปุ่มในการ์ดต้นทางเพื่อไม่ให้กดซ้ำ
+      await interaction.message.edit({
+        content: `✅ **เคสนี้ได้รับการอนุมัติเรียบร้อยแล้วโดย <@${interaction.user.id}> (${approverName})**`,
+        components: []
+      }).catch(() => {});
+      return;
+    }
+
+    // -------------------------------------------------------------
+    // 5.0.1.0.1 ปุ่มไม่อนุมัติการออกตรวจ -> เปิด Modal ระบุเหตุผล
+    // -------------------------------------------------------------
+    if (interaction.isButton() && interaction.customId.startsWith('btn_reject_insp_')) {
+      const caseId = interaction.customId.replace('btn_reject_insp_', '');
+
+      const isLeader = interaction.member?.permissions.has(PermissionsBitField.Flags.Administrator) ||
+                       interaction.guild?.ownerId === interaction.user.id ||
+                       interaction.member?.roles.cache.some(r => r.name.includes('ประธาน') || r.name.includes('หัวหน้า'));
+
+      if (!isLeader) {
+        await interaction.reply({
+          content: '⛔ **ขออภัย:** เฉพาะประธาน, รองประธาน, หัวหน้าเวร หรือรองหัวหน้าเวรเท่านั้นที่มีสิทธิ์กดปฏิเสธเคสนี้',
+          ephemeral: true
+        });
+        return;
+      }
+
+      const modal = new ModalBuilder()
+        .setCustomId(`modal_reject_insp_${caseId}`)
+        .setTitle(`ไม่อนุมัติการออกตรวจ ${caseId}`.slice(0, 45));
+
+      const reasonInput = new TextInputBuilder()
+        .setCustomId('input_reject_reason')
+        .setLabel('เหตุผลที่ไม่อนุมัติ')
+        .setPlaceholder('ระบุเหตุผล เช่น จุดตรวจนี้มีเวรอื่นรับผิดชอบแล้ว / ให้รอเวลาพัก')
+        .setStyle(TextInputStyle.Paragraph)
+        .setRequired(true);
+
+      modal.addComponents(new ActionRowBuilder().addComponents(reasonInput));
+      await interaction.showModal(modal);
+      return;
+    }
+
+    if (interaction.isModalSubmit() && interaction.customId.startsWith('modal_reject_insp_')) {
+      await interaction.deferUpdate();
+      const caseId = interaction.customId.replace('modal_reject_insp_', '');
+      const reason = interaction.fields.getTextInputValue('input_reject_reason').trim();
+      const approverName = interaction.member?.displayName || interaction.user.username;
+
+      await supabase.from('cases').update({
+        status: 'REJECTED',
+        resolution_notes: `[ไม่อนุมัติโดย ${approverName}]: ${reason}`
+      }).eq('case_id', caseId);
+
+      const rejectEmbed = new EmbedBuilder()
+        .setTitle(`❌ [ไม่อนุมัติการออกตรวจ]`)
+        .setDescription(
+          `# ⛔ คำขอออกตรวจพื้นที่ไม่ได้รับการอนุมัติ\n\n` +
+          `👑 **ผู้พิจารณา:** **${approverName}** (<@${interaction.user.id}>)\n` +
+          `📝 **เหตุผลที่ไม่อนุมัติ:**\n> ${reason}\n\n` +
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+          `*(เคสนี้ถูกปิดการดำเนินการแล้ว สารวัตรสามารถเปิดเคสใหม่ได้หากต้องการ)*`
+        )
+        .setColor('#E74C3C')
+        .setFooter({ text: `PATROL REJECTED • ${caseId}` });
+
+      const guild = interaction.guild;
+      const targetThread = interaction.channel.isThread()
+        ? interaction.channel
+        : guild.channels.cache.find(ch => ch.isThread && ch.isThread() && ch.name.includes(caseId));
+
+      if (targetThread && targetThread.isTextBased()) {
+        await targetThread.send({ embeds: [rejectEmbed] });
+        await targetThread.setLocked(true).catch(() => {});
+        await targetThread.setArchived(true).catch(() => {});
+      }
+
+      await interaction.message.edit({
+        content: `❌ **เคสนี้ถูกไม่อนุมัติโดย <@${interaction.user.id}> (เหตุผล: ${reason})**`,
+        components: []
+      }).catch(() => {});
+      return;
+    }
+
+    // -------------------------------------------------------------
     // 5.0.1.1 ปุ่มทำการตรวจเสร็จสิ้น -> เปิด Modal กรอกสรุปผล
     // -------------------------------------------------------------
     if (interaction.isButton() && interaction.customId.startsWith('btn_finish_inspection_')) {
@@ -5465,7 +5681,7 @@ client.on('interactionCreate', async (interaction) => {
     }
 
     // -------------------------------------------------------------
-    // 5.0.1.2 เมื่อส่ง Modal สรุปผล -> ขึ้น Review Card พร้อม 3 ปุ่ม
+    // 5.0.1.2 เมื่อส่ง Modal สรุปผล -> ขึ้น Review Card พร้อมปุ่มส่ง Bodycam และ 3 ปุ่มควบคุม
     // -------------------------------------------------------------
     if (interaction.isModalSubmit() && interaction.customId.startsWith('modal_finish_insp_')) {
       await interaction.deferReply();
@@ -5483,14 +5699,20 @@ client.on('interactionCreate', async (interaction) => {
         resolution_notes: `[สรุปผลการตรวจ]: ${summary}\n[หมายเหตุ]: ${notes}`
       }).eq('case_id', caseId);
 
+      const webUrl = getWebDashboardUrl();
+      const bodycamUrl = `${webUrl}/bodycam-upload?caseId=${caseId}`;
+
       const reviewEmbed = new EmbedBuilder()
         .setTitle(`📋 สรุปผลการออกตรวจ: ${caseId}`)
         .setDescription(
           `# 🔍 รายงานผลการปฏิบัติหน้าที่\n\n` +
-          `📍 **จุดตรวจ:** ${c?.location || '-'}\n` +
+          `📍 **จุดตรวจ:** **${c?.location || '-'}**\n` +
           `📝 **ผลการตรวจ:**\n${summary}\n\n` +
           `📌 **หมายเหตุเพิ่มเติม:**\n${notes}\n\n` +
-          `📸 **รูปภาพหลักฐานทั้งหมด:** ${photoCount} ภาพ\n` +
+          `📸 **รูปภาพหลักฐานทั้งหมดในเคส:** ${photoCount} ภาพ\n\n` +
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+          `📹 **การส่งคลิป Bodycam ผ่าน Google Drive:**\n` +
+          `สารวัตรสามารถกดปุ่มสีฟ้าด้านล่างนี้ เพื่อส่งคลิปวิดีโอจากกล้อง Bodycam เข้าสู่คลัง Google Drive ของโรงเรียนได้ทันที!\n\n` +
           `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
           `กรุณาตรวจสอบความถูกต้องด้านล่างนี้:\n` +
           `• หากต้องการแนบรูปเพิ่ม กด **"📸 เพิ่มรูปหลักฐาน"**\n` +
@@ -5500,7 +5722,14 @@ client.on('interactionCreate', async (interaction) => {
         .setColor('#3498DB')
         .setFooter({ text: `PATROL REVIEW • ${caseId}` });
 
-      const reviewRow = new ActionRowBuilder().addComponents(
+      const reviewRow1 = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setLabel('📹 ส่งคลิป Bodycam (ผ่าน Google Drive)')
+          .setStyle(ButtonStyle.Link)
+          .setURL(bodycamUrl)
+      );
+
+      const reviewRow2 = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
           .setCustomId(`btn_confirm_close_insp_${caseId}`)
           .setLabel('✅ ยืนยันปิดเคส')
@@ -5515,7 +5744,7 @@ client.on('interactionCreate', async (interaction) => {
           .setStyle(ButtonStyle.Secondary)
       );
 
-      await interaction.editReply({ embeds: [reviewEmbed], components: [reviewRow] });
+      await interaction.editReply({ embeds: [reviewEmbed], components: [reviewRow1, reviewRow2] });
       return;
     }
 
