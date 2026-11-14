@@ -481,6 +481,9 @@ const slashCommands = [
     .setName('killfile')
     .setDescription('🗑️ ลบข้อมูลสิ่งของที่มีอยู่ในระบบของหายทั้งหมด เริ่มใหม่แต่ 0 (Admin Only)'),
   new SlashCommandBuilder()
+    .setName('purge-system-data')
+    .setDescription('🚨 ล้างข้อมูลปฏิบัติการทั้งหมด (หลักฐาน, คำขอ, คดี, ของหาย) ยกเว้นข้อมูลสมาชิก (Admin Only)'),
+  new SlashCommandBuilder()
     .setName('demote')
     .setDescription('⛔ ปลดหน้าที่หรือถอดยศสารวัตรนักเรียน (Admin/ประธาน)')
     .addUserOption(opt =>
@@ -554,11 +557,16 @@ async function sendLostFoundGuidePanel(channel) {
     embed.setImage('attachment://panel_send_photo.jpg');
   }
 
+  const lostFormUrl = process.env.GOOGLE_FORM_LOST_CLAIM_URL || 'https://forms.google.com';
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setLabel('🌐 ตรวจสอบคลังของหาย (Web)')
       .setStyle(ButtonStyle.Link)
-      .setURL(`${getWebDashboardUrl()}/lost-found`)
+      .setURL(`${getWebDashboardUrl()}/lost-found`),
+    new ButtonBuilder()
+      .setLabel('📝 แจ้งของตัวเองหาย (Google Form)')
+      .setStyle(ButtonStyle.Link)
+      .setURL(lostFormUrl)
   );
 
   return await channel.send({ embeds: [embed], components: [row], files });
@@ -1841,6 +1849,83 @@ async function executeKillFile(guild, executorUser) {
   }
 
   console.log(`[KILLFILE] 🗑️ ล้างระบบของหายสำเร็จโดย ${executorUser?.tag || 'Admin'}: สิ่งของ ${result.deletedItems} ชิ้น, คำร้อง ${result.deletedClaims} รายการ`);
+  return result;
+}
+
+/**
+ * 🚨 ล้างข้อมูลปฏิบัติการทั้งหมด (คดี, คำขอ, ของหาย, การลงเวลา) ยกเว้นข้อมูลสมาชิก (/purge-system-data)
+ */
+async function executePurgeSystemData(guild, executorUser) {
+  const result = {
+    deletedCases: 0,
+    deletedLeaves: 0,
+    deletedLostItems: 0,
+    deletedLostClaims: 0,
+    deletedAttendance: 0
+  };
+
+  // 1. ลบคดีและเรื่องร้องเรียน (cases)
+  try {
+    const { count } = await supabase.from('cases').select('*', { count: 'exact', head: true });
+    result.deletedCases = count || 0;
+    await supabase.from('cases').delete().gte('created_at', '1970-01-01');
+  } catch (err) {
+    console.error('[PURGE] Cases wipe error:', err.message);
+  }
+
+  // 2. ลบคำขอลาเวรและการออกตรวจ (leave_requests)
+  try {
+    const { count } = await supabase.from('leave_requests').select('*', { count: 'exact', head: true });
+    result.deletedLeaves = count || 0;
+    await supabase.from('leave_requests').delete().gte('created_at', '1970-01-01');
+  } catch (err) {
+    console.error('[PURGE] Leaves wipe error:', err.message);
+  }
+
+  // 3. ลบคลังของหายและคำร้อง (lost_items, lost_claims)
+  try {
+    const { count: cItems } = await supabase.from('lost_items').select('*', { count: 'exact', head: true });
+    result.deletedLostItems = cItems || 0;
+    await supabase.from('lost_items').delete().gte('created_at', '1970-01-01');
+
+    const { count: cClaims } = await supabase.from('lost_claims').select('*', { count: 'exact', head: true });
+    result.deletedLostClaims = cClaims || 0;
+    await supabase.from('lost_claims').delete().gte('created_at', '1970-01-01');
+  } catch (err) {
+    console.error('[PURGE] Lost & Found wipe error:', err.message);
+  }
+
+  // 4. ลบการลงเวลาเวร (attendance_records)
+  try {
+    const { count } = await supabase.from('attendance_records').select('*', { count: 'exact', head: true });
+    result.deletedAttendance = count || 0;
+    await supabase.from('attendance_records').delete().gte('created_at', '1970-01-01');
+  } catch (err) {
+    console.error('[PURGE] Attendance wipe error:', err.message);
+  }
+
+  // 5. ล้างข้อมูลใน Local Cache ของระบบของหาย
+  try {
+    const possibleCachePaths = [
+      path.join(__dirname, '..', 'web', 'lost_items_cache.json'),
+      path.join(__dirname, 'lost_items_cache.json'),
+      path.join(process.cwd(), 'web', 'lost_items_cache.json'),
+      path.join(process.cwd(), 'lost_items_cache.json')
+    ];
+    for (const targetPath of possibleCachePaths) {
+      if (fs.existsSync(targetPath)) {
+        let cacheData = {};
+        try { cacheData = JSON.parse(fs.readFileSync(targetPath, 'utf8')); } catch (e) {}
+        cacheData.items = [];
+        cacheData.claims = [];
+        fs.writeFileSync(targetPath, JSON.stringify(cacheData, null, 2), 'utf8');
+      }
+    }
+  } catch (err) {
+    console.error('[PURGE] Cache wipe error:', err.message);
+  }
+
+  console.log(`[PURGE] 🚨 ล้างข้อมูลระบบสำเร็จโดย ${executorUser?.tag || 'Admin'}: คดี ${result.deletedCases}, การลา/คำขอ ${result.deletedLeaves}, ของหาย ${result.deletedLostItems}, คำร้อง ${result.deletedLostClaims}, การลงเวลา ${result.deletedAttendance}`);
   return result;
 }
 
@@ -3961,6 +4046,47 @@ client.on('interactionCreate', async (interaction) => {
         return;
       }
 
+      if (commandName === 'purge-system-data') {
+        const isAdmin = interaction.member?.permissions.has(PermissionsBitField.Flags.Administrator) ||
+                        interaction.guild?.ownerId === interaction.user.id;
+        if (!isAdmin) {
+          await interaction.reply({
+            content: '⛔ สงวนสิทธิ์เฉพาะผู้ดูแลระบบ (Admin) หรือเจ้าของเซิร์ฟเวอร์เท่านั้นในการสั่งการ Purge',
+            ephemeral: true
+          });
+          return;
+        }
+
+        const purgeEmbed = new EmbedBuilder()
+          .setTitle('🚨 ยืนยันการล้างข้อมูลปฏิบัติการทั้งระบบ (PURGE SYSTEM DATA)')
+          .setDescription(
+            `⚠️ **คำเตือนความปลอดภัยระดับสูง (HIGH IMPACT ACTION)**\n\n` +
+            `คำสั่งนี้จะล้างข้อมูลประวัติและข้อมูลปฏิบัติการทั้งหมด ยกเว้นข้อมูลสมาชิกสารวัตร:\n\n` +
+            `• 📂 **คดีและเรื่องร้องเรียน (cases):** ล้างประวัติและหลักฐานทั้งหมด\n` +
+            `• 📋 **คำขอออกตรวจและคำขอลาเวร (leave_requests):** ล้างประวัติทั้งหมด\n` +
+            `• 📦 **คลังของหายและคำร้อง (lost_items & lost_claims):** ล้างทั้งหมด\n` +
+            `• ⏱️ **ประวัติการลงเวลาเวร (attendance_records):** ล้างทั้งหมด\n` +
+            `• 🛡️ **ข้อมูลสมาชิกสารวัตร (members):** ✅ **ปลอดภัย 100% ไม่ถูกลบ**\n\n` +
+            `**หากแน่ใจ ให้กดปุ่มยืนยันด้านล่างเพื่อเริ่มกระบวนการ**`
+          )
+          .setColor('#C0392B')
+          .setFooter({ text: 'SARAWAT OPERATIONAL PURGE • ข้อมูลสมาชิกจะไม่ได้รับผลกระทบ' });
+
+        const purgeRow = new ActionRowBuilder().addComponents(
+          new ButtonBuilder()
+            .setCustomId('btn_purge_sys_confirm')
+            .setLabel('🚨 ยืนยันลบข้อมูลระบบทั้งหมด (ยกเว้นสมาชิก)')
+            .setStyle(ButtonStyle.Danger),
+          new ButtonBuilder()
+            .setCustomId('btn_purge_sys_cancel')
+            .setLabel('❌ ยกเลิก')
+            .setStyle(ButtonStyle.Secondary)
+        );
+
+        await interaction.reply({ embeds: [purgeEmbed], components: [purgeRow], ephemeral: true });
+        return;
+      }
+
       if (commandName === 'demote') {
         const isLeadership = interaction.member?.permissions.has(PermissionsBitField.Flags.Administrator) ||
                              interaction.member?.roles.cache.has(ROLE_IDS.PRESIDENT) ||
@@ -4032,6 +4158,56 @@ client.on('interactionCreate', async (interaction) => {
         content: '',
         embeds: [embedDone],
         components: [btnRow]
+      });
+      return;
+    }
+
+    // ==========================================================
+    // 🚨 PURGE SYSTEM DATA BUTTON HANDLING (ลบข้อมูลระบบยกเว้นสมาชิก)
+    // ==========================================================
+    if (interaction.isButton() && interaction.customId === 'btn_purge_sys_cancel') {
+      await interaction.update({
+        content: '✅ **ยกเลิกการล้างข้อมูลระบบแล้ว** ข้อมูลทุกอย่างยังคงปลอดภัย 100%',
+        embeds: [],
+        components: []
+      });
+      return;
+    }
+
+    if (interaction.isButton() && interaction.customId === 'btn_purge_sys_confirm') {
+      const isAdmin = interaction.member?.permissions.has(PermissionsBitField.Flags.Administrator) ||
+                      interaction.guild?.ownerId === interaction.user.id;
+      if (!isAdmin) {
+        await interaction.reply({
+          content: '⛔ สงวนสิทธิ์เฉพาะผู้ดูแลระบบ (Admin) เท่านั้นในการสั่งการ Purge',
+          ephemeral: true
+        });
+        return;
+      }
+
+      await interaction.deferUpdate();
+
+      const purgeResult = await executePurgeSystemData(interaction.guild, interaction.user);
+
+      const embedDone = new EmbedBuilder()
+        .setTitle('🚨 ล้างข้อมูลระบบสำเร็จ (ข้อมูลสมาชิกปลอดภัย 100%)')
+        .setDescription(
+          `ศูนย์บัญชาการสารวัตรนักเรียน ได้ดำเนินการล้างข้อมูลปฏิบัติการทั้งหมดเรียบร้อยแล้ว:\n\n` +
+          `• 📂 **คดีและเรื่องร้องเรียนที่ถูกลบ:** ${purgeResult.deletedCases} รายการ\n` +
+          `• 📋 **คำขอออกตรวจและคำขอลาเวรที่ถูกลบ:** ${purgeResult.deletedLeaves} รายการ\n` +
+          `• 📦 **สิ่งของในคลังของหายที่ถูกลบ:** ${purgeResult.deletedLostItems} รายการ\n` +
+          `• 📑 **คำร้องขอรับของหายที่ถูกลบ:** ${purgeResult.deletedLostClaims} รายการ\n` +
+          `• ⏱️ **ประวัติลงเวลาเวรที่ถูกลบ:** ${purgeResult.deletedAttendance} รายการ\n\n` +
+          `🛡️ **ข้อมูลสมาชิก (members):** ปลอดภัยครบถ้วน ไม่มีการแก้ไขหรือลบใดๆ`
+        )
+        .setColor('#2ECC71')
+        .setFooter({ text: 'SARAWAT OPERATIONAL PURGE • ดำเนินการสำเร็จ' })
+        .setTimestamp();
+
+      await interaction.editReply({
+        content: '',
+        embeds: [embedDone],
+        components: []
       });
       return;
     }
@@ -9602,6 +9778,89 @@ const server = http.createServer(async (req, res) => {
 
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true, case_id: caseId }));
+      } catch (err) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message }));
+      }
+    });
+    return;
+  }
+
+  // API Route: รับคำร้องแจ้งของหายจาก Google Apps Script เข้า Supabase + Discord
+  if (req.method === 'POST' && parsedUrl.pathname === '/api/lost-found/claims') {
+    let body = '';
+    req.on('data', chunk => {
+      body += chunk;
+      if (body.length > 1e6) req.destroy();
+    });
+    req.on('end', async () => {
+      try {
+        const payload = JSON.parse(body);
+        const currentYear = new Date().getFullYear();
+        const claimCode = payload.claim_code || `CLM-${currentYear}-${Math.floor(1000 + Math.random() * 9000)}`;
+
+        const newClaim = {
+          claim_code: claimCode,
+          category: payload.category || payload.item_category || 'อื่นๆ',
+          item_type: payload.item_type || payload.type || payload.title || 'ไม่ระบุ',
+          characteristics: payload.characteristics || payload.description || 'ไม่มีรายละเอียด',
+          lost_location: payload.lost_location || payload.location || 'ไม่ระบุ',
+          lost_date: payload.lost_date || new Date().toISOString().slice(0, 10),
+          claimant_name: payload.claimant_name || payload.name || 'ไม่ประสงค์ออกนาม',
+          claimant_class: payload.claimant_class || payload.class || '-',
+          claimant_contact: payload.claimant_contact || payload.phone || payload.contact || '-',
+          status: 'PENDING',
+          created_at: new Date().toISOString()
+        };
+
+        // 1. บันทึกลง Supabase lost_claims
+        await supabase.from('lost_claims').insert(newClaim).catch(err => console.warn('Supabase lost_claims insert error:', err.message));
+
+        // 2. ส่งข้อความเข้า Discord #📦│แจ้งพบของหาย
+        const targetGuild = client.guilds.cache.get(GUILD_ID) || client.guilds.cache.first();
+        if (targetGuild) {
+          const chLostFound = findChannel(targetGuild, '📦│แจ้งพบของหาย') || findChannel(targetGuild, 'แจ้งพบของหาย');
+          if (chLostFound) {
+            const embed = new EmbedBuilder()
+              .setTitle(`🔔 [คำร้องแจ้งของหายใหม่!] รหัส: ${claimCode}`)
+              .setDescription(
+                `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                `📦 **สิ่งของที่ทำหาย:** ${newClaim.item_type}\n` +
+                `🏷️ **หมวดหมู่:** ${newClaim.category}\n` +
+                `📍 **จุดที่คาดว่าทำหาย:** ${newClaim.lost_location}\n` +
+                `📅 **วันที่ทำหาย:** ${newClaim.lost_date}\n` +
+                `🔍 **ลักษณะเด่น / ตำหนิ:** ${newClaim.characteristics}\n` +
+                `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                `👤 **ผู้แจ้ง:** ${newClaim.claimant_name} (ชั้น ${newClaim.claimant_class})\n` +
+                `📞 **ช่องทางติดต่อกลับ:** ${newClaim.claimant_contact}\n` +
+                `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                `⚡ *ตรวจสอบและสแกนจับคู่กับของในคลังได้ทันทีที่หน้า Web Dashboard*`
+              )
+              .setColor('#F39C12')
+              .setFooter({ text: 'ระบบบริหารงานสารวัตรนักเรียน • โรงเรียนพระนารายณ์' })
+              .setTimestamp();
+
+            if (payload.photo_url && (payload.photo_url.startsWith('http://') || payload.photo_url.startsWith('https://'))) {
+              embed.setImage(payload.photo_url);
+            }
+
+            const row = new ActionRowBuilder().addComponents(
+              new ButtonBuilder()
+                .setLabel('🌐 เปิดดูคำร้องใน Web Dashboard')
+                .setStyle(ButtonStyle.Link)
+                .setURL(`${getWebDashboardUrl()}/lost-found`)
+            );
+
+            await chLostFound.send({
+              content: '📢 **[แจ้งเตือนสารวัตรทุกนาย]** มีคำร้องแจ้งของตัวเองหายใหม่เข้ามาในระบบ!',
+              embeds: [embed],
+              components: [row]
+            }).catch(e => console.warn('[BOT_API] Send lost claim message error:', e.message));
+          }
+        }
+
+        res.writeHead(201, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, claim_code: claimCode }));
       } catch (err) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: err.message }));
