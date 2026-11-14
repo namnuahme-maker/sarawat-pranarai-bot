@@ -5309,7 +5309,7 @@ client.on('interactionCreate', async (interaction) => {
 
       const periodInput = new TextInputBuilder()
         .setCustomId('input_insp_period')
-        .setLabel('ช่วงเวลาที่ออกตรวจ (เช้า/กลางวัน/เย็น/คาบว่าง)')
+        .setLabel('ช่วงเวลาที่ออกตรวจ (เช้า/กลางวัน/เย็น)')
         .setValue('พักกลางวัน')
         .setStyle(TextInputStyle.Short)
         .setRequired(true);
@@ -5450,7 +5450,7 @@ client.on('interactionCreate', async (interaction) => {
 
       const notesInput = new TextInputBuilder()
         .setCustomId('input_insp_notes')
-        .setLabel('หมายเหตุเพิ่มเติม / สิ่งที่ต้องติดตามต่อ')
+        .setLabel('หมายเหตุเพิ่มเติม (ถ้ามี)')
         .setPlaceholder('เช่น ตักเตือนแล้ว, ยึดของกลางส่งฝ่ายปกครอง, หรือระบุว่า ไม่มี')
         .setStyle(TextInputStyle.Short)
         .setRequired(false);
@@ -5547,7 +5547,7 @@ client.on('interactionCreate', async (interaction) => {
 
       const notesInput = new TextInputBuilder()
         .setCustomId('input_insp_notes')
-        .setLabel('หมายเหตุเพิ่มเติม / สิ่งที่ต้องติดตามต่อ')
+        .setLabel('หมายเหตุเพิ่มเติม (ถ้ามี)')
         .setPlaceholder('เช่น ตักเตือนแล้ว, ยึดของกลางส่งฝ่ายปกครอง, หรือระบุว่า ไม่มี')
         .setStyle(TextInputStyle.Short)
         .setRequired(false);
