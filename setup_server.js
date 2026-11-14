@@ -144,6 +144,12 @@ client.once(Events.ClientReady || 'ready', async () => {
     ]);
     createdChannelIds['ATTENDANCE_CHANNEL_ID'] = chServiceDesk.id;
 
+    const chInspectorService = await getOrCreateTextChannel(guild, '🛎️│บริการสารวัตร', catDuty.id, [
+      { id: everyoneRole.id, deny: [PermissionsBitField.Flags.ViewChannel] },
+      { id: verifiedRole.id, allow: [PermissionsBitField.Flags.ViewChannel], deny: [PermissionsBitField.Flags.SendMessages] }
+    ]);
+    createdChannelIds['INSPECTOR_SERVICE_CHANNEL_ID'] = chInspectorService.id;
+
     const dayChannels = [
       { code: 'S', name: '⭐│เวรพิเศษ-s', roleKey: 'ROLE_SPECIAL' },
       { code: 'M', name: '🔵│เวรวันจันทร์-m', roleKey: 'ROLE_MON' },
@@ -262,6 +268,48 @@ client.once(Events.ClientReady || 'ready', async () => {
       );
 
       await chServiceDesk.send({ embeds: [embed], components: [row], files: serviceFiles });
+    }
+
+    const inspectorServiceMessages = await chInspectorService.messages.fetch({ limit: 5 });
+    if (inspectorServiceMessages.size === 0) {
+      const embed = new EmbedBuilder()
+        .setTitle('🛎️ ศูนย์บริการสารวัตรนักเรียน | SARAWAT SERVICE')
+        .setDescription(
+          'ยินดีต้อนรับสู่ศูนย์บริการสารวัตรนักเรียน โรงเรียนพระนารายณ์\n' +
+          'กรุณากดเลือกบริการที่ต้องการทำรายการด้านล่างนี้:\n\n' +
+          '━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n' +
+          '📝 **+ ขออนุญาตตัว (Leave & Permit)**\n' +
+          'แจ้งขอลาเวรปฏิบัติหน้าที่, ขออนุญาตตัวติดภารกิจการเรียน, ติดสอบ หรือออกนอกพื้นที่\n' +
+          '*(ระบบจะบันทึกเข้าระบบและแจ้งเตือนไปยังหัวหน้าเวรและห้องปฏิบัติการเวรอัตโนมัติ)*\n\n' +
+          '📁 **+ ส่งหลักฐานคดี (Incident & Evidence)**\n' +
+          'ส่งรายงานเหตุการณ์, บันทึกการตรวจพบสิ่งผิดระเบียบ หรือแนบภาพ/คลิป Bodycam หลักฐานคดี\n' +
+          '*(ระบบจะออกรหัส CASE-XXXX และเปิดเธรดสำหรับอัปโหลดหลักฐานทันที)*\n' +
+          '━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+        )
+        .setColor('#0EA5E9')
+        .setFooter({ text: 'SARAWAT-BOT • ระบบบริการสารวัตรนักเรียน' });
+
+      const serviceDeskFiles = [];
+      const serviceDeskBanner = path.join(__dirname, 'assets', 'panel_all_in_one.jpg');
+      if (fs.existsSync(serviceDeskBanner)) {
+        serviceDeskFiles.push(new AttachmentBuilder(serviceDeskBanner, { name: 'panel_service.jpg' }));
+        embed.setImage('attachment://panel_service.jpg');
+      }
+
+      const deskRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId('btn_service_request_leave')
+          .setLabel('+ขออนุญาตตัว')
+          .setStyle(ButtonStyle.Primary)
+          .setEmoji('📝'),
+        new ButtonBuilder()
+          .setCustomId('btn_service_submit_evidence')
+          .setLabel('+ส่งหลักฐานคดี')
+          .setStyle(ButtonStyle.Danger)
+          .setEmoji('📁')
+      );
+
+      await chInspectorService.send({ embeds: [embed], components: [deskRow], files: serviceDeskFiles });
     }
 
     const allInOneMessages = await chAllInOne.messages.fetch({ limit: 5 });

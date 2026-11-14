@@ -468,6 +468,9 @@ const slashCommands = [
     .setName('setup-all')
     .setDescription('🚀 ติดตั้งแผงปุ่มระบบทั้งหมดลงในทุกห้องที่เกี่ยวข้องในคลิกเดียว (Admin)'),
   new SlashCommandBuilder()
+    .setName('setup-service')
+    .setDescription('🛎️ ติดตั้งแผงศูนย์บริการสารวัตร (+ขออนุญาตตัว / +ส่งหลักฐานคดี) (Admin)'),
+  new SlashCommandBuilder()
     .setName('setup-lost-found')
     .setDescription('📦 ติดตั้งจุดรับแจ้งสิ่งของที่พบเจอ (Lost & Found Hub) (Admin)'),
   new SlashCommandBuilder()
@@ -682,6 +685,49 @@ async function sendAttendancePanel(channel) {
       .setLabel('🌐 เว็บไซต์ระบบ')
       .setStyle(ButtonStyle.Link)
       .setURL(getWebDashboardUrl())
+  );
+
+  return await channel.send({ embeds: [embed], components: [row], files });
+}
+
+async function sendInspectorServicePanel(channel) {
+  if (!channel) return null;
+
+  const embed = new EmbedBuilder()
+    .setTitle('🛎️ ศูนย์บริการสารวัตรนักเรียน | SARAWAT SERVICE')
+    .setDescription(
+      'ยินดีต้อนรับสู่ศูนย์บริการสารวัตรนักเรียน โรงเรียนพระนารายณ์\n' +
+      'กรุณากดเลือกบริการที่ต้องการทำรายการด้านล่างนี้:\n\n' +
+      '━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n' +
+      '📝 **+ ขออนุญาตตัว (Leave & Permit)**\n' +
+      'แจ้งขอลาเวรปฏิบัติหน้าที่, ขออนุญาตตัวติดภารกิจการเรียน, ติดสอบ หรือออกนอกพื้นที่\n' +
+      '*(ระบบจะบันทึกเข้าระบบและแจ้งเตือนไปยังหัวหน้าเวรและห้องปฏิบัติการเวรอัตโนมัติ)*\n\n' +
+      '📁 **+ ส่งหลักฐานคดี (Incident & Evidence)**\n' +
+      'ส่งรายงานเหตุการณ์, บันทึกการตรวจพบสิ่งผิดระเบียบ หรือแนบภาพ/คลิป Bodycam หลักฐานคดี\n' +
+      '*(ระบบจะออกรหัส CASE-XXXX และเปิดเธรดสำหรับอัปโหลดหลักฐานทันที)*\n' +
+      '━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+    )
+    .setColor('#0EA5E9')
+    .setFooter({ text: 'SARAWAT-BOT • ระบบบริการสารวัตรนักเรียน' });
+
+  const files = [];
+  const bannerPath = path.join(__dirname, 'assets', 'panel_all_in_one.jpg');
+  if (fs.existsSync(bannerPath)) {
+    files.push(new AttachmentBuilder(bannerPath, { name: 'panel_service.jpg' }));
+    embed.setImage('attachment://panel_service.jpg');
+  }
+
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId('btn_service_request_leave')
+      .setLabel('+ขออนุญาตตัว')
+      .setStyle(ButtonStyle.Primary)
+      .setEmoji('📝'),
+    new ButtonBuilder()
+      .setCustomId('btn_service_submit_evidence')
+      .setLabel('+ส่งหลักฐานคดี')
+      .setStyle(ButtonStyle.Danger)
+      .setEmoji('📁')
   );
 
   return await channel.send({ embeds: [embed], components: [row], files });
@@ -926,6 +972,46 @@ async function refreshAllChannelsAndPanels(guild, options = { purge: true }) {
     if (chLostFound) {
       if (options.purge) await purgeChannelMessages(chLostFound);
       await sendLostFoundGuidePanel(chLostFound);
+      result.refreshedChannels++;
+    }
+
+    let chInspectorService = findChannel(guild, '🛎️│บริการสารวัตร') ||
+      findChannel(guild, 'บริการสารวัตร') ||
+      guild.channels.cache.find(c => c.name.includes('บริการสารวัตร'));
+
+    if (!chInspectorService) {
+      try {
+        const catDuty = guild.channels.cache.find(c => c.type === ChannelType.GuildCategory && (c.name.includes('ปฏิบัติการประจำเวร') || c.name.includes('ปฏิบัติการ'))) || null;
+        const verifiedRole = guild.roles.cache.find(r => r.name.includes('สารวัตรนักเรียน'));
+        const overwrites = [
+          { id: guild.roles.everyone.id, deny: [PermissionsBitField.Flags.ViewChannel] }
+        ];
+        if (verifiedRole) {
+          overwrites.push({
+            id: verifiedRole.id,
+            allow: [
+              PermissionsBitField.Flags.ViewChannel,
+              PermissionsBitField.Flags.ReadMessageHistory
+            ],
+            deny: [PermissionsBitField.Flags.SendMessages]
+          });
+        }
+        chInspectorService = await guild.channels.create({
+          name: '🛎️│บริการสารวัตร',
+          type: ChannelType.GuildText,
+          parent: catDuty ? catDuty.id : null,
+          topic: 'ศูนย์บริการสารวัตรนักเรียน: ขออนุญาตตัว / ลาเวร และส่งหลักฐานคดี',
+          permissionOverwrites: overwrites
+        });
+        console.log(`[REFRESH] 🛎️ สร้างห้องบริการสารวัตรสำเร็จ: #${chInspectorService.name}`);
+      } catch (e) {
+        console.warn('[REFRESH] ไม่สามารถสร้างห้องบริการสารวัตร:', e.message);
+      }
+    }
+
+    if (chInspectorService) {
+      if (options.purge) await purgeChannelMessages(chInspectorService);
+      await sendInspectorServicePanel(chInspectorService);
       result.refreshedChannels++;
     }
 
@@ -2148,9 +2234,12 @@ client.once(Events.ClientReady || 'ready', async () => {
 // 📌 คำสั่งตั้งค่าปุ่มเริ่มต้นในห้องต่างๆ
 // ==========================================================
 client.on('messageCreate', async (message) => {
-  // ตรวจจับการส่งไฟล์คลิป Bodycam หรือภาพถ่ายหลักฐานพร้อมระบุรหัสคดี (เช่น CASE-1234)
+  // ตรวจจับการส่งไฟล์คลิป Bodycam หรือภาพถ่ายหลักฐานพร้อมระบุรหัสคดี (เช่น CASE-1234 หรือส่งในเธรดคดี)
   if (message.attachments.size > 0 && !message.author.bot) {
-    const match = message.content.match(/CASE-\d+/i);
+    let match = message.content.match(/CASE-\d+/i);
+    if (!match && message.channel.isThread && message.channel.isThread() && message.channel.name) {
+      match = message.channel.name.match(/CASE-\d+/i);
+    }
     if (match) {
       const caseId = match[0].toUpperCase();
       const urls = message.attachments.map(att => att.url);
@@ -2159,7 +2248,7 @@ client.on('messageCreate', async (message) => {
         const merged = [...(c.evidence_urls || []), ...urls];
         await supabase.from('cases').update({
           evidence_urls: merged,
-          resolution_notes: (c.resolution_notes ? c.resolution_notes + '\n' : '') + `[แนบไฟล์ทาง Discord]: ${urls.join(' , ')}`
+          resolution_notes: (c.resolution_notes ? c.resolution_notes + '\n' : '') + `[แนบไฟล์ทาง Discord โดย ${message.author.username}]: ${urls.join(' , ')}`
         }).eq('case_id', caseId);
         await message.reply({ content: `✅ บันทึกไฟล์หลักฐาน/คลิป Bodycam จำนวน ${urls.length} ไฟล์ เข้าคดี **${caseId}** สำเร็จแล้ว!` }).catch(() => {});
       }
@@ -3300,6 +3389,16 @@ client.on('interactionCreate', async (interaction) => {
         }
         await sendLostFoundGuidePanel(interaction.channel);
         await interaction.reply({ content: '✅ ติดตั้งแผงจุดรับแจ้งของหายเรียบร้อยแล้ว', ephemeral: true });
+        return;
+      }
+
+      if (commandName === 'setup-service') {
+        if (!interaction.member?.permissions.has(PermissionsBitField.Flags.Administrator)) {
+          await interaction.reply({ content: '⛔ สงวนสิทธิ์เฉพาะผู้ดูแลระบบ (Admin) เท่านั้น', ephemeral: true });
+          return;
+        }
+        await sendInspectorServicePanel(interaction.channel);
+        await interaction.reply({ content: '✅ ติดตั้งแผงศูนย์บริการสารวัตร (+ขออนุญาตตัว / +ส่งหลักฐานคดี) เรียบร้อยแล้ว', ephemeral: true });
         return;
       }
 
@@ -5144,6 +5243,279 @@ client.on('interactionCreate', async (interaction) => {
                  `- **ประเภท:** ${leaveType} (เหตุผล: ${reason})\n` +
                  `━━━━━━━━━━━━━━━━━━━━\n` +
                  `📋 **การ์ดสรุปยอดเวร:** ระบบได้รวบรวมข้อมูลให้อยู่ในการ์ดเดียว และอัปเดตแบบ Realtime ไปยังห้องเวรและหัวหน้าเวรเรียบร้อยแล้ว!`
+      });
+      return;
+    }
+
+    // -------------------------------------------------------------
+    // 5.0.1 ศูนย์บริการสารวัตร: ปุ่ม +ขออนุญาตตัว
+    // -------------------------------------------------------------
+    if (interaction.isButton() && interaction.customId === 'btn_service_request_leave') {
+      const { data: member } = await supabase
+        .from('members')
+        .select('*')
+        .eq('discord_id', interaction.user.id)
+        .eq('status', 'ACTIVE')
+        .maybeSingle();
+
+      if (!member) {
+        await interaction.reply({
+          content: '⚠️ **ไม่พบข้อมูลสารวัตรในระบบ** กรุณายืนยันตัวตนในห้อง `#🛡️│ยืนยันตัวตน` ก่อนทำรายการครับ',
+          ephemeral: true
+        });
+        return;
+      }
+
+      const modal = new ModalBuilder()
+        .setCustomId(`modal_service_permit_${member.id}`)
+        .setTitle(`ขออนุญาตตัว / ลาเวร [${member.duty_id || 'สารวัตร'}]`.slice(0, 45));
+
+      const typeInput = new TextInputBuilder()
+        .setCustomId('input_permit_type')
+        .setLabel('ประเภทการขออนุญาต (ลาเวร/ลากิจ/ภารกิจ/สอบ)')
+        .setValue('ลากิจ')
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true);
+
+      const periodInput = new TextInputBuilder()
+        .setCustomId('input_permit_period')
+        .setLabel('ช่วงเวลา (เช้า / กลางวัน / เย็น / ทั้งวัน)')
+        .setValue('ทั้งวัน')
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true);
+
+      const reasonInput = new TextInputBuilder()
+        .setCustomId('input_permit_reason')
+        .setLabel('หมายเหตุ / เหตุผลความจำเป็น')
+        .setPlaceholder('เช่น มีไข้สูงไปพบแพทย์, ติดซ้อมกิจกรรมโรงเรียน, ช่วยงานครู')
+        .setStyle(TextInputStyle.Paragraph)
+        .setRequired(true);
+
+      const substituteInput = new TextInputBuilder()
+        .setCustomId('input_permit_substitute')
+        .setLabel('สารวัตรที่เข้าเวรแทน (ถ้ามี)')
+        .setPlaceholder('เช่น [TS2] กาย หรือระบุว่า ไม่มี')
+        .setStyle(TextInputStyle.Short)
+        .setRequired(false);
+
+      modal.addComponents(
+        new ActionRowBuilder().addComponents(typeInput),
+        new ActionRowBuilder().addComponents(periodInput),
+        new ActionRowBuilder().addComponents(reasonInput),
+        new ActionRowBuilder().addComponents(substituteInput)
+      );
+
+      await interaction.showModal(modal);
+      return;
+    }
+
+    if (interaction.isModalSubmit() && interaction.customId.startsWith('modal_service_permit_')) {
+      await interaction.deferReply({ ephemeral: true });
+      const memberId = interaction.customId.replace('modal_service_permit_', '');
+
+      const leaveType = interaction.fields.getTextInputValue('input_permit_type').trim();
+      const shiftPeriod = interaction.fields.getTextInputValue('input_permit_period').trim();
+      const reason = interaction.fields.getTextInputValue('input_permit_reason').trim();
+      const substitute = interaction.fields.fields.has('input_permit_substitute')
+        ? (interaction.fields.getTextInputValue('input_permit_substitute').trim() || '-')
+        : '-';
+      const todayStr = `วันนี้ (${new Date().toLocaleDateString('th-TH', { day: 'numeric', month: 'short' })})`;
+
+      const { data: member } = await supabase.from('members').select('*').eq('id', memberId).single();
+
+      if (!member) {
+        await interaction.editReply({ content: '⚠️ ไม่พบข้อมูลสมาชิกในระบบ' });
+        return;
+      }
+
+      await supabase.from('leave_requests').insert({
+        member_id: member.id,
+        duty_day: member.duty_day,
+        leave_date: todayStr,
+        shift_period: shiftPeriod,
+        leave_type: leaveType,
+        reason: reason,
+        substitute_name: substitute,
+        status: 'NOTIFIED'
+      });
+
+      const targetGuild = interaction.guild || client.guilds.cache.first();
+      await broadcastConsolidatedShiftLeaveCard(targetGuild, member.duty_day, {
+        member_id: member.id,
+        nickname: member.nickname,
+        first_name: member.first_name,
+        last_name: member.last_name,
+        duty_id: member.duty_id,
+        grade_class: member.grade_class,
+        leave_type: leaveType,
+        shift_period: shiftPeriod,
+        reason: reason,
+        substitute: substitute
+      }, `👮 [${member.duty_id || 'สารวัตร'}] คุณ${member.nickname}`);
+
+      const baseDay = member.duty_day === 'S' ? 'S' : (member.duty_day === 'TSS' ? 'Ts' : (member.duty_day.replace(/S+$/, '') || member.duty_day));
+      await interaction.editReply({
+        content: `# ✅ ส่งคำขออนุญาตตัวเรียบร้อยแล้ว\n` +
+                 `- **ผู้ขออนุญาต:** [${member.duty_id || 'สารวัตร'}] คุณ${member.nickname} (${member.first_name} ${member.last_name})\n` +
+                 `- **ผลัดเวร:** เวร${DAY_NAMES[baseDay] || member.duty_day} (${shiftPeriod})\n` +
+                 `- **ประเภท:** ${leaveType}\n` +
+                 `- **เหตุผล:** ${reason}\n` +
+                 `- **สารวัตรปฏิบัติหน้าที่แทน:** ${substitute}\n` +
+                 `━━━━━━━━━━━━━━━━━━━━\n` +
+                 `📋 ระบบได้ส่งการแจ้งเตือนไปยังหัวหน้าเวรและห้องประจำเวรเรียบร้อยแล้ว!`
+      });
+      return;
+    }
+
+    // -------------------------------------------------------------
+    // 5.0.2 ศูนย์บริการสารวัตร: ปุ่ม +ส่งหลักฐานคดี
+    // -------------------------------------------------------------
+    if (interaction.isButton() && interaction.customId === 'btn_service_submit_evidence') {
+      const modal = new ModalBuilder()
+        .setCustomId('modal_service_evidence')
+        .setTitle('ส่งหลักฐานคดี / บันทึกเหตุการณ์'.slice(0, 45));
+
+      const caseIdInput = new TextInputBuilder()
+        .setCustomId('input_case_id')
+        .setLabel('รหัสคดี (ระบุ เช่น CASE-1234 หรือเว้นว่าง)')
+        .setPlaceholder('ปล่อยว่างไว้หากต้องการให้ระบบสร้างรหัสคดีให้อัตโนมัติ')
+        .setStyle(TextInputStyle.Short)
+        .setRequired(false);
+
+      const titleInput = new TextInputBuilder()
+        .setCustomId('input_case_title')
+        .setLabel('หัวข้อเหตุการณ์ / ประเภทคดี')
+        .setPlaceholder('เช่น สูบบุหรี่, หนีเรียน, พกสิ่งผิดระเบียบ, ก่อเหตุวิวาท')
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true);
+
+      const locationInput = new TextInputBuilder()
+        .setCustomId('input_case_location')
+        .setLabel('สถานที่เกิดเหตุ')
+        .setPlaceholder('เช่น หลังอาคาร 3, บริเวณห้องน้ำ, สหกรณ์, โรงอาหาร')
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true);
+
+      const detailsInput = new TextInputBuilder()
+        .setCustomId('input_case_details')
+        .setLabel('รายละเอียดพฤติการณ์ / ข้อมูลหลักฐาน')
+        .setPlaceholder('บันทึกรายละเอียดเหตุการณ์ จำนวนผู้กระทำผิด หรือสิ่งที่ตรวจพบ...')
+        .setStyle(TextInputStyle.Paragraph)
+        .setRequired(true);
+
+      modal.addComponents(
+        new ActionRowBuilder().addComponents(caseIdInput),
+        new ActionRowBuilder().addComponents(titleInput),
+        new ActionRowBuilder().addComponents(locationInput),
+        new ActionRowBuilder().addComponents(detailsInput)
+      );
+
+      await interaction.showModal(modal);
+      return;
+    }
+
+    if (interaction.isModalSubmit() && interaction.customId === 'modal_service_evidence') {
+      await interaction.deferReply({ ephemeral: true });
+
+      let rawCaseId = interaction.fields.getTextInputValue('input_case_id')?.trim().toUpperCase();
+      if (!rawCaseId || !rawCaseId.startsWith('CASE-')) {
+        rawCaseId = 'CASE-' + Math.floor(1000 + Math.random() * 9000);
+      }
+      const caseId = rawCaseId;
+      const title = interaction.fields.getTextInputValue('input_case_title').trim();
+      const location = interaction.fields.getTextInputValue('input_case_location').trim();
+      const details = interaction.fields.getTextInputValue('input_case_details').trim();
+
+      const { data: member } = await supabase
+        .from('members')
+        .select('*')
+        .eq('discord_id', interaction.user.id)
+        .maybeSingle();
+
+      const officerName = member
+        ? `[${member.duty_id || 'สารวัตร'}] ${member.first_name} (${member.nickname})`
+        : (interaction.member?.displayName || interaction.user.username);
+
+      const { data: existingCase } = await supabase.from('cases').select('*').eq('case_id', caseId).maybeSingle();
+      if (existingCase) {
+        const updatedDesc = existingCase.description + `\n\n[บันทึกเพิ่มเติมโดย ${officerName}]:\n${details}`;
+        await supabase.from('cases').update({
+          description: updatedDesc,
+          resolution_notes: (existingCase.resolution_notes ? existingCase.resolution_notes + '\n' : '') + `[อัปเดตหลักฐานโดย ${officerName}]`
+        }).eq('case_id', caseId);
+      } else {
+        await supabase.from('cases').insert({
+          case_id: caseId,
+          reporter_email: member?.email || `${interaction.user.id}@discord.local`,
+          reporter_name: officerName,
+          incident_date_time: new Date().toISOString(),
+          location: location,
+          category: title,
+          description: `[บันทึกหลักฐานคดีโดยสารวัตร]\nผู้รายงาน: ${officerName} (<@${interaction.user.id}>)\nหัวข้อ: ${title}\nสถานที่: ${location}\nรายละเอียด: ${details}`,
+          status: 'PENDING',
+          assigned_duty_day: member?.duty_day || null,
+          assigned_officer_id: member?.id || null
+        });
+      }
+
+      const guild = interaction.guild;
+      const chIncident = findChannel(guild, '📁│ติดตามและปิดคดี') ||
+                         findChannel(guild, '🚨│แจ้งเหตุใหม่-google-form') ||
+                         findChannel(guild, 'แจ้งเหตุใหม่') ||
+                         findChannel(guild, '👑│ผู้นำ-all-in-one') ||
+                         interaction.channel;
+
+      const incidentEmbed = new EmbedBuilder()
+        .setTitle(`🚨 [บันทึกหลักฐานคดี] รหัส: ${caseId}`)
+        .setDescription(
+          `**หัวข้อเหตุการณ์:** ${title}\n` +
+          `**สถานที่เกิดเหตุ:** ${location}\n` +
+          `**ผู้บันทึก/สารวัตร:** ${officerName} (<@${interaction.user.id}>)\n` +
+          `**วันเวลา:** <t:${Math.floor(Date.now() / 1000)}:F>\n\n` +
+          `**รายละเอียดพฤติการณ์:**\n${details}\n\n` +
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+          `📸 **การส่งไฟล์หลักฐาน (รูปภาพ/คลิป):**\n` +
+          `สารวัตรสามารถส่งไฟล์ภาพหรือคลิป Bodycam ลงในเธรดด้านล่างนี้ได้โดยตรง ระบบจะบันทึกเข้าคดีอัตโนมัติ!`
+        )
+        .setColor('#E74C3C')
+        .setFooter({ text: `SARAWAT CASE MANAGEMENT • ${caseId}` });
+
+      const actionRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`btn_close_case_${caseId}`)
+          .setLabel('📁 ปิดคดี')
+          .setStyle(ButtonStyle.Success),
+        new ButtonBuilder()
+          .setLabel('🌐 อัปโหลดผ่านเว็บ (Bodycam)')
+          .setStyle(ButtonStyle.Link)
+          .setURL(`${getWebDashboardUrl()}/bodycam-upload?caseId=${caseId}`)
+      );
+
+      if (chIncident && chIncident.isTextBased()) {
+        const msg = await chIncident.send({ embeds: [incidentEmbed], components: [actionRow] }).catch(() => null);
+        if (msg) {
+          const thread = await msg.startThread({
+            name: `หลักฐาน [${caseId}] ${title.slice(0, 20)}`,
+            autoArchiveDuration: 1440
+          }).catch(() => null);
+
+          if (thread) {
+            await thread.send({
+              content: `👮 **<@${interaction.user.id}> กรุณาส่งรูปภาพหลักฐาน, วิดีโอคลิป หรือเอกสารลงในเธรดนี้ได้เลยครับ**\n*(ระบบจะตรวจจับไฟล์และบันทึกเข้าคดี \`${caseId}\` ให้อัตโนมัติ)*`
+            }).catch(() => {});
+          }
+        }
+      }
+
+      await interaction.editReply({
+        content: `# 📁 บันทึกข้อมูลคดี [${caseId}] เรียบร้อยแล้ว!\n` +
+                 `- **หัวข้อเหตุการณ์:** ${title}\n` +
+                 `- **สถานที่:** ${location}\n` +
+                 `- **ผู้บันทึก:** ${officerName}\n` +
+                 `━━━━━━━━━━━━━━━━━━━━\n` +
+                 `📸 **ขั้นตอนส่งไฟล์ภาพ/คลิปหลักฐาน:**\n` +
+                 `• ส่งไฟล์ลงในเธรดห้องคดี <#${chIncident?.id || interaction.channelId}> ได้ทันที (บอทจะแนบเข้าคดีอัตโนมัติ)\n` +
+                 `• หรืออัปโหลดไฟล์ขนาดใหญ่ผ่านหน้าเว็บ: [ระบบอัปโหลดบอดี้แคม](${getWebDashboardUrl()}/bodycam-upload?caseId=${caseId})`
       });
       return;
     }
