@@ -138,7 +138,7 @@ client.once(Events.ClientReady || 'ready', async () => {
       { id: everyoneRole.id, deny: [PermissionsBitField.Flags.ViewChannel] },
       { id: verifiedRole.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages] }
     ]);
-    const chServiceDesk = await getOrCreateTextChannel(guild, '📑│บริการ', catDuty.id, [
+    const chServiceDesk = await getOrCreateTextChannel(guild, '📑│เช็คชื่อ', catDuty.id, [
       { id: everyoneRole.id, deny: [PermissionsBitField.Flags.ViewChannel] },
       { id: verifiedRole.id, allow: [PermissionsBitField.Flags.ViewChannel] }
     ]);

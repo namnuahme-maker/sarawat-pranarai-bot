@@ -632,8 +632,8 @@ async function sendAttendancePanel(channel) {
   if (!channel) return null;
 
   // เปลี่ยนชื่อช่องอัตโนมัติหากยังเป็นชื่อเดิม
-  if (channel.name && channel.name.includes('บริการเวรและใบเช็คชื่อ')) {
-    await channel.setName('📑│บริการ').catch(() => {});
+  if (channel.name && (channel.name.includes('บริการ') || channel.name.includes('บริการเวรและใบเช็คชื่อ'))) {
+    await channel.setName('📑│เช็คชื่อ').catch(() => {});
   }
 
   const embed = new EmbedBuilder()
@@ -855,11 +855,12 @@ async function refreshAllChannelsAndPanels(guild, options = { purge: true }) {
     const chVerify = findChannel(guild, '🛡️│ยืนยันตัวตน') || guild.channels.cache.find(c => c.name.includes('ยืนยันตัวตน'));
     const chPhoto = findChannel(guild, process.env.PHOTO_CHANNEL_ID) || guild.channels.cache.find(c => c.name.includes('อัปโหลดรูปโปรไฟล์'));
     const chAttendance = findChannel(guild, process.env.ATTENDANCE_CHANNEL_ID) ||
+      findChannel(guild, '📑│เช็คชื่อ') ||
+      findChannel(guild, 'เช็คชื่อ') ||
       findChannel(guild, '📑│บริการ') ||
-      findChannel(guild, 'บริการ') ||
-      guild.channels.cache.find(c => c.name.includes('บริการ'));
-    if (chAttendance && chAttendance.name.includes('บริการเวรและใบเช็คชื่อ')) {
-      await chAttendance.setName('📑│บริการ').catch(() => {});
+      guild.channels.cache.find(c => c.name.includes('เช็คชื่อ') || c.name.includes('บริการ'));
+    if (chAttendance && (chAttendance.name.includes('บริการ') || chAttendance.name.includes('บริการเวรและใบเช็คชื่อ'))) {
+      await chAttendance.setName('📑│เช็คชื่อ').catch(() => {});
     }
     const chApproval = findChannel(guild, process.env.APPROVAL_CHANNEL_ID) || guild.channels.cache.find(c => c.name.includes('อนุมัติสมาชิก'));
     const chAllInOne = findChannel(guild, '👑│ผู้นำ-all-in-one') || findChannel(guild, '👑│ห้องประชุมหัวหน้า');
@@ -1425,7 +1426,7 @@ async function runSystemDiagnostics(guild) {
     const requiredChannels = [
       { key: 'VERIFY', name: '🛡️│ยืนยันตัวตน' },
       { key: 'PHOTO', name: process.env.PHOTO_CHANNEL_ID || '📸│อัปโหลดรูปโปรไฟล์-ทำบัตร' },
-      { key: 'SERVICE', name: process.env.ATTENDANCE_CHANNEL_ID || '📑│บริการ' },
+      { key: 'SERVICE', name: process.env.ATTENDANCE_CHANNEL_ID || '📑│เช็คชื่อ' },
       { key: 'APPOINT', name: '👑│ผู้นำ-all-in-one' },
       { key: 'APPROVAL', name: process.env.APPROVAL_CHANNEL_ID || 'อนุมัติสมาชิก' }
     ];
@@ -1593,11 +1594,12 @@ async function executeDDay(guild, executorUser) {
       const chVerify = findChannel(guild, '🛡️│ยืนยันตัวตน') || guild.channels.cache.find(c => c.name.includes('ยืนยันตัวตน'));
       const chPhoto = findChannel(guild, process.env.PHOTO_CHANNEL_ID) || guild.channels.cache.find(c => c.name.includes('อัปโหลดรูปโปรไฟล์'));
       const chAttendance = findChannel(guild, process.env.ATTENDANCE_CHANNEL_ID) ||
+        findChannel(guild, '📑│เช็คชื่อ') ||
+        findChannel(guild, 'เช็คชื่อ') ||
         findChannel(guild, '📑│บริการ') ||
-        findChannel(guild, 'บริการ') ||
-        guild.channels.cache.find(c => c.name.includes('บริการ'));
-      if (chAttendance && chAttendance.name.includes('บริการเวรและใบเช็คชื่อ')) {
-        await chAttendance.setName('📑│บริการ').catch(() => {});
+        guild.channels.cache.find(c => c.name.includes('เช็คชื่อ') || c.name.includes('บริการ'));
+      if (chAttendance && (chAttendance.name.includes('บริการ') || chAttendance.name.includes('บริการเวรและใบเช็คชื่อ'))) {
+        await chAttendance.setName('📑│เช็คชื่อ').catch(() => {});
       }
       const chApproval = findChannel(guild, process.env.APPROVAL_CHANNEL_ID) || guild.channels.cache.find(c => c.name.includes('อนุมัติสมาชิก'));
       const chAllInOne = findChannel(guild, '👑│ผู้นำ-all-in-one') || findChannel(guild, '👑│ห้องประชุมหัวหน้า');
