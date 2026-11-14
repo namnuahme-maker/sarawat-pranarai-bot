@@ -41,6 +41,7 @@ const { spawn } = require('child_process');
 require('dotenv').config();
 const QRCode = require('qrcode');
 const { generateCardHTML } = require('./card_template');
+const { processAttendancePhoto, buildAttendanceDiscordCard } = require('./attendance_manager');
 
 const PORT = process.env.PORT || 10000;
 
@@ -209,6 +210,7 @@ if (cleanupSheetsTimer.unref) cleanupSheetsTimer.unref();
 // 📸 PENDING PHOTO UPLOADS & AI BACKGROUND REMOVAL
 // ==========================================================
 const pendingPhotoUploads = new Map(); // memberId -> { url, name, timestamp }
+const pendingAttendanceUploads = new Map(); // userId -> { shift, dateStr, channelId, timestamp }
 
 function getUploadDir() {
   const dir1 = path.join(__dirname, '..', 'web', 'public', 'uploads');
@@ -661,9 +663,13 @@ async function sendAttendancePanel(channel) {
 
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
+      .setCustomId('btn_start_attendance_scan')
+      .setLabel('⚡ เช็คชื่อด้วยภาพถ่าย AI')
+      .setStyle(ButtonStyle.Success),
+    new ButtonBuilder()
       .setCustomId('btn_request_attendance')
       .setLabel('📄 ขอใบเช็คชื่อ A4')
-      .setStyle(ButtonStyle.Success),
+      .setStyle(ButtonStyle.Secondary),
     new ButtonBuilder()
       .setCustomId('btn_request_leave')
       .setLabel('📝 แจ้งขอลาเวร')
@@ -673,11 +679,7 @@ async function sendAttendancePanel(channel) {
       .setLabel('🚨 ขอออกปฏิบัติหน้าที่')
       .setStyle(ButtonStyle.Primary),
     new ButtonBuilder()
-      .setLabel('⚡ สแกนเช็คชื่อ AI')
-      .setStyle(ButtonStyle.Link)
-      .setURL(`${getWebDashboardUrl()}/attendance-scan`),
-    new ButtonBuilder()
-      .setLabel('🌐 เข้าสู่เว็บไซต์ระบบ')
+      .setLabel('🌐 เว็บไซต์ระบบ')
       .setStyle(ButtonStyle.Link)
       .setURL(getWebDashboardUrl())
   );
@@ -2619,6 +2621,156 @@ client.on('messageCreate', async (message) => {
     }
   }
 
+  // ==========================================================
+  // 📑 ระบบตรวจจับและประมวลผลรูปถ่ายใบเช็คชื่อ (Attendance Sheet Vision Ingestion)
+  // ==========================================================
+  const isAttendanceChannel = (ATTENDANCE_CHANNEL_ID && message.channel.id === ATTENDANCE_CHANNEL_ID) ||
+    (message.channel && message.channel.name && (
+      message.channel.name.includes('เช็คชื่อ') ||
+      message.channel.name.includes('บริการ')
+    ));
+
+  const isAttendanceTrigger = isAttendanceChannel ||
+    /!(attendance|scan|เช็คชื่อ|สแกน|test-attendance)/i.test(message.content) ||
+    message.content.includes('เช็คชื่อ');
+
+  // กรณีคำสั่งทดสอบระบบเช็คชื่อ: !test-attendance หรือ !test-scan
+  if (/^!(test-attendance|test-scan)/i.test(message.content.trim())) {
+    try {
+      const waitMsg = await message.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setTitle('🧪 ทดสอบระบบเช็คชื่ออัตโนมัติ (Live Attendance Test)')
+            .setDescription(
+              '⏳ กำลังเชื่อมต่อ Supabase ตรวจสอบผลัดเวรวันนี้ ดึงประวัติใบลา และจำลองการประมวลผล...'
+            )
+            .setColor('#F39C12')
+        ]
+      });
+
+      // ดึงตัวอย่าง shift จากข้อความ เช่น "!test-attendance TS" หรือใช้วันปัจจุบัน
+      const matchShift = message.content.match(/(จันทร์|อังคาร|พุธ|พฤหัส|ศุกร์|พิเศษ|M|MS|T|TS|W|Ts|TH|F|FS|S)/i);
+      const testShift = matchShift ? matchShift[0] : null;
+
+      const result = await processAttendancePhoto({
+        supabase,
+        imageBuffer: Buffer.from(''),
+        mimeType: 'image/jpeg',
+        shiftInput: testShift,
+        scannedBy: `${message.author.username} (คำสั่งทดสอบ !test-attendance)`
+      });
+
+      const { embed, row } = buildAttendanceDiscordCard({
+        session: result.session,
+        summary: result.summary,
+        records: result.records,
+        shiftInfo: result.shiftInfo,
+        webUrl: getWebDashboardUrl()
+      });
+
+      await waitMsg.edit({ embeds: [embed], components: [row] });
+      return;
+    } catch (err) {
+      console.error('[ATTENDANCE TEST ERROR]', err);
+      await message.reply({ content: `❌ ทดสอบระบบเช็คชื่อไม่สำเร็จ: ${err.message}` }).catch(() => {});
+      return;
+    }
+  }
+
+  // กรณีมีการส่งรูปถ่ายในห้องเช็คชื่อ หรือส่งพร้อมข้อความเช็คชื่อ
+  if (isAttendanceTrigger && message.attachments.size > 0 && !message.author.bot) {
+    const attachment = message.attachments.find(a => 
+      (a.contentType && a.contentType.startsWith('image/')) ||
+      /\.(jpe?g|png|webp|gif|heic)$/i.test(a.name || a.url)
+    );
+
+    if (attachment) {
+      try {
+        const waitMsg = await message.reply({
+          embeds: [
+            new EmbedBuilder()
+              .setTitle('⚡ กำลังประมวลผลใบเช็คชื่อด้วย Gemini Vision AI')
+              .setDescription(
+                '📸 **ตรวจพบภาพถ่ายใบเช็คชื่อ/การเข้าเวร**\n' +
+                '⏳ บอทกำลังส่งภาพให้ Gemini Vision วิเคราะห์พิกัดวงกลม OMR ตรวจสอบรายชื่อประจำผลัด และเทียบการลาใน Supabase...'
+              )
+              .setColor('#F39C12')
+              .setFooter({ text: 'SARAWAT PRANARAI OS • VISION AI OMR' })
+          ]
+        });
+
+        // 1. ดาวน์โหลดรูปภาพ
+        const imgRes = await fetch(attachment.url);
+        if (!imgRes.ok) throw new Error(`ไม่สามารถดาวน์โหลดภาพได้ (${imgRes.status})`);
+        const imgBuffer = Buffer.from(await imgRes.arrayBuffer());
+
+        // 2. ตรวจสอบข้อมูลจากรอบรออัปโหลด (Pending Flow) หรือจากข้อความ
+        const pendingUpload = pendingAttendanceUploads.get(message.author.id);
+        if (pendingUpload) {
+          pendingAttendanceUploads.delete(message.author.id);
+        }
+
+        const matchShift = message.content.match(/(จันทร์|อังคาร|พุธ|พฤหัส|ศุกร์|พิเศษ|M|MS|T|TS|W|Ts|TH|F|FS|S)/i);
+        const shiftParam = pendingUpload ? pendingUpload.shift : (matchShift ? matchShift[0] : null);
+        const targetDate = pendingUpload ? pendingUpload.dateStr : 'วันนี้';
+
+        // 3. ประมวลผล OMR และบันทึกลงฐานข้อมูล
+        const result = await processAttendancePhoto({
+          supabase,
+          imageBuffer: imgBuffer,
+          mimeType: attachment.contentType || 'image/jpeg',
+          shiftInput: shiftParam,
+          targetDate,
+          scannedBy: message.member?.displayName || message.author.username
+        });
+
+        // 4. สร้าง URL เชื่อมต่อไปยัง Web App สำหรับขั้นตอน Calibration (ปรับ 4 จุด) & Verification
+        const sessionUrl = `${getWebDashboardUrl()}/attendance-scan?session=${result.session.id}&image_url=${encodeURIComponent(result.session.raw_image_url || '')}&shift=${result.shiftInfo.code}&date=${encodeURIComponent(targetDate)}`;
+
+        // 5. สร้างการ์ดผลลัพธ์พร้อมปุ่มเปิดหน้าเว็บปรับจุด 4 มุมตาม Flowchart
+        const { embed, row } = buildAttendanceDiscordCard({
+          session: result.session,
+          summary: result.summary,
+          records: result.records,
+          shiftInfo: result.shiftInfo,
+          webUrl: getWebDashboardUrl()
+        });
+
+        // เพิ่มปุ่มพิเศษสำหรับเปิดหน้าเว็บปรับมุมตารางเป็นปุ่มแรก
+        row.components.unshift(
+          new ButtonBuilder()
+            .setLabel('🎯 ปรับจุด 4 มุมและยืนยันข้อมูลบนเว็บ')
+            .setStyle(ButtonStyle.Link)
+            .setURL(sessionUrl)
+        );
+
+        embed.setTitle('⚡ ตรวจจับขอบตารางและวิเคราะห์ OMR เรียบร้อย');
+        embed.setDescription(
+          `📸 **รับภาพถ่ายและคำนวณพิกัดตั้งต้น 4 มุมเรียบร้อยแล้ว**\n` +
+          `• **ผลัดเวร:** ${result.shiftInfo.name} [Shift ${result.shiftInfo.code}]\n` +
+          `• **ประจำวันที่:** ${targetDate}\n\n` +
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+          `👉 **ขั้นตอนถัดไป (Calibration & Verification):**\n` +
+          `1. คลิกปุ่ม **"🎯 ปรับจุด 4 มุมและยืนยันข้อมูลบนเว็บ"** ด้านล่าง\n` +
+          `2. ตรวจสอบจุด 4 มุม หากไม่ตรงตารางสามารถลากปรับได้ด้วยตนเอง\n` +
+          `3. กดยืนยันพิกัด เพื่อให้ระบบ Crop & Warp และอ่านสถานะการมาเรียน\n` +
+          `4. ตรวจสอบตารางรายชื่อ ติ๊กแก้ไขรายบุคคล และกดปุ่ม **"ลงข้อมูล"**\n` +
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+          `**📊 สรุปยอดเบื้องต้น:** มา ${result.summary.present} / สาย ${result.summary.late} / ลา ${result.summary.leave} / ขาด ${result.summary.absent} (ความพร้อม ${result.summary.attendance_rate}%)`
+        );
+
+        await waitMsg.edit({ embeds: [embed], components: [row] });
+        return;
+      } catch (err) {
+        console.error('[ATTENDANCE VISION ERROR]', err);
+        await message.reply({
+          content: `⚠️ เกิดข้อผิดพลาดในการประมวลผลภาพถ่ายเช็คชื่อ: ${err.message}`
+        }).catch(() => {});
+        return;
+      }
+    }
+  }
+
   if (!message.member?.permissions.has(PermissionsBitField.Flags.Administrator)) return;
 
   if (message.content === '!setup-verify') {
@@ -4528,6 +4680,99 @@ client.on('interactionCreate', async (interaction) => {
           components: []
         });
       }
+    }
+
+    // ----------------------------------------------------------
+    // 📑 กระบวนการเช็คชื่อด้วยภาพถ่าย AI (Discord Bot Flow)
+    // ----------------------------------------------------------
+    if (interaction.isButton() && interaction.customId === 'btn_start_attendance_scan') {
+      const shiftMenu = new StringSelectMenuBuilder()
+        .setCustomId('select_attendance_scan_shift')
+        .setPlaceholder('📅 1. เลือกผลัดเวรประจำวันที่ต้องการเช็คชื่อ...')
+        .addOptions([
+          { label: 'วันจันทร์ (Shift M)', value: 'M', description: 'เช็คชื่อสารวัตรเวรวันจันทร์', emoji: '🔵' },
+          { label: 'วันอังคาร (Shift T)', value: 'T', description: 'เช็คชื่อสารวัตรเวรวันอังคาร', emoji: '🟣' },
+          { label: 'วันพุธ (Shift W)', value: 'W', description: 'เช็คชื่อสารวัตรเวรวันพุธ', emoji: '🟢' },
+          { label: 'วันพฤหัสบดี (Shift Ts)', value: 'Ts', description: 'เช็คชื่อสารวัตรเวรวันพฤหัสบดี', emoji: '🟠' },
+          { label: 'วันศุกร์ (Shift F)', value: 'F', description: 'เช็คชื่อสารวัตรเวรวันศุกร์', emoji: '🔴' },
+          { label: 'เวรพิเศษทุกวัน (Shift S)', value: 'S', description: 'เช็คชื่อสารวัตรเวรพิเศษ (ปฏิบัติหน้าที่ทุกวัน)', emoji: '⭐' }
+        ]);
+
+      const row = new ActionRowBuilder().addComponents(shiftMenu);
+      await interaction.reply({
+        content: '🤖 **ขั้นตอนที่ 1/2:** กรุณาเลือกผลัดเวรที่ต้องการเช็คชื่อ:',
+        components: [row],
+        ephemeral: true
+      });
+      return;
+    }
+
+    if (interaction.isStringSelectMenu() && interaction.customId === 'select_attendance_scan_shift') {
+      const shift = interaction.values[0];
+      const shiftNames = { M: 'วันจันทร์', T: 'วันอังคาร', W: 'วันพุธ', Ts: 'วันพฤหัสบดี', F: 'วันศุกร์', S: 'เวรพิเศษทุกวัน' };
+      const shiftName = shiftNames[shift] || shift;
+
+      // วันที่ปัจจุบัน (เช่น 11/14)
+      const now = new Date();
+      const mmdd = `${now.getMonth() + 1}/${now.getDate()}`;
+      const dateOptions = [
+        { label: `วันนี้ (${mmdd})`, value: `${shift}|${mmdd}`, description: `ระบุวันที่ประจำวันนี้ (${mmdd})`, emoji: '📅' }
+      ];
+
+      for (let w = 1; w <= 12; w++) {
+        dateOptions.push({
+          label: `สัปดาห์ที่ ${w}`,
+          value: `${shift}|สัปดาห์ที่ ${w}`,
+          description: `ตารางช่องสัปดาห์ที่ ${w} (12 สัปดาห์)`,
+          emoji: '🗓️'
+        });
+      }
+
+      const dateMenu = new StringSelectMenuBuilder()
+        .setCustomId('select_attendance_scan_date')
+        .setPlaceholder('🗓️ 2. เลือกวันที่ / สัปดาห์ที่ต้องการเช็คชื่อ...')
+        .addOptions(dateOptions.slice(0, 13));
+
+      const row = new ActionRowBuilder().addComponents(dateMenu);
+      await interaction.update({
+        content: `🤖 **ขั้นตอนที่ 2/2:** เลือกเวร **${shiftName}** แล้ว 👉 กรุณาเลือก **วันที่หรือสัปดาห์**:`,
+        components: [row]
+      });
+      return;
+    }
+
+    if (interaction.isStringSelectMenu() && interaction.customId === 'select_attendance_scan_date') {
+      const [shift, dateStr] = interaction.values[0].split('|');
+      const shiftNames = { M: 'วันจันทร์', T: 'วันอังคาร', W: 'วันพุธ', Ts: 'วันพฤหัสบดี', F: 'วันศุกร์', S: 'เวรพิเศษทุกวัน' };
+      const shiftName = shiftNames[shift] || shift;
+
+      pendingAttendanceUploads.set(interaction.user.id, {
+        shift,
+        dateStr,
+        channelId: interaction.channelId,
+        timestamp: Date.now()
+      });
+
+      const promptEmbed = new EmbedBuilder()
+        .setTitle('📸 กรุณาส่งรูปภาพตารางเช็คชื่อ (Attendance Sheet)')
+        .setDescription(
+          `• **ผลัดเวร:** ${shiftName} [Shift ${shift}]\n` +
+          `• **ประจำวันที่:** ${dateStr}\n\n` +
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+          `👉 **สิ่งที่คุณต้องทำตอนนี้:**\n` +
+          `1. ถ่ายภาพหรือเลือกรูปภาพตารางเช็คชื่อ A4 ที่ลงเวลาแล้ว\n` +
+          `2. **ส่งรูปภาพเข้ามาในห้องนี้ได้เลย**\n\n` +
+          `⚡ เมื่อส่งรูปภาพแล้ว ระบบจะตรวจจับขอบตาราง 4 มุม และสร้างปุ่มเปิดหน้าเว็บสำหรับตรวจสอบ/ปรับพิกัดและยืนยันข้อมูลทันที!`
+        )
+        .setColor('#1ABC9C')
+        .setFooter({ text: 'ระบบรอรับรูปภาพภายใน 10 นาที • SARAWAT PRANARAI OS' });
+
+      await interaction.update({
+        content: null,
+        embeds: [promptEmbed],
+        components: []
+      });
+      return;
     }
 
     // 4. ระบบสร้างใบตารางเช็คชื่อ 12 สัปดาห์ (ระบุหัวหน้าและรองหัวหน้าบนหัวกระดาษ)
