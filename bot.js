@@ -3047,7 +3047,7 @@ client.on('messageCreate', async (message) => {
 });
 
 // ==========================================================
-// 🔍 ระบบขออนุญาตออกตรวจพื้นที่ด่วน (One-Click Inspection Flow)
+// 🔍 ระบบขออนุญาตออกตรวจพื้นที่ด่วน (Step-by-Step Flow)
 // ==========================================================
 const inspectionDrafts = new Map();
 
@@ -3070,6 +3070,7 @@ function getInspectionDraft(userId) {
   let draft = inspectionDrafts.get(userId);
   if (!draft || (Date.now() - draft.updatedAt > 15 * 60 * 1000)) {
     draft = {
+      target: null,
       period: getDutyPeriodNow(),
       partnerIds: [],
       partnersText: 'ปฏิบัติหน้าที่คนเดียว',
@@ -3080,7 +3081,8 @@ function getInspectionDraft(userId) {
   return draft;
 }
 
-function buildInspectionPanel(member, draft, user) {
+// สเตป 1: เลือกสถานที่
+function buildStep1Panel(member, user) {
   const profilePhoto = member?.profile_image_url || 
                        member?.photo_url || 
                        member?.profile_photo_url || 
@@ -3092,79 +3094,127 @@ function buildInspectionPanel(member, draft, user) {
     : (user?.username || 'สารวัตรนักเรียน');
 
   const embed = new EmbedBuilder()
-    .setTitle('📋 ขออนุญาตออกตรวจพื้นที่ (เลือกด่วน 1 คลิก)')
+    .setTitle('📋 ขออนุญาตออกตรวจพื้นที่ (ขั้นตอน 1/2)')
     .setDescription(
-      `👮 **สารวัตรผู้ขอ:** **${officerName}**\n` +
-      `⏰ **ช่วงเวลา:** **${draft.period}** *(ระบบเลือกให้อัตโนมัติ หรือกดเปลี่ยนได้)*\n` +
-      `👥 **ผู้ร่วมตรวจ:** **${draft.partnersText}** *(ค่าเริ่มต้น: ปฏิบัติงานคนเดียว)*\n` +
-      `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-      `👇 **แตะเลือกโซนตรวจด้านล่าง 1 คลิก เพื่อเปิดเคสตรวจทันที:**`
+      `👮 **สารวัตรผู้ขอ:** **${officerName}**\n\n` +
+      `📍 **กรุณาเลือกสถานที่ / จุดตรวจที่ต้องการออกตรวจ:**`
     )
     .setColor('#2980B9')
-    .setFooter({ text: 'แตะเลือกโซน 1 คลิก บอทจะเปิดห้องเคสและดึงคู่หูเข้าเธรดให้ทันที' });
+    .setFooter({ text: 'ขั้นตอนที่ 1 จาก 2 • แตะเลือกสถานที่' });
 
   if (profilePhoto) {
     embed.setThumbnail(profilePhoto);
   }
 
-  // แถวที่ 1: 4 ปุ่มโซนตรวจหลัก (แตะแล้วสร้างเคสทันที)
-  const zoneRow = new ActionRowBuilder().addComponents(
+  // แถวเดียว 5 ปุ่มสถานที่ยอดนิยม
+  const locRow = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
-      .setCustomId('btn_insp_zone_buildings')
-      .setLabel('🏢 โซนอาคารเรียน')
-      .setStyle(ButtonStyle.Primary),
-    new ButtonBuilder()
-      .setCustomId('btn_insp_zone_canteen')
-      .setLabel('🍜 โซนโรงอาหาร-สหกรณ์')
+      .setCustomId('btn_insp_loc_canteen')
+      .setLabel('🍜 โรงอาหาร')
       .setStyle(ButtonStyle.Success),
     new ButtonBuilder()
-      .setCustomId('btn_insp_zone_stadium')
-      .setLabel('⚽ โซนสนามกีฬา')
+      .setCustomId('btn_insp_loc_bldg3')
+      .setLabel('🏢 หลังอาคาร 3')
       .setStyle(ButtonStyle.Primary),
     new ButtonBuilder()
-      .setCustomId('btn_insp_zone_blindspots')
-      .setLabel('🚻 โซนลับตาคน/ห้องน้ำ')
-      .setStyle(ButtonStyle.Danger)
-  );
-
-  // แถวที่ 2: สลับช่วงเวลา + ปุ่มออกตรวจคนเดียว + ปุ่มพิมพ์เอง
-  const isMorning = draft.period.includes('เช้า');
-  const isLunch = draft.period.includes('กลางวัน');
-  const isEvening = draft.period.includes('เย็น') || draft.period.includes('เลิกเรียน');
-
-  const periodRow = new ActionRowBuilder().addComponents(
+      .setCustomId('btn_insp_loc_coop')
+      .setLabel('🏬 สหกรณ์')
+      .setStyle(ButtonStyle.Primary),
     new ButtonBuilder()
-      .setCustomId('btn_insp_time_morning')
-      .setLabel('🌅 เช้า')
-      .setStyle(isMorning ? ButtonStyle.Success : ButtonStyle.Secondary),
+      .setCustomId('btn_insp_loc_toilet')
+      .setLabel('🚻 บริเวณห้องน้ำ')
+      .setStyle(ButtonStyle.Danger),
     new ButtonBuilder()
-      .setCustomId('btn_insp_time_lunch')
-      .setLabel('🍱 กลางวัน')
-      .setStyle(isLunch ? ButtonStyle.Success : ButtonStyle.Secondary),
-    new ButtonBuilder()
-      .setCustomId('btn_insp_time_evening')
-      .setLabel('🌆 เย็น')
-      .setStyle(isEvening ? ButtonStyle.Success : ButtonStyle.Secondary),
-    new ButtonBuilder()
-      .setCustomId('btn_insp_solo')
-      .setLabel('👤 ออกตรวจคนเดียว')
-      .setStyle(draft.partnerIds.length === 0 ? ButtonStyle.Primary : ButtonStyle.Secondary),
-    new ButtonBuilder()
-      .setCustomId('btn_insp_custom_modal')
-      .setLabel('✏️ ระบุเอง')
+      .setCustomId('btn_insp_loc_custom')
+      .setLabel('✏️ อื่นๆ/ระบุเอง')
       .setStyle(ButtonStyle.Secondary)
   );
 
-  // แถวที่ 3: เลือกเพื่อนร่วมตรวจจาก Discord โดยตรง (ไม่ต้องพิมพ์ชื่อ)
-  const partnerSelect = new UserSelectMenuBuilder()
-    .setCustomId('select_insp_partners')
-    .setPlaceholder('👥 เลือกสารวัตรที่ร่วมตรวจ (ถ้ามี - ปล่อยว่าง = คนเดียว)')
+  return { embeds: [embed], components: [locRow], ephemeral: true };
+}
+
+// สเตป 2: เลือกผู้ร่วมตรวจ (คนเดียว หรือ มีเพื่อน)
+function buildStep2Panel(member, draft, user) {
+  const profilePhoto = member?.profile_image_url || 
+                       member?.photo_url || 
+                       member?.profile_photo_url || 
+                       user?.displayAvatarURL?.({ dynamic: true, size: 512 }) ||
+                       null;
+
+  const officerName = member
+    ? `[${member.duty_id || 'สารวัตร'}] ${member.first_name} (${member.nickname})`
+    : (user?.username || 'สารวัตรนักเรียน');
+
+  const embed = new EmbedBuilder()
+    .setTitle('📋 ขออนุญาตออกตรวจพื้นที่ (ขั้นตอน 2/2)')
+    .setDescription(
+      `👮 **สารวัตรผู้ขอ:** **${officerName}**\n` +
+      `📍 **สถานที่ตรวจ:** **${draft.target}**\n\n` +
+      `👥 **ต้องการออกตรวจคนเดียว หรือมีเพื่อนร่วมตรวจครับ?**`
+    )
+    .setColor('#2980B9')
+    .setFooter({ text: 'ขั้นตอนที่ 2 จาก 2 • เลือกเพื่อนร่วมตรวจ' });
+
+  if (profilePhoto) {
+    embed.setThumbnail(profilePhoto);
+  }
+
+  const partnerRow = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId('btn_insp_partner_solo')
+      .setLabel('👤 ออกตรวจคนเดียว')
+      .setStyle(ButtonStyle.Success),
+    new ButtonBuilder()
+      .setCustomId('btn_insp_partner_pick')
+      .setLabel('👥 มีเพื่อนร่วมตรวจ')
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setCustomId('btn_insp_back_step1')
+      .setLabel('⬅️ เปลี่ยนสถานที่')
+      .setStyle(ButtonStyle.Secondary)
+  );
+
+  return { embeds: [embed], components: [partnerRow], ephemeral: true };
+}
+
+// สเตป 2.1: ถ้าเลือกมีเพื่อนร่วมตรวจ ให้เลือกจาก UserSelectMenu
+function buildStep2WithFriendPanel(member, draft, user) {
+  const profilePhoto = member?.profile_image_url || 
+                       member?.photo_url || 
+                       member?.profile_photo_url || 
+                       user?.displayAvatarURL?.({ dynamic: true, size: 512 }) ||
+                       null;
+
+  const embed = new EmbedBuilder()
+    .setTitle('👥 เลือกสารวัตรที่ร่วมออกตรวจ')
+    .setDescription(
+      `📍 **สถานที่ตรวจ:** **${draft.target}**\n\n` +
+      `👇 **เลือกสารวัตรที่ร่วมตรวจจากเมนูด้านล่าง:**\n` +
+      `*(เมื่อเลือกแล้ว ระบบจะสร้างเคสและดึงเพื่อนทุกคนเข้าห้องเธรดให้ทันที)*`
+    )
+    .setColor('#2980B9')
+    .setFooter({ text: 'เลือกแท็กเพื่อนแล้วระบบจะเปิดห้องเคสทันที' });
+
+  if (profilePhoto) {
+    embed.setThumbnail(profilePhoto);
+  }
+
+  const userSelect = new UserSelectMenuBuilder()
+    .setCustomId('select_insp_friends')
+    .setPlaceholder('👥 เลือกเพื่อนสารวัตรที่ร่วมตรวจ (1-5 คน)')
     .setMinValues(1)
     .setMaxValues(5);
 
-  const selectRow = new ActionRowBuilder().addComponents(partnerSelect);
+  const selectRow = new ActionRowBuilder().addComponents(userSelect);
 
-  return { embeds: [embed], components: [zoneRow, periodRow, selectRow], ephemeral: true };
+  const backRow = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId('btn_insp_back_step2')
+      .setLabel('⬅️ ย้อนกลับ')
+      .setStyle(ButtonStyle.Secondary)
+  );
+
+  return { embeds: [embed], components: [selectRow, backRow], ephemeral: true };
 }
 
 async function createInspectionTicket(interaction, { target, period, officers, partnerIds = [], member }) {
@@ -5556,7 +5606,7 @@ client.on('interactionCreate', async (interaction) => {
     }
 
     // -------------------------------------------------------------
-    // 5.0.1 ศูนย์บริการสารวัตร: ปุ่ม +ขออนุญาตออกตรวจ (One-Click Inspection Flow)
+    // 5.0.1 ศูนย์บริการสารวัตร: ปุ่ม +ขออนุญาตออกตรวจ (Step-by-Step Flow)
     // -------------------------------------------------------------
     if (interaction.isButton() && (interaction.customId === 'btn_service_request_inspection' || interaction.customId === 'btn_service_request_leave')) {
       const { data: member } = await supabase
@@ -5575,21 +5625,88 @@ client.on('interactionCreate', async (interaction) => {
       }
 
       const draft = getInspectionDraft(interaction.user.id);
-      const panel = buildInspectionPanel(member, draft, interaction.user);
+      draft.target = null;
+      draft.partnerIds = [];
+      draft.partnersText = 'ปฏิบัติหน้าที่คนเดียว';
+      draft.period = getDutyPeriodNow();
+      draft.updatedAt = Date.now();
+
+      const panel = buildStep1Panel(member, interaction.user);
       await interaction.reply(panel);
       return;
     }
 
-    // 5.0.1.1 ปุ่มเลือกโซนตรวจ 4 โซนหลัก (One-Click Quick Trigger)
-    if (interaction.isButton() && interaction.customId.startsWith('btn_insp_zone_')) {
-      const zoneMap = {
-        btn_insp_zone_buildings: 'โซนอาคารเรียน',
-        btn_insp_zone_canteen: 'โซนโรงอาหาร-สหกรณ์',
-        btn_insp_zone_stadium: 'โซนสนามกีฬา',
-        btn_insp_zone_blindspots: 'โซนลับตาคน/ห้องน้ำ'
-      };
-      const target = zoneMap[interaction.customId] || 'พื้นที่โรงเรียน';
+    // สเตป 1: เลือกสถานที่
+    if (interaction.isButton() && interaction.customId.startsWith('btn_insp_loc_')) {
+      if (interaction.customId === 'btn_insp_loc_custom') {
+        const modal = new ModalBuilder()
+          .setCustomId('modal_service_request_inspection')
+          .setTitle('📋 ระบุจุดตรวจที่ต้องการออกตรวจ'.slice(0, 45));
 
+        const targetInput = new TextInputBuilder()
+          .setCustomId('input_insp_target')
+          .setLabel('สถานที่ / จุดตรวจที่ต้องการออกตรวจ')
+          .setPlaceholder('เช่น หลังอาคาร 4, ลานกิจกรรม, ห้องโสต')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true);
+
+        modal.addComponents(new ActionRowBuilder().addComponents(targetInput));
+        await interaction.showModal(modal);
+        return;
+      }
+
+      const locMap = {
+        btn_insp_loc_canteen: 'โรงอาหาร',
+        btn_insp_loc_bldg3: 'หลังอาคาร 3',
+        btn_insp_loc_coop: 'สหกรณ์',
+        btn_insp_loc_toilet: 'บริเวณห้องน้ำ'
+      };
+      const chosenLoc = locMap[interaction.customId] || 'พื้นที่โรงเรียน';
+
+      const draft = getInspectionDraft(interaction.user.id);
+      draft.target = chosenLoc;
+      draft.updatedAt = Date.now();
+
+      const { data: member } = await supabase
+        .from('members')
+        .select('*')
+        .eq('discord_id', interaction.user.id)
+        .maybeSingle();
+
+      const panel = buildStep2Panel(member, draft, interaction.user);
+      await interaction.update({ embeds: panel.embeds, components: panel.components });
+      return;
+    }
+
+    // สเตป 1 ย้อนกลับมาจากสเตป 2
+    if (interaction.isButton() && interaction.customId === 'btn_insp_back_step1') {
+      const { data: member } = await supabase
+        .from('members')
+        .select('*')
+        .eq('discord_id', interaction.user.id)
+        .maybeSingle();
+
+      const panel = buildStep1Panel(member, interaction.user);
+      await interaction.update({ embeds: panel.embeds, components: panel.components });
+      return;
+    }
+
+    // สเตป 2 ย้อนกลับมาจากเลือกเพื่อน
+    if (interaction.isButton() && interaction.customId === 'btn_insp_back_step2') {
+      const { data: member } = await supabase
+        .from('members')
+        .select('*')
+        .eq('discord_id', interaction.user.id)
+        .maybeSingle();
+
+      const draft = getInspectionDraft(interaction.user.id);
+      const panel = buildStep2Panel(member, draft, interaction.user);
+      await interaction.update({ embeds: panel.embeds, components: panel.components });
+      return;
+    }
+
+    // สเตป 2: เลือก "ออกตรวจคนเดียว" -> สร้างห้องตรวจทันที!
+    if (interaction.isButton() && interaction.customId === 'btn_insp_partner_solo') {
       await interaction.deferUpdate();
 
       const { data: member } = await supabase
@@ -5600,10 +5717,10 @@ client.on('interactionCreate', async (interaction) => {
 
       const draft = getInspectionDraft(interaction.user.id);
       await createInspectionTicket(interaction, {
-        target,
-        period: draft.period,
-        officers: draft.partnersText,
-        partnerIds: draft.partnerIds,
+        target: draft.target || 'พื้นที่โรงเรียน',
+        period: draft.period || getDutyPeriodNow(),
+        officers: 'ปฏิบัติหน้าที่คนเดียว',
+        partnerIds: [],
         member
       });
 
@@ -5611,13 +5728,8 @@ client.on('interactionCreate', async (interaction) => {
       return;
     }
 
-    // 5.0.1.2 สลับช่วงเวลาตรวจ หรือตั้งค่าเป็นออกตรวจคนเดียว
-    if (interaction.isButton() && (
-      interaction.customId === 'btn_insp_time_morning' ||
-      interaction.customId === 'btn_insp_time_lunch' ||
-      interaction.customId === 'btn_insp_time_evening' ||
-      interaction.customId === 'btn_insp_solo'
-    )) {
+    // สเตป 2: เลือก "มีเพื่อนร่วมตรวจ" -> แสดง UserSelectMenu
+    if (interaction.isButton() && interaction.customId === 'btn_insp_partner_pick') {
       const { data: member } = await supabase
         .from('members')
         .select('*')
@@ -5625,22 +5737,15 @@ client.on('interactionCreate', async (interaction) => {
         .maybeSingle();
 
       const draft = getInspectionDraft(interaction.user.id);
-      if (interaction.customId === 'btn_insp_time_morning') draft.period = 'พักเช้า / ก่อนเข้าแถว';
-      if (interaction.customId === 'btn_insp_time_lunch') draft.period = 'พักกลางวัน';
-      if (interaction.customId === 'btn_insp_time_evening') draft.period = 'เลิกเรียน / เย็น';
-      if (interaction.customId === 'btn_insp_solo') {
-        draft.partnerIds = [];
-        draft.partnersText = 'ปฏิบัติหน้าที่คนเดียว';
-      }
-      draft.updatedAt = Date.now();
-
-      const panel = buildInspectionPanel(member, draft, interaction.user);
+      const panel = buildStep2WithFriendPanel(member, draft, interaction.user);
       await interaction.update({ embeds: panel.embeds, components: panel.components });
       return;
     }
 
-    // 5.0.1.3 เลือกเพื่อนร่วมตรวจจาก UserSelectMenu โดยตรง
-    if (interaction.isUserSelectMenu() && interaction.customId === 'select_insp_partners') {
+    // สเตป 2: เมื่อเลือกเพื่อนจาก UserSelectMenu -> สร้างห้องตรวจทันทีพร้อมดึงเพื่อนเข้าเธรด!
+    if (interaction.isUserSelectMenu() && interaction.customId === 'select_insp_friends') {
+      await interaction.deferUpdate();
+
       const { data: member } = await supabase
         .from('members')
         .select('*')
@@ -5648,57 +5753,38 @@ client.on('interactionCreate', async (interaction) => {
         .maybeSingle();
 
       const draft = getInspectionDraft(interaction.user.id);
-      const selectedIds = interaction.values || [];
-      draft.partnerIds = selectedIds;
-      draft.partnersText = selectedIds.length > 0
-        ? selectedIds.map(id => `<@${id}>`).join(', ')
+      const partnerIds = interaction.values || [];
+      const officersText = partnerIds.length > 0
+        ? partnerIds.map(id => `<@${id}>`).join(', ')
         : 'ปฏิบัติหน้าที่คนเดียว';
+
+      await createInspectionTicket(interaction, {
+        target: draft.target || 'พื้นที่โรงเรียน',
+        period: draft.period || getDutyPeriodNow(),
+        officers: officersText,
+        partnerIds,
+        member
+      });
+
+      inspectionDrafts.delete(interaction.user.id);
+      return;
+    }
+
+    // รับข้อมูลจาก Modal พิมพ์จุดตรวจเอง -> ข้ามไปสเตป 2 (เลือกเพื่อน)
+    if (interaction.isModalSubmit() && interaction.customId === 'modal_service_request_inspection') {
+      const target = interaction.fields.getTextInputValue('input_insp_target').trim();
+      const draft = getInspectionDraft(interaction.user.id);
+      draft.target = target;
       draft.updatedAt = Date.now();
 
-      const panel = buildInspectionPanel(member, draft, interaction.user);
-      await interaction.update({ embeds: panel.embeds, components: panel.components });
-      return;
-    }
-
-    // 5.0.1.4 ปุ่มพิมพ์ระบุจุดตรวจเอง (กรณีต้องการระบุห้อง/จุดเฉพาะ)
-    if (interaction.isButton() && interaction.customId === 'btn_insp_custom_modal') {
-      const modal = new ModalBuilder()
-        .setCustomId('modal_service_request_inspection')
-        .setTitle('📋 ระบุจุดตรวจที่ต้องการออกตรวจ'.slice(0, 45));
-
-      const targetInput = new TextInputBuilder()
-        .setCustomId('input_insp_target')
-        .setLabel('สถานที่ / จุดตรวจที่ต้องการออกตรวจ')
-        .setPlaceholder('เช่น หลังอาคาร 4, ลานกิจกรรม, ห้องโสต')
-        .setStyle(TextInputStyle.Short)
-        .setRequired(true);
-
-      modal.addComponents(new ActionRowBuilder().addComponents(targetInput));
-      await interaction.showModal(modal);
-      return;
-    }
-
-    // 5.0.1.5 รับข้อมูลจาก Modal พิมพ์เอง
-    if (interaction.isModalSubmit() && interaction.customId === 'modal_service_request_inspection') {
-      await interaction.deferReply({ ephemeral: true });
-
-      const target = interaction.fields.getTextInputValue('input_insp_target').trim();
       const { data: member } = await supabase
         .from('members')
         .select('*')
         .eq('discord_id', interaction.user.id)
         .maybeSingle();
 
-      const draft = getInspectionDraft(interaction.user.id);
-      await createInspectionTicket(interaction, {
-        target,
-        period: draft.period,
-        officers: draft.partnersText,
-        partnerIds: draft.partnerIds,
-        member
-      });
-
-      inspectionDrafts.delete(interaction.user.id);
+      const panel = buildStep2Panel(member, draft, interaction.user);
+      await interaction.reply({ ...panel, ephemeral: true });
       return;
     }
 
