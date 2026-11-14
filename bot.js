@@ -699,9 +699,9 @@ async function sendInspectorServicePanel(channel) {
       'ยินดีต้อนรับสู่ศูนย์บริการสารวัตรนักเรียน โรงเรียนพระนารายณ์\n' +
       'กรุณากดเลือกบริการที่ต้องการทำรายการด้านล่างนี้:\n\n' +
       '━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n' +
-      '📝 **+ ขออนุญาตตัว (Leave & Permit)**\n' +
-      'แจ้งขอลาเวรปฏิบัติหน้าที่, ขออนุญาตตัวติดภารกิจการเรียน, ติดสอบ หรือออกนอกพื้นที่\n' +
-      '*(ระบบจะบันทึกเข้าระบบและแจ้งเตือนไปยังหัวหน้าเวรและห้องปฏิบัติการเวรอัตโนมัติ)*\n\n' +
+      '🔍 **+ ขออนุญาตออกตรวจ (Patrol Ticket)**\n' +
+      'เปิดเคสขออนุญาตออกตรวจพื้นที่, ส่งรูปภาพหลักฐานยืนยันตัวตน และบันทึกรายงานผลตรวจ\n' +
+      '*(ระบบจะเปิดห้องเคส Ticket ย่อย พร้อมระบบสัญญาณอนุญาตอัตโนมัติ)*\n\n' +
       '📁 **+ ส่งหลักฐานคดี (Incident & Evidence)**\n' +
       'ส่งรายงานเหตุการณ์, บันทึกการตรวจพบสิ่งผิดระเบียบ หรือแนบภาพ/คลิป Bodycam หลักฐานคดี\n' +
       '*(ระบบจะออกรหัส CASE-XXXX และเปิดเธรดสำหรับอัปโหลดหลักฐานทันที)*\n' +
@@ -719,10 +719,10 @@ async function sendInspectorServicePanel(channel) {
 
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
-      .setCustomId('btn_service_request_leave')
-      .setLabel('+ขออนุญาตตัว')
+      .setCustomId('btn_service_request_inspection')
+      .setLabel('+ขออนุญาตออกตรวจ')
       .setStyle(ButtonStyle.Primary)
-      .setEmoji('📝'),
+      .setEmoji('🔍'),
     new ButtonBuilder()
       .setCustomId('btn_service_submit_evidence')
       .setLabel('+ส่งหลักฐานคดี')
@@ -2234,23 +2234,53 @@ client.once(Events.ClientReady || 'ready', async () => {
 // 📌 คำสั่งตั้งค่าปุ่มเริ่มต้นในห้องต่างๆ
 // ==========================================================
 client.on('messageCreate', async (message) => {
-  // ตรวจจับการส่งไฟล์คลิป Bodycam หรือภาพถ่ายหลักฐานพร้อมระบุรหัสคดี (เช่น CASE-1234 หรือส่งในเธรดคดี)
+  // ตรวจจับการส่งไฟล์คลิป Bodycam หรือภาพถ่ายหลักฐานพร้อมระบุรหัสคดี (เช่น CASE-1234 หรือ INSP-1234 ในเธรด)
   if (message.attachments.size > 0 && !message.author.bot) {
-    let match = message.content.match(/CASE-\d+/i);
+    let match = message.content.match(/(CASE|INSP)-\d+/i);
     if (!match && message.channel.isThread && message.channel.isThread() && message.channel.name) {
-      match = message.channel.name.match(/CASE-\d+/i);
+      match = message.channel.name.match(/(CASE|INSP)-\d+/i);
     }
     if (match) {
       const caseId = match[0].toUpperCase();
       const urls = message.attachments.map(att => att.url);
-      const { data: c } = await supabase.from('cases').select('evidence_urls, resolution_notes').eq('case_id', caseId).maybeSingle();
+      const { data: c } = await supabase.from('cases').select('*').eq('case_id', caseId).maybeSingle();
       if (c) {
         const merged = [...(c.evidence_urls || []), ...urls];
+        const isFirstPatrolPhoto = (c.status === 'PATROL_WAITING_PHOTO');
+        const newStatus = isFirstPatrolPhoto ? 'IN_PROGRESS' : c.status;
+
         await supabase.from('cases').update({
           evidence_urls: merged,
-          resolution_notes: (c.resolution_notes ? c.resolution_notes + '\n' : '') + `[แนบไฟล์ทาง Discord โดย ${message.author.username}]: ${urls.join(' , ')}`
+          status: newStatus,
+          resolution_notes: (c.resolution_notes ? c.resolution_notes + '\n' : '') + `[แนบไฟล์หลักฐานโดย ${message.author.username}]: ${urls.join(' , ')}`
         }).eq('case_id', caseId);
-        await message.reply({ content: `✅ บันทึกไฟล์หลักฐาน/คลิป Bodycam จำนวน ${urls.length} ไฟล์ เข้าคดี **${caseId}** สำเร็จแล้ว!` }).catch(() => {});
+
+        if (isFirstPatrolPhoto) {
+          // 🟢 ส่งสัญญาณอนุญาตออกตรวจ + ปุ่มทำการตรวจเสร็จสิ้น
+          const signalEmbed = new EmbedBuilder()
+            .setTitle('🟢 [สัญญาณอนุญาต] ได้รับภาพหลักฐานเรียบร้อยแล้ว!')
+            .setDescription(
+              `# ✅ อนุญาตให้ออกตรวจพื้นที่ได้ทันที!\n\n` +
+              `📍 **จุดตรวจ:** ${c.location}\n` +
+              `📸 **ภาพหลักฐาน:** ได้รับและบันทึกเข้าระบบแล้ว (${urls.length} รูป)\n\n` +
+              `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+              `เมื่อทำการตรวจเสร็จสิ้นแล้ว ให้กดปุ่ม **"🏁 ทำการตรวจเสร็จสิ้น"** ด้านล่างนี้เพื่อบันทึกสรุปผล`
+            )
+            .setColor('#2ECC71')
+            .setFooter({ text: `SARAWAT PATROL • ${caseId}` });
+
+          const finishRow = new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+              .setCustomId(`btn_finish_inspection_${caseId}`)
+              .setLabel('🏁 ทำการตรวจเสร็จสิ้น')
+              .setStyle(ButtonStyle.Success)
+              .setEmoji('🏁')
+          );
+
+          await message.channel.send({ embeds: [signalEmbed], components: [finishRow] });
+        } else {
+          await message.reply({ content: `✅ บันทึกไฟล์หลักฐาน/คลิป Bodycam จำนวน ${urls.length} ไฟล์ เข้าเคส **${caseId}** สำเร็จแล้ว!` }).catch(() => {});
+        }
       }
     }
   }
@@ -5248,9 +5278,9 @@ client.on('interactionCreate', async (interaction) => {
     }
 
     // -------------------------------------------------------------
-    // 5.0.1 ศูนย์บริการสารวัตร: ปุ่ม +ขออนุญาตตัว
+    // 5.0.1 ศูนย์บริการสารวัตร: ปุ่ม +ขออนุญาตออกตรวจ (Ticket Flow)
     // -------------------------------------------------------------
-    if (interaction.isButton() && interaction.customId === 'btn_service_request_leave') {
+    if (interaction.isButton() && (interaction.customId === 'btn_service_request_inspection' || interaction.customId === 'btn_service_request_leave')) {
       const { data: member } = await supabase
         .from('members')
         .select('*')
@@ -5267,103 +5297,315 @@ client.on('interactionCreate', async (interaction) => {
       }
 
       const modal = new ModalBuilder()
-        .setCustomId(`modal_service_permit_${member.id}`)
-        .setTitle(`ขออนุญาตตัว / ลาเวร [${member.duty_id || 'สารวัตร'}]`.slice(0, 45));
+        .setCustomId('modal_service_request_inspection')
+        .setTitle('📋 ขออนุญาตออกตรวจพื้นที่'.slice(0, 45));
 
-      const typeInput = new TextInputBuilder()
-        .setCustomId('input_permit_type')
-        .setLabel('ประเภทการขออนุญาต (ลาเวร/ลากิจ/ภารกิจ/สอบ)')
-        .setValue('ลากิจ')
+      const targetInput = new TextInputBuilder()
+        .setCustomId('input_insp_target')
+        .setLabel('สถานที่ / จุดตรวจที่ต้องการออกตรวจ')
+        .setPlaceholder('เช่น หลังอาคาร 3, บริเวณห้องน้ำ, สหกรณ์, โรงอาหาร')
         .setStyle(TextInputStyle.Short)
         .setRequired(true);
 
       const periodInput = new TextInputBuilder()
-        .setCustomId('input_permit_period')
-        .setLabel('ช่วงเวลา (เช้า / กลางวัน / เย็น / ทั้งวัน)')
-        .setValue('ทั้งวัน')
+        .setCustomId('input_insp_period')
+        .setLabel('ช่วงเวลาที่ออกตรวจ (เช้า/กลางวัน/เย็น/คาบว่าง)')
+        .setValue('พักกลางวัน')
         .setStyle(TextInputStyle.Short)
         .setRequired(true);
 
-      const reasonInput = new TextInputBuilder()
-        .setCustomId('input_permit_reason')
-        .setLabel('หมายเหตุ / เหตุผลความจำเป็น')
-        .setPlaceholder('เช่น มีไข้สูงไปพบแพทย์, ติดซ้อมกิจกรรมโรงเรียน, ช่วยงานครู')
-        .setStyle(TextInputStyle.Paragraph)
-        .setRequired(true);
-
-      const substituteInput = new TextInputBuilder()
-        .setCustomId('input_permit_substitute')
-        .setLabel('สารวัตรที่เข้าเวรแทน (ถ้ามี)')
-        .setPlaceholder('เช่น [TS2] กาย หรือระบุว่า ไม่มี')
+      const officersInput = new TextInputBuilder()
+        .setCustomId('input_insp_officers')
+        .setLabel('สารวัตรที่ร่วมออกตรวจ (ถ้ามี)')
+        .setPlaceholder('เช่น [TS2] กาย, [TS3] แบงก์ หรือระบุว่า ปฏิบัติหน้าที่คนเดียว')
         .setStyle(TextInputStyle.Short)
         .setRequired(false);
 
       modal.addComponents(
-        new ActionRowBuilder().addComponents(typeInput),
+        new ActionRowBuilder().addComponents(targetInput),
         new ActionRowBuilder().addComponents(periodInput),
-        new ActionRowBuilder().addComponents(reasonInput),
-        new ActionRowBuilder().addComponents(substituteInput)
+        new ActionRowBuilder().addComponents(officersInput)
       );
 
       await interaction.showModal(modal);
       return;
     }
 
-    if (interaction.isModalSubmit() && interaction.customId.startsWith('modal_service_permit_')) {
+    if (interaction.isModalSubmit() && interaction.customId === 'modal_service_request_inspection') {
       await interaction.deferReply({ ephemeral: true });
-      const memberId = interaction.customId.replace('modal_service_permit_', '');
 
-      const leaveType = interaction.fields.getTextInputValue('input_permit_type').trim();
-      const shiftPeriod = interaction.fields.getTextInputValue('input_permit_period').trim();
-      const reason = interaction.fields.getTextInputValue('input_permit_reason').trim();
-      const substitute = interaction.fields.fields.has('input_permit_substitute')
-        ? (interaction.fields.getTextInputValue('input_permit_substitute').trim() || '-')
-        : '-';
-      const todayStr = `วันนี้ (${new Date().toLocaleDateString('th-TH', { day: 'numeric', month: 'short' })})`;
+      const target = interaction.fields.getTextInputValue('input_insp_target').trim();
+      const period = interaction.fields.getTextInputValue('input_insp_period').trim();
+      const officers = interaction.fields.fields.has('input_insp_officers')
+        ? (interaction.fields.getTextInputValue('input_insp_officers').trim() || 'ปฏิบัติหน้าที่คนเดียว')
+        : 'ปฏิบัติหน้าที่คนเดียว';
 
-      const { data: member } = await supabase.from('members').select('*').eq('id', memberId).single();
+      const caseId = 'INSP-' + Math.floor(1000 + Math.random() * 9000);
 
-      if (!member) {
-        await interaction.editReply({ content: '⚠️ ไม่พบข้อมูลสมาชิกในระบบ' });
-        return;
+      const { data: member } = await supabase
+        .from('members')
+        .select('*')
+        .eq('discord_id', interaction.user.id)
+        .maybeSingle();
+
+      const officerName = member
+        ? `[${member.duty_id || 'สารวัตร'}] ${member.first_name} (${member.nickname})`
+        : (interaction.member?.displayName || interaction.user.username);
+
+      // บันทึกลง Supabase cases table
+      await supabase.from('cases').insert({
+        case_id: caseId,
+        reporter_email: member?.email || `${interaction.user.id}@discord.local`,
+        reporter_name: officerName,
+        incident_date_time: new Date().toISOString(),
+        location: target,
+        category: 'ขอออกตรวจพื้นที่',
+        description: `[ปฏิบัติการขอออกตรวจพื้นที่]\nจุดตรวจ: ${target}\nช่วงเวลา: ${period}\nผู้ร่วมตรวจ: ${officers}\nผู้ขอ: ${officerName} (<@${interaction.user.id}>)`,
+        status: 'PATROL_WAITING_PHOTO',
+        assigned_duty_day: member?.duty_day || null,
+        assigned_officer_id: member?.id || null,
+        resolution_notes: `[เริ่มเคสออกตรวจ]: จุดตรวจ ${target} (${period}) โดย ${officerName}`
+      });
+
+      const guild = interaction.guild;
+      const chIncident = findChannel(guild, '📁│ติดตามและปิดคดี') ||
+                         findChannel(guild, '🚨│แจ้งเหตุใหม่-google-form') ||
+                         findChannel(guild, 'แจ้งเหตุใหม่') ||
+                         findChannel(guild, '👑│ผู้นำ-all-in-one') ||
+                         interaction.channel;
+
+      const rootEmbed = new EmbedBuilder()
+        .setTitle(`🚨 [เคสขอออกตรวจ] ${target} (${caseId})`)
+        .setDescription(
+          `👮 **สารวัตรผู้ขอออกตรวจ:** ${officerName} (<@${interaction.user.id}>)\n` +
+          `📍 **จุดตรวจ:** **${target}**\n` +
+          `⏰ **ช่วงเวลา:** **${period}**\n` +
+          `👥 **ผู้ร่วมตรวจ:** ${officers}\n` +
+          `📊 **สถานะ:** 🟡 กำลังรอส่งภาพหลักฐานการเข้าพื้นที่\n\n` +
+          `*(ห้องเคสสำหรับส่งภาพและดำเนินภารกิจได้เปิดไว้ในเธรดด้านล่างแล้ว)*`
+        )
+        .setColor('#F39C12')
+        .setFooter({ text: `INSPECTION TICKET • ${caseId}` });
+
+      let thread = null;
+      if (chIncident && chIncident.isTextBased()) {
+        const rootMsg = await chIncident.send({ embeds: [rootEmbed] }).catch(() => null);
+        if (rootMsg) {
+          const safeTarget = target.replace(/[^\u0E00-\u0E7Fa-zA-Z0-9_-]/g, '').slice(0, 15);
+          thread = await rootMsg.startThread({
+            name: `🎫│ตรวจ-${safeTarget || 'พื้นที่'}-${caseId}`,
+            autoArchiveDuration: 1440
+          }).catch(() => null);
+
+          if (thread) {
+            await thread.members.add(interaction.user.id).catch(() => {});
+
+            // ส่งข้อความขนาดใหญ่ในห้อง Ticket เธรด
+            await thread.send({
+              content:
+                `# 🚨 ปฏิบัติการขอออกตรวจพื้นที่: ${target}\n` +
+                `### 🎫 รหัสเคส: \`${caseId}\`\n\n` +
+                `👮 **สารวัตรรับผิดชอบ:** <@${interaction.user.id}> (${officerName})\n` +
+                `📍 **จุดตรวจ:** **${target}**\n` +
+                `⏰ **ช่วงเวลา:** **${period}**\n` +
+                `👥 **ผู้ร่วมตรวจ:** ${officers}\n` +
+                `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                `# 📸 กรุณาส่งรูปภาพหลักฐานการเข้าพื้นที่\n` +
+                `> ให้สารวัตรถ่ายภาพจุดตรวจหรือภาพขณะเข้าพื้นที่ แล้วส่งรูปลงในเธรดนี้ได้เลยครับ\n` +
+                `> **เมื่อส่งภาพแล้ว บอทจะส่งสัญญาณอนุญาตให้เริ่มตรวจทันที!**\n` +
+                `━━━━━━━━━━━━━━━━━━━━━━━━━━━━`
+            }).catch(() => {});
+          }
+        }
       }
 
-      await supabase.from('leave_requests').insert({
-        member_id: member.id,
-        duty_day: member.duty_day,
-        leave_date: todayStr,
-        shift_period: shiftPeriod,
-        leave_type: leaveType,
-        reason: reason,
-        substitute_name: substitute,
-        status: 'NOTIFIED'
-      });
-
-      const targetGuild = interaction.guild || client.guilds.cache.first();
-      await broadcastConsolidatedShiftLeaveCard(targetGuild, member.duty_day, {
-        member_id: member.id,
-        nickname: member.nickname,
-        first_name: member.first_name,
-        last_name: member.last_name,
-        duty_id: member.duty_id,
-        grade_class: member.grade_class,
-        leave_type: leaveType,
-        shift_period: shiftPeriod,
-        reason: reason,
-        substitute: substitute
-      }, `👮 [${member.duty_id || 'สารวัตร'}] คุณ${member.nickname}`);
-
-      const baseDay = member.duty_day === 'S' ? 'S' : (member.duty_day === 'TSS' ? 'Ts' : (member.duty_day.replace(/S+$/, '') || member.duty_day));
       await interaction.editReply({
-        content: `# ✅ ส่งคำขออนุญาตตัวเรียบร้อยแล้ว\n` +
-                 `- **ผู้ขออนุญาต:** [${member.duty_id || 'สารวัตร'}] คุณ${member.nickname} (${member.first_name} ${member.last_name})\n` +
-                 `- **ผลัดเวร:** เวร${DAY_NAMES[baseDay] || member.duty_day} (${shiftPeriod})\n` +
-                 `- **ประเภท:** ${leaveType}\n` +
-                 `- **เหตุผล:** ${reason}\n` +
-                 `- **สารวัตรปฏิบัติหน้าที่แทน:** ${substitute}\n` +
-                 `━━━━━━━━━━━━━━━━━━━━\n` +
-                 `📋 ระบบได้ส่งการแจ้งเตือนไปยังหัวหน้าเวรและห้องประจำเวรเรียบร้อยแล้ว!`
+        content:
+          `# ✅ เปิดห้องเคสขอออกตรวจเรียบร้อยแล้ว!\n` +
+          `- **รหัสเคส:** \`${caseId}\`\n` +
+          `- **จุดตรวจ:** ${target} (${period})\n` +
+          `━━━━━━━━━━━━━━━━━━━━\n` +
+          (thread ? `👉 **กรุณาเข้าไปที่ห้องเคส:** <#${thread.id}>\n` : '') +
+          `เพื่อส่งภาพถ่ายหลักฐานการเข้าพื้นที่ และรอรับสัญญาณอนุญาตจากระบบครับ`
       });
+      return;
+    }
+
+    // -------------------------------------------------------------
+    // 5.0.1.1 ปุ่มทำการตรวจเสร็จสิ้น -> เปิด Modal กรอกสรุปผล
+    // -------------------------------------------------------------
+    if (interaction.isButton() && interaction.customId.startsWith('btn_finish_inspection_')) {
+      const caseId = interaction.customId.replace('btn_finish_inspection_', '');
+
+      const modal = new ModalBuilder()
+        .setCustomId(`modal_finish_insp_${caseId}`)
+        .setTitle(`🏁 บันทึกสรุปผลการออกตรวจ ${caseId}`.slice(0, 45));
+
+      const summaryInput = new TextInputBuilder()
+        .setCustomId('input_insp_summary')
+        .setLabel('ผลการตรวจ / สถานการณ์ที่พบ')
+        .setPlaceholder('ระบุพฤติการณ์ เช่น สถานการณ์ปกติ เรียบร้อยดี หรือตรวจพบสิ่งผิดระเบียบ...')
+        .setStyle(TextInputStyle.Paragraph)
+        .setRequired(true);
+
+      const notesInput = new TextInputBuilder()
+        .setCustomId('input_insp_notes')
+        .setLabel('หมายเหตุเพิ่มเติม / สิ่งที่ต้องติดตามต่อ')
+        .setPlaceholder('เช่น ตักเตือนแล้ว, ยึดของกลางส่งฝ่ายปกครอง, หรือระบุว่า ไม่มี')
+        .setStyle(TextInputStyle.Short)
+        .setRequired(false);
+
+      modal.addComponents(
+        new ActionRowBuilder().addComponents(summaryInput),
+        new ActionRowBuilder().addComponents(notesInput)
+      );
+
+      await interaction.showModal(modal);
+      return;
+    }
+
+    // -------------------------------------------------------------
+    // 5.0.1.2 เมื่อส่ง Modal สรุปผล -> ขึ้น Review Card พร้อม 3 ปุ่ม
+    // -------------------------------------------------------------
+    if (interaction.isModalSubmit() && interaction.customId.startsWith('modal_finish_insp_')) {
+      await interaction.deferReply();
+      const caseId = interaction.customId.replace('modal_finish_insp_', '');
+      const summary = interaction.fields.getTextInputValue('input_insp_summary').trim();
+      const notes = interaction.fields.fields.has('input_insp_notes')
+        ? (interaction.fields.getTextInputValue('input_insp_notes').trim() || '-')
+        : '-';
+
+      const { data: c } = await supabase.from('cases').select('*').eq('case_id', caseId).maybeSingle();
+      const photoCount = c?.evidence_urls?.length || 0;
+
+      // อัปเดตบันทึกร่างผลการตรวจ
+      await supabase.from('cases').update({
+        resolution_notes: `[สรุปผลการตรวจ]: ${summary}\n[หมายเหตุ]: ${notes}`
+      }).eq('case_id', caseId);
+
+      const reviewEmbed = new EmbedBuilder()
+        .setTitle(`📋 สรุปผลการออกตรวจ: ${caseId}`)
+        .setDescription(
+          `# 🔍 รายงานผลการปฏิบัติหน้าที่\n\n` +
+          `📍 **จุดตรวจ:** ${c?.location || '-'}\n` +
+          `📝 **ผลการตรวจ:**\n${summary}\n\n` +
+          `📌 **หมายเหตุเพิ่มเติม:**\n${notes}\n\n` +
+          `📸 **รูปภาพหลักฐานทั้งหมด:** ${photoCount} ภาพ\n` +
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+          `กรุณาตรวจสอบความถูกต้องด้านล่างนี้:\n` +
+          `• หากต้องการแนบรูปเพิ่ม กด **"📸 เพิ่มรูปหลักฐาน"**\n` +
+          `• หากต้องการแก้ไขข้อความ กด **"✏️ แก้ไขข้อมูล"**\n` +
+          `• หากข้อมูลถูกต้องครบถ้วนแล้ว กด **"✅ ยืนยันปิดเคส"**`
+        )
+        .setColor('#3498DB')
+        .setFooter({ text: `PATROL REVIEW • ${caseId}` });
+
+      const reviewRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`btn_confirm_close_insp_${caseId}`)
+          .setLabel('✅ ยืนยันปิดเคส')
+          .setStyle(ButtonStyle.Success),
+        new ButtonBuilder()
+          .setCustomId(`btn_add_evidence_insp_${caseId}`)
+          .setLabel('📸 เพิ่มรูปหลักฐาน')
+          .setStyle(ButtonStyle.Primary),
+        new ButtonBuilder()
+          .setCustomId(`btn_edit_summary_insp_${caseId}`)
+          .setLabel('✏️ แก้ไขข้อมูล')
+          .setStyle(ButtonStyle.Secondary)
+      );
+
+      await interaction.editReply({ embeds: [reviewEmbed], components: [reviewRow] });
+      return;
+    }
+
+    // -------------------------------------------------------------
+    // 5.0.1.3 การจัดการ 3 ปุ่ม: เพิ่มรูป / แก้ไข / ยืนยันปิดเคส
+    // -------------------------------------------------------------
+    if (interaction.isButton() && interaction.customId.startsWith('btn_add_evidence_insp_')) {
+      const caseId = interaction.customId.replace('btn_add_evidence_insp_', '');
+      await interaction.reply({
+        content: `📸 **สารวัตรสามารถส่งไฟล์ภาพถ่ายหรือคลิปวิดีโอลงในเธรดนี้ได้เลยครับ!**\nระบบจะตรวจจับไฟล์แนบและบันทึกเข้าเคส \`${caseId}\` ให้อัตโนมัติทันที`,
+        ephemeral: true
+      });
+      return;
+    }
+
+    if (interaction.isButton() && interaction.customId.startsWith('btn_edit_summary_insp_')) {
+      const caseId = interaction.customId.replace('btn_edit_summary_insp_', '');
+
+      const modal = new ModalBuilder()
+        .setCustomId(`modal_finish_insp_${caseId}`)
+        .setTitle(`✏️ แก้ไขข้อมูลสรุปผล ${caseId}`.slice(0, 45));
+
+      const summaryInput = new TextInputBuilder()
+        .setCustomId('input_insp_summary')
+        .setLabel('ผลการตรวจ / สถานการณ์ที่พบ')
+        .setPlaceholder('ระบุพฤติการณ์ เช่น สถานการณ์ปกติ เรียบร้อยดี หรือตรวจพบสิ่งผิดระเบียบ...')
+        .setStyle(TextInputStyle.Paragraph)
+        .setRequired(true);
+
+      const notesInput = new TextInputBuilder()
+        .setCustomId('input_insp_notes')
+        .setLabel('หมายเหตุเพิ่มเติม / สิ่งที่ต้องติดตามต่อ')
+        .setPlaceholder('เช่น ตักเตือนแล้ว, ยึดของกลางส่งฝ่ายปกครอง, หรือระบุว่า ไม่มี')
+        .setStyle(TextInputStyle.Short)
+        .setRequired(false);
+
+      modal.addComponents(
+        new ActionRowBuilder().addComponents(summaryInput),
+        new ActionRowBuilder().addComponents(notesInput)
+      );
+
+      await interaction.showModal(modal);
+      return;
+    }
+
+    if (interaction.isButton() && interaction.customId.startsWith('btn_confirm_close_insp_')) {
+      await interaction.deferUpdate();
+      const caseId = interaction.customId.replace('btn_confirm_close_insp_', '');
+
+      const { data: c } = await supabase.from('cases').select('*').eq('case_id', caseId).maybeSingle();
+
+      await supabase.from('cases').update({
+        status: 'RESOLVED',
+        resolution_notes: (c?.resolution_notes || '') + `\n[ปิดเคสโดย <@${interaction.user.id}> เมื่อ ${new Date().toLocaleString('th-TH')}]`
+      }).eq('case_id', caseId);
+
+      // แก้ไขข้อความในห้องแม่ (Parent Channel)
+      if (interaction.channel.isThread && interaction.channel.isThread() && interaction.channel.parent) {
+        try {
+          const starterMsg = await interaction.channel.fetchStarterMessage().catch(() => null);
+          if (starterMsg && starterMsg.embeds.length > 0) {
+            const oldEmbed = starterMsg.embeds[0];
+            const updatedEmbed = EmbedBuilder.from(oldEmbed)
+              .setColor('#2ECC71')
+              .setDescription(
+                (oldEmbed.description || '').replace(
+                  /📊 \*\*สถานะ:\*\* .*/g,
+                  `📊 **สถานะ:** ✅ ภารกิจเสร็จสิ้นเรียบร้อยแล้ว`
+                ) + `\n\n🏁 **ผลการตรวจ:** ${c?.resolution_notes || 'เสร็จสมบูรณ์'}`
+              );
+            await starterMsg.edit({ embeds: [updatedEmbed] }).catch(() => {});
+          }
+        } catch (e) {}
+      }
+
+      // ส่งข้อความปิดเคสในเธรด
+      await interaction.message.edit({
+        content:
+          `# 🏁 ปฏิบัติการออกตรวจเคส [${caseId}] เสร็จสิ้นสมบูรณ์!\n` +
+          `✅ บันทึกรายงานผลและภาพถ่ายหลักฐานเข้าสู่ฐานข้อมูลเรียบร้อยแล้ว\n` +
+          `ขอบคุณสารวัตรทุกนายสำหรับการปฏิบัติหน้าที่อย่างเข้มแข็ง\n` +
+          `*(ระบบจะทำการล็อกและจัดเก็บเธรดนี้โดยอัตโนมัติ)*`,
+        embeds: [],
+        components: []
+      }).catch(() => {});
+
+      if (interaction.channel.isThread && interaction.channel.isThread()) {
+        await interaction.channel.setLocked(true).catch(() => {});
+        await interaction.channel.setArchived(true).catch(() => {});
+      }
       return;
     }
 

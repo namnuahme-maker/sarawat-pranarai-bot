@@ -278,9 +278,9 @@ client.once(Events.ClientReady || 'ready', async () => {
           'ยินดีต้อนรับสู่ศูนย์บริการสารวัตรนักเรียน โรงเรียนพระนารายณ์\n' +
           'กรุณากดเลือกบริการที่ต้องการทำรายการด้านล่างนี้:\n\n' +
           '━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n' +
-          '📝 **+ ขออนุญาตตัว (Leave & Permit)**\n' +
-          'แจ้งขอลาเวรปฏิบัติหน้าที่, ขออนุญาตตัวติดภารกิจการเรียน, ติดสอบ หรือออกนอกพื้นที่\n' +
-          '*(ระบบจะบันทึกเข้าระบบและแจ้งเตือนไปยังหัวหน้าเวรและห้องปฏิบัติการเวรอัตโนมัติ)*\n\n' +
+          '🔍 **+ ขออนุญาตออกตรวจ (Patrol Ticket)**\n' +
+          'เปิดเคสขออนุญาตออกตรวจพื้นที่, ส่งรูปภาพหลักฐานยืนยันตัวตน และบันทึกรายงานผลตรวจ\n' +
+          '*(ระบบจะเปิดห้องเคส Ticket ย่อย พร้อมระบบสัญญาณอนุญาตอัตโนมัติ)*\n\n' +
           '📁 **+ ส่งหลักฐานคดี (Incident & Evidence)**\n' +
           'ส่งรายงานเหตุการณ์, บันทึกการตรวจพบสิ่งผิดระเบียบ หรือแนบภาพ/คลิป Bodycam หลักฐานคดี\n' +
           '*(ระบบจะออกรหัส CASE-XXXX และเปิดเธรดสำหรับอัปโหลดหลักฐานทันที)*\n' +
@@ -298,10 +298,10 @@ client.once(Events.ClientReady || 'ready', async () => {
 
       const deskRow = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
-          .setCustomId('btn_service_request_leave')
-          .setLabel('+ขออนุญาตตัว')
+          .setCustomId('btn_service_request_inspection')
+          .setLabel('+ขออนุญาตออกตรวจ')
           .setStyle(ButtonStyle.Primary)
-          .setEmoji('📝'),
+          .setEmoji('🔍'),
         new ButtonBuilder()
           .setCustomId('btn_service_submit_evidence')
           .setLabel('+ส่งหลักฐานคดี')
