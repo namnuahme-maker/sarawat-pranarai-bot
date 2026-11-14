@@ -2262,11 +2262,12 @@ client.on('messageCreate', async (message) => {
             requestingMember = m;
           }
           if (!requestingMember) {
-            const { data: m } = await supabase.from('members').select('*').eq('discord_id', message.author.id).maybeSingle();
+            const { data: m } = await supabase.from('members').select('*').eq('discord_id', message.author.id).order('updated_at', { ascending: false }).limit(1).maybeSingle();
             requestingMember = m;
           }
 
-          const profilePhoto = requestingMember?.photo_url || requestingMember?.profile_photo_url || message.author.displayAvatarURL({ dynamic: true, size: 256 });
+          // 🌟 ใช้รูปโปรไฟล์ที่ผู้ใช้งานส่งในช่องส่งรูปทำบัตรเป็นหลัก (profile_image_url)
+          const profilePhoto = requestingMember?.profile_image_url || requestingMember?.photo_url || requestingMember?.profile_photo_url || message.author.displayAvatarURL({ dynamic: true, size: 512 });
           const officerDisplay = requestingMember
             ? `[${requestingMember.duty_id || 'สารวัตร'}] คุณ${requestingMember.nickname} (${requestingMember.first_name} ${requestingMember.last_name || ''})`
             : message.author.username;
@@ -2279,6 +2280,8 @@ client.on('messageCreate', async (message) => {
           // สร้างการ์ดขออนุมัติออกตรวจ
           const approvalEmbed = new EmbedBuilder()
             .setTitle(`🛡️ [คำขออนุมัติออกตรวจ] รหัสเคส: ${caseId}`)
+            .setAuthor({ name: `สารวัตรผู้ขออนุมัติ: ${officerDisplay}`, iconURL: profilePhoto })
+            .setThumbnail(profilePhoto)
             .setDescription(
               `### 📋 รายละเอียดการขอออกตรวจพื้นที่\n\n` +
               `👮 **สารวัตรผู้ขออนุมัติ:** ${officerDisplay} (<@${message.author.id}>)\n` +
@@ -5515,13 +5518,27 @@ client.on('interactionCreate', async (interaction) => {
         const { data: m } = await supabase.from('members').select('*').eq('id', c.assigned_officer_id).maybeSingle();
         requestingMember = m;
       }
+      if (!requestingMember && c.reporter_discord_id) {
+        const { data: m } = await supabase.from('members').select('*').eq('discord_id', c.reporter_discord_id).order('updated_at', { ascending: false }).limit(1).maybeSingle();
+        requestingMember = m;
+      }
       const officerDisplay = requestingMember
         ? `[${requestingMember.duty_id || 'สารวัตร'}] คุณ${requestingMember.nickname} (${requestingMember.first_name} ${requestingMember.last_name || ''})`
         : (c.reporter_name || 'สารวัตรเวร');
-      const officerPhoto = requestingMember?.photo_url || requestingMember?.profile_photo_url;
+      // 🌟 ใช้รูปโปรไฟล์ที่สารวัตรส่งในช่องส่งรูปเป็นหลัก
+      const officerPhoto = requestingMember?.profile_image_url || requestingMember?.photo_url || requestingMember?.profile_photo_url || null;
 
-      const approverName = interaction.member?.displayName || interaction.user.username;
-      const approverAvatar = interaction.user.displayAvatarURL({ dynamic: true, size: 256 });
+      // 🌟 ดึงข้อมูลและรูปโปรไฟล์ที่หัวหน้าผู้อนุมัติเคยส่งในช่องส่งรูป
+      let approverMember = null;
+      try {
+        const { data: am } = await supabase.from('members').select('*').eq('discord_id', interaction.user.id).order('updated_at', { ascending: false }).limit(1).maybeSingle();
+        approverMember = am;
+      } catch (e) {}
+
+      const approverName = approverMember
+        ? `[${approverMember.duty_id || 'หัวหน้า'}] คุณ${approverMember.nickname} (${approverMember.first_name} ${approverMember.last_name || ''})`
+        : (interaction.member?.displayName || interaction.user.username);
+      const approverPhoto = approverMember?.profile_image_url || approverMember?.photo_url || approverMember?.profile_photo_url || interaction.user.displayAvatarURL({ dynamic: true, size: 512 });
 
       // อัปเดตสถานะใน Supabase
       await supabase.from('cases').update({
@@ -5532,6 +5549,8 @@ client.on('interactionCreate', async (interaction) => {
       // สร้าง Approved Embed
       const approvedEmbed = new EmbedBuilder()
         .setTitle('✅ [อนุมัติการออกตรวจเรียบร้อยแล้ว]')
+        .setAuthor({ name: `ผู้อนุมัติ: ${approverName}`, iconURL: approverPhoto })
+        .setThumbnail(approverPhoto)
         .setDescription(
           `# 🟢 อนุญาตให้สารวัตรออกตรวจพื้นที่ได้ทันที!\n\n` +
           `👮 **สารวัตรผู้ปฏิบัติหน้าที่:** ${officerDisplay}\n` +
@@ -5542,8 +5561,7 @@ client.on('interactionCreate', async (interaction) => {
           `เมื่อทำการตรวจพื้นที่เสร็จสิ้น ให้กดปุ่ม **"🏁 ทำการตรวจเสร็จสิ้น"** ด้านล่างนี้เพื่อบันทึกสรุปผลและส่งคลิป Bodycam`
         )
         .setColor('#2ECC71')
-        .setThumbnail(officerPhoto || approverAvatar)
-        .setFooter({ text: `SARAWAT PATROL APPROVED • ${caseId} • อนุมัติโดย ${approverName}` })
+        .setFooter({ text: `SARAWAT PATROL APPROVED • ${caseId} • อนุมัติโดย ${approverName}`, iconURL: officerPhoto || approverPhoto })
         .setTimestamp();
 
       const finishRow = new ActionRowBuilder().addComponents(
@@ -5694,6 +5712,21 @@ client.on('interactionCreate', async (interaction) => {
       const { data: c } = await supabase.from('cases').select('*').eq('case_id', caseId).maybeSingle();
       const photoCount = c?.evidence_urls?.length || 0;
 
+      // 🌟 ดึงข้อมูลและรูปโปรไฟล์ที่ส่งในช่องส่งรูปของสารวัตรผู้รายงาน
+      let officerMember = null;
+      if (c?.assigned_officer_id) {
+        const { data: m } = await supabase.from('members').select('*').eq('id', c.assigned_officer_id).maybeSingle();
+        officerMember = m;
+      }
+      if (!officerMember) {
+        const { data: m } = await supabase.from('members').select('*').eq('discord_id', interaction.user.id).order('updated_at', { ascending: false }).limit(1).maybeSingle();
+        officerMember = m;
+      }
+      const officerPhoto = officerMember?.profile_image_url || officerMember?.photo_url || officerMember?.profile_photo_url || interaction.user.displayAvatarURL({ dynamic: true, size: 512 });
+      const officerDisplay = officerMember
+        ? `[${officerMember.duty_id || 'สารวัตร'}] คุณ${officerMember.nickname} (${officerMember.first_name} ${officerMember.last_name || ''})`
+        : interaction.user.username;
+
       // อัปเดตบันทึกร่างผลการตรวจ
       await supabase.from('cases').update({
         resolution_notes: `[สรุปผลการตรวจ]: ${summary}\n[หมายเหตุ]: ${notes}`
@@ -5704,6 +5737,8 @@ client.on('interactionCreate', async (interaction) => {
 
       const reviewEmbed = new EmbedBuilder()
         .setTitle(`📋 สรุปผลการออกตรวจ: ${caseId}`)
+        .setAuthor({ name: `สารวัตรผู้รายงาน: ${officerDisplay}`, iconURL: officerPhoto })
+        .setThumbnail(officerPhoto)
         .setDescription(
           `# 🔍 รายงานผลการปฏิบัติหน้าที่\n\n` +
           `📍 **จุดตรวจ:** **${c?.location || '-'}**\n` +
