@@ -2184,6 +2184,7 @@ client.once(Events.ClientReady || 'ready', async () => {
       await getOrCreatePhotoVaultChannel(targetGuild);
       console.log(`[STARTUP] 🧹 กำลังเคลียร์ข้อความเก่าและรีเฟรชแผงปุ่มฟีเจอร์อัตโนมัติใน: ${targetGuild.name}`);
       await refreshAllChannelsAndPanels(targetGuild, { purge: true });
+      await purgeResolvedNotificationMessages(targetGuild);
     }
   } catch (err) {
     console.warn('[STARTUP] Auto-refresh channels notice:', err.message);
@@ -2314,19 +2315,27 @@ client.on('messageCreate', async (message) => {
           );
 
           // 1. ส่งการ์ดขออนุมัติลงในห้องเคสเธรด
-          await message.channel.send({ embeds: [approvalEmbed], components: [approvalRow] });
+          const threadApprovalMsg = await message.channel.send({ embeds: [approvalEmbed], components: [approvalRow] }).catch(() => null);
 
           // 2. ส่งการ์ดแจ้งเตือนเข้าห้องประชุมหัวหน้า
           const chLeader = findChannel(message.guild, '👑│ห้องประชุมหัวหน้า') ||
                            findChannel(message.guild, 'ห้องประชุมหัวหน้า') ||
                            findChannel(message.guild, '👑│ผู้นำ-all-in-one');
+          let leaderApprovalMsg = null;
           if (chLeader && chLeader.isTextBased()) {
-            await chLeader.send({
+            leaderApprovalMsg = await chLeader.send({
               content: `🚨 **แจ้งเตือนหัวหน้าทุกคน:** มีคำขออนุญาตออกตรวจพื้นที่ใหม่จาก <@${message.author.id}> (${officerDisplay})\n👉 โปรดตรวจสอบภาพหลักฐานและกดอนุมัติที่การ์ดด้านล่าง หรือในเธรด <#${message.channel.id}>`,
               embeds: [approvalEmbed],
               components: [approvalRow]
-            }).catch(() => {});
+            }).catch(() => null);
           }
+
+          pendingApprovalMessages.set(caseId, {
+            threadChannelId: message.channel.id,
+            threadMsgId: threadApprovalMsg?.id,
+            leaderChannelId: chLeader?.id,
+            leaderMsgId: leaderApprovalMsg?.id
+          });
         } else {
           await message.reply({ content: `✅ บันทึกไฟล์หลักฐาน/คลิป Bodycam จำนวน ${urls.length} ไฟล์ เข้าเคส **${caseId}** สำเร็จแล้ว!` }).catch(() => {});
         }
@@ -3215,6 +3224,116 @@ function buildStep2WithFriendPanel(member, draft, user) {
   );
 
   return { embeds: [embed], components: [selectRow, backRow], ephemeral: true };
+}
+
+const pendingApprovalMessages = new Map();
+
+async function cleanUpPendingNotificationMessages(guild, caseId, currentInteraction = null) {
+  if (!guild || !caseId) return;
+
+  // 1. ลบจาก Cache ทันทีหากมีข้อมูล
+  const cached = pendingApprovalMessages.get(caseId);
+  if (cached) {
+    if (cached.leaderChannelId && cached.leaderMsgId) {
+      const ch = guild.channels.cache.get(cached.leaderChannelId);
+      if (ch && ch.isTextBased()) {
+        await ch.messages.delete(cached.leaderMsgId).catch(() => {});
+      }
+    }
+    if (cached.threadChannelId && cached.threadMsgId) {
+      const ch = guild.channels.cache.get(cached.threadChannelId);
+      if (ch && ch.isTextBased()) {
+        await ch.messages.delete(cached.threadMsgId).catch(() => {});
+      }
+    }
+    pendingApprovalMessages.delete(caseId);
+  }
+
+  // 2. หากการกดอนุมัติ/ปฏิเสธเกิดขึ้นที่ข้อความนั้น ให้ลบข้อความต้นทางทิ้ง
+  if (currentInteraction && currentInteraction.message && currentInteraction.message.deletable) {
+    await currentInteraction.message.delete().catch(() => {});
+  }
+
+  // 3. กวาดล้างข้อความแจ้งเตือนที่ยังค้างอยู่ในห้องประชุมหัวหน้าและห้องผู้นำ (Failsafe Guarantee)
+  const leaderChannels = [
+    findChannel(guild, '👑│ห้องประชุมหัวหน้า'),
+    findChannel(guild, 'ห้องประชุมหัวหน้า'),
+    findChannel(guild, '👑│ผู้นำ-all-in-one'),
+    findChannel(guild, '📁│ติดตามและปิดคดี')
+  ].filter(Boolean);
+
+  for (const ch of leaderChannels) {
+    if (!ch || !ch.isTextBased()) continue;
+    try {
+      const fetched = await ch.messages.fetch({ limit: 40 }).catch(() => null);
+      if (!fetched) continue;
+
+      for (const msg of fetched.values()) {
+        const matchesCase =
+          (msg.content && msg.content.includes(caseId)) ||
+          (msg.embeds && msg.embeds.some(e =>
+            (e.title && e.title.includes(caseId)) ||
+            (e.footer?.text && e.footer.text.includes(caseId)) ||
+            (e.description && e.description.includes(caseId))
+          )) ||
+          (msg.components && msg.components.some(row =>
+            row.components.some(c => c.customId && c.customId.includes(caseId))
+          ));
+
+        if (matchesCase) {
+          const isPending = msg.components?.some(row =>
+            row.components.some(c =>
+              c.customId?.includes('btn_approve_') ||
+              c.customId?.includes('btn_reject_')
+            )
+          ) || (msg.content && msg.content.includes('แจ้งเตือนหัวหน้า'));
+
+          if (isPending && msg.deletable) {
+            await msg.delete().catch(() => {});
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[CLEANUP NOTIFICATION NOTICE]:', e?.message);
+    }
+  }
+}
+
+async function purgeResolvedNotificationMessages(guild) {
+  if (!guild) return;
+  const leaderChannels = [
+    findChannel(guild, '👑│ห้องประชุมหัวหน้า'),
+    findChannel(guild, 'ห้องประชุมหัวหน้า'),
+    findChannel(guild, '👑│ผู้นำ-all-in-one')
+  ].filter(Boolean);
+
+  for (const ch of leaderChannels) {
+    if (!ch || !ch.isTextBased()) continue;
+    try {
+      const fetched = await ch.messages.fetch({ limit: 50 }).catch(() => null);
+      if (!fetched) continue;
+
+      for (const msg of fetched.values()) {
+        const fullText = (msg.content || '') + ' ' + (msg.embeds?.[0]?.title || '') + ' ' + (msg.embeds?.[0]?.footer?.text || '') + ' ' + (msg.embeds?.[0]?.description || '');
+        const match = fullText.match(/(INSP-\d+|CASE-\d+)/);
+        if (match) {
+          const cId = match[1];
+          const { data: c } = await supabase.from('cases').select('status').eq('case_id', cId).maybeSingle();
+          if (c && (c.status === 'IN_PROGRESS' || c.status === 'RESOLVED' || c.status === 'REJECTED' || c.status === 'APPROVED')) {
+            const hasButtons = msg.components?.some(row =>
+              row.components.some(c => c.customId?.includes('btn_approve_') || c.customId?.includes('btn_reject_'))
+            );
+            if (hasButtons || msg.content?.includes('แจ้งเตือนหัวหน้า')) {
+              await msg.delete().catch(() => {});
+              console.log(`[PURGE LINGERING] Automatically deleted resolved notification for ${cId} from ${ch.name}`);
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[PURGE LINGERING NOTICE]:', e?.message);
+    }
+  }
 }
 
 async function createInspectionTicket(interaction, { target, period, officers, partnerIds = [], member }) {
@@ -5891,11 +6010,8 @@ client.on('interactionCreate', async (interaction) => {
         await targetThread.send({ embeds: [approvedEmbed], components: [finishRow] });
       }
 
-      // ปิดปุ่มในการ์ดต้นทางเพื่อไม่ให้กดซ้ำ
-      await interaction.message.edit({
-        content: `✅ **เคสนี้ได้รับการอนุมัติเรียบร้อยแล้วโดย <@${interaction.user.id}> (${approverName})**`,
-        components: []
-      }).catch(() => {});
+      // ลบข้อความแจ้งเตือนที่ค้างอยู่ในห้องประชุมหัวหน้าและห้องอื่นๆ ทันที
+      await cleanUpPendingNotificationMessages(guild, caseId, interaction);
       return;
     }
 
@@ -5967,10 +6083,8 @@ client.on('interactionCreate', async (interaction) => {
         await targetThread.setArchived(true).catch(() => {});
       }
 
-      await interaction.message.edit({
-        content: `❌ **เคสนี้ถูกไม่อนุมัติโดย <@${interaction.user.id}> (เหตุผล: ${reason})**`,
-        components: []
-      }).catch(() => {});
+      // ลบข้อความแจ้งเตือนที่ค้างอยู่ในห้องประชุมหัวหน้าและห้องอื่นๆ ทันที
+      await cleanUpPendingNotificationMessages(guild, caseId, interaction);
       return;
     }
 
@@ -6179,6 +6293,7 @@ client.on('interactionCreate', async (interaction) => {
         await interaction.channel.setLocked(true).catch(() => {});
         await interaction.channel.setArchived(true).catch(() => {});
       }
+      await cleanUpPendingNotificationMessages(interaction.guild, caseId, interaction);
       return;
     }
 
@@ -6671,6 +6786,9 @@ client.on('interactionCreate', async (interaction) => {
         resolution_notes: `[อนุมัติโดย: ${approverName}]\nหมายเหตุ/คำสั่ง: ${note}`
       }).eq('case_id', caseId);
 
+      // กวาดล้างข้อความแจ้งเตือนที่ค้างอยู่ในห้องประชุมหัวหน้าและห้องอื่นๆ ทันที
+      await cleanUpPendingNotificationMessages(interaction.guild, caseId, interaction);
+
       // อัปเดตข้อความในห้องแจ้งเหตุใหม่ / ผู้นำ
       if (interaction.message && interaction.message.embeds.length > 0) {
         const oldEmbed = interaction.message.embeds[0];
@@ -6761,6 +6879,9 @@ client.on('interactionCreate', async (interaction) => {
         status: 'REJECTED',
         resolution_notes: `[ไม่อนุมัติโดย: ${approverName}]\nเหตุผล: ${reason}`
       }).eq('case_id', caseId);
+
+      // กวาดล้างข้อความแจ้งเตือนที่ค้างอยู่ในห้องประชุมหัวหน้าและห้องอื่นๆ ทันที
+      await cleanUpPendingNotificationMessages(interaction.guild, caseId, interaction);
 
       if (interaction.message && interaction.message.embeds.length > 0) {
         const oldEmbed = interaction.message.embeds[0];
