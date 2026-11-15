@@ -2676,20 +2676,50 @@ client.once(Events.ClientReady || 'ready', async () => {
         // หากตรวจพบว่าผู้ใช้ครอปรูปแล้ว (photo_cropped_at เกิดขึ้นหลังการอัปโหลด)
         if (m.photo_cropped_at && new Date(m.photo_cropped_at).getTime() >= (pending.timestamp - 5000)) {
           pendingPhotoConfirmations.delete(m.id);
+
+          // 📲 อัปเดตการ์ดยืนยันข้อมูลในห้องแชทเดิมโดยตรง เพื่อให้ผู้ใช้กดยืนยันในช่องได้ทันที
           if (pending.channelId && pending.promptMsgId) {
             try {
               const ch = await client.channels.fetch(pending.channelId).catch(() => null);
               if (ch) {
                 const msg = await ch.messages.fetch(pending.promptMsgId).catch(() => null);
-                if (msg && msg.deletable) {
-                  // 🔒 ลบการ์ดในห้องแชทสาธารณะทิ้งทันที เพื่อความเป็นส่วนตัวสูงสุด ไม่ให้สมาชิกคนอื่นมองเห็น
-                  await msg.delete().catch(() => {});
+                if (msg) {
+                  if (m.status === 'ACTIVE' || pending.isServiceUpdate) {
+                    await msg.edit({
+                      content: `✨ <@${pending.userId}> อัปเดตรูปถ่ายทำบัตรประจำตัว 3D สำเร็จเรียบร้อยแล้ว!`,
+                      embeds: [{
+                        title: '✨ อัปเดตรูปถ่ายทำบัตรประจำตัว 3D สำเร็จเรียบร้อยแล้ว!',
+                        description:
+                          `คุณ **${m.first_name} ${m.last_name} (${m.nickname || '-'})** ได้ตัดแต่งรูปถ่ายขนาด 1 นิ้ว (3:4) เรียบร้อยแล้ว!\n\n` +
+                          `✅ บัตรประจำตัวสารวัตรดิจิทัล 3D ของคุณได้รับการอัปเดตรูปใหม่ทันที พร้อมสำรองเข้า Google Drive เรียบร้อยแล้ว`,
+                        image: { url: m.profile_image_url },
+                        color: 0x2ECC71,
+                        footer: { text: 'ระบบบริการสารวัตร • โรงเรียนพระนารายณ์' }
+                      }],
+                      components: [{
+                        type: 1,
+                        components: [{
+                          type: 2,
+                          style: 5,
+                          label: '🪪 เปิดดูบัตรประจำตัว 3D',
+                          url: `${getBaseUrl()}/card?id=${m.id}`
+                        }]
+                      }]
+                    }).catch(() => {});
+                  } else {
+                    const { embed, row } = buildPrivateReviewCard(m);
+                    await msg.edit({
+                      content: `🔒 <@${pending.userId}> ตัดแต่งรูปถ่ายขนาด 1 นิ้วเรียบร้อยแล้ว! โปรดตรวจสอบข้อมูลและกดยืนยันในช่องนี้ได้เลยครับ:`,
+                      embeds: [embed],
+                      components: [row]
+                    }).catch(() => {});
+                  }
                 }
               }
             } catch (err) {}
           }
 
-          // 📩 ส่งข้อความและการ์ดตรวจสอบส่วนตัวเข้าแชท Direct Message (DM) ของผู้สมัครโดยตรง
+          // 📩 ส่งข้อความแจ้งเตือนสั้นๆ เข้า Direct Message (DM) ของผู้สมัคร เพื่อแจ้งเตือนให้กลับมากดยืนยันในช่อง
           if (pending.userId) {
             try {
               const targetUser = await client.users.fetch(pending.userId).catch(() => null);
@@ -2700,10 +2730,10 @@ client.once(Events.ClientReady || 'ready', async () => {
                       title: '✨ อัปเดตรูปถ่ายทำบัตรประจำตัว 3D สำเร็จเรียบร้อยแล้ว!',
                       description:
                         `คุณ **${m.first_name} ${m.last_name} (${m.nickname || '-'})** ได้ตัดแต่งรูปถ่ายขนาด 1 นิ้ว (3:4) เรียบร้อยแล้ว!\n\n` +
-                        `✅ บัตรประจำตัวสารวัตรดิจิทัล 3D ของคุณได้รับการอัปเดตรูปใหม่ทันที พร้อมสำรองเข้า Google Drive เรียบร้อยแล้ว`,
+                        `✅ บัตรประจำตัวสารวัตรดิจิทัล 3D ของคุณได้รับการอัปเดตรูปใหม่ทันที`,
                       image: { url: m.profile_image_url },
                       color: 0x2ECC71,
-                      footer: { text: 'ระบบบริการสารวัตร • โรงเรียนพระนารายณ์ (ข้อความส่วนตัว)' }
+                      footer: { text: 'ระบบบริการสารวัตร • โรงเรียนพระนารายณ์' }
                     }],
                     components: [{
                       type: 1,
@@ -2716,11 +2746,8 @@ client.once(Events.ClientReady || 'ready', async () => {
                     }]
                   }).catch(() => {});
                 } else {
-                  const { embed, row } = buildPrivateReviewCard(m);
                   await targetUser.send({
-                    content: `🔒 <@${pending.userId}> นี่คือข้อมูลส่วนตัวและรูปถ่ายขนาด 1 นิ้วของคุณ (ข้อความส่วนตัว)`,
-                    embeds: [embed],
-                    components: [row]
+                    content: `✨ <@${pending.userId}> คุณได้ตัดแต่งรูปถ่ายขนาด 1 นิ้วเรียบร้อยแล้ว!\n👉 **กรุณากลับไปกดยืนยันข้อมูลในช่อง <#${pending.channelId}>** เพื่อส่งคำขออนุมัติไปยังคณะผู้บริหารครับ`
                   }).catch(() => {});
                 }
               }
@@ -5906,6 +5933,8 @@ client.on('interactionCreate', async (interaction) => {
     }
 
     if (interaction.isModalSubmit() && interaction.customId === 'modal_new_member') {
+      await interaction.deferReply({ ephemeral: true });
+
       const rawFullName = interaction.fields.getTextInputValue('input_full_name').trim();
       const nickname = interaction.fields.getTextInputValue('input_nickname').trim();
       const rawClass = interaction.fields.getTextInputValue('input_class').trim();
@@ -5915,9 +5944,8 @@ client.on('interactionCreate', async (interaction) => {
       // 1. ตรวจสอบและจัดระเบียบคำนำหน้าชื่อจริง (ต้องขึ้นต้นด้วย นาย/นาง/นางสาว ติดกับชื่อจริงเลย)
       const cleanedFullName = cleanFullName(rawFullName);
       if (!/^(นาย|นางสาว|นาง|ด\.ช\.|ด\.ญ\.)/.test(cleanedFullName)) {
-        await interaction.reply({
-          content: '❌ **ข้อมูลชื่อจริงไม่ถูกต้อง:** ต้องขึ้นต้นด้วยคำนำหน้า **นาย**, **นาง** หรือ **นางสาว** ติดกับชื่อจริงเลย\n*(ตัวอย่างที่ถูกต้อง: `นายสมชาย ใจดี` หรือ `นางสาวสมหญิง รักเรียน`)*',
-          ephemeral: true
+        await interaction.editReply({
+          content: '❌ **ข้อมูลชื่อจริงไม่ถูกต้อง:** ต้องขึ้นต้นด้วยคำนำหน้า **นาย**, **นาง** หรือ **นางสาว** ติดกับชื่อจริงเลย\n*(ตัวอย่างที่ถูกต้อง: `นายสมชาย ใจดี` หรือ `นางสาวสมหญิง รักเรียน`)*'
         });
         return;
       }
@@ -5925,9 +5953,8 @@ client.on('interactionCreate', async (interaction) => {
       // 2. จัดรูปแบบระดับชั้น (ตัด "ม." ออก เอาเฉพาะ เลข/เลข เช่น 6/7, 4/10)
       const cleanedGradeClass = cleanGradeClass(rawClass);
       if (!cleanedGradeClass || !/^[1-6]\/[0-9]+$/.test(cleanedGradeClass)) {
-        await interaction.reply({
-          content: '❌ **ข้อมูลระดับชั้นไม่ถูกต้อง:** กรุณาระบุเฉพาะเลขชั้น/ห้อง เช่น `6/7`, `4/10`, `5/2` *(ไม่ต้องใส่ "ม.")*',
-          ephemeral: true
+        await interaction.editReply({
+          content: '❌ **ข้อมูลระดับชั้นไม่ถูกต้อง:** กรุณาระบุเฉพาะเลขชั้น/ห้อง เช่น `6/7`, `4/10`, `5/2` *(ไม่ต้องใส่ "ม.")*'
         });
         return;
       }
@@ -5936,49 +5963,73 @@ client.on('interactionCreate', async (interaction) => {
       const firstName = nameParts[0] || cleanedFullName;
       const lastName = nameParts.slice(1).join(' ') || '-';
 
-      // 3. ตรวจสอบว่ามีใบสมัครรออนุมัติเดิมของผู้ใช้นี้อยู่แล้วหรือไม่ (เพื่อป้องกันการสร้างแถวซ้ำซ้อน)
-      let existingPending = null;
+      // 3. ตรวจสอบข้อมูลสมาชิกเดิม (ค้นหาตาม discord_id ก่อน ไม่ว่าจะสถานะใด เพื่อป้องกัน UNIQUE constraint collision)
+      let existingMember = null;
       try {
         const { data: byDiscord } = await supabase
           .from('members')
-          .select('id')
+          .select('id, status, duty_day, duty_id')
           .eq('discord_id', interaction.user.id)
-          .eq('status', 'PENDING_APPROVAL')
+          .order('updated_at', { ascending: false })
+          .limit(1)
           .maybeSingle();
-        if (byDiscord?.id) existingPending = byDiscord;
+        if (byDiscord?.id) existingMember = byDiscord;
 
-        if (!existingPending) {
+        if (!existingMember) {
           const { data: byName } = await supabase
             .from('members')
-            .select('id')
+            .select('id, status, duty_day, duty_id')
             .eq('first_name', firstName)
             .eq('last_name', lastName)
-            .eq('status', 'PENDING_APPROVAL')
+            .order('updated_at', { ascending: false })
+            .limit(1)
             .maybeSingle();
-          if (byName?.id) existingPending = byName;
+          if (byName?.id) existingMember = byName;
         }
-      } catch (e) {}
+      } catch (e) {
+        console.warn('[CHECK EXISTING MEMBER NOTICE]:', e.message);
+      }
 
       let newMember = null;
-      if (existingPending?.id) {
+      if (existingMember?.id) {
+        // หากผู้ใช้นี้มี discord_id ผูกกับแถวอื่น ให้ปลดล็อกแถวอื่นก่อนเพื่อความปลอดภัย
+        await supabase
+          .from('members')
+          .update({ discord_id: null })
+          .eq('discord_id', interaction.user.id)
+          .neq('id', existingMember.id);
+
+        const updatePayload = {
+          first_name: firstName,
+          last_name: lastName,
+          nickname: nickname,
+          grade_class: cleanedGradeClass,
+          student_no: studentNo,
+          phone_number: phone,
+          discord_id: interaction.user.id,
+          updated_at: new Date()
+        };
+        // ถ้าสถานะเดิมไม่ใช่ ACTIVE ให้ตั้งเป็น PENDING_APPROVAL
+        if (existingMember.status !== 'ACTIVE') {
+          updatePayload.status = 'PENDING_APPROVAL';
+        }
+
         const { data: updatedMember, error: upErr } = await supabase
           .from('members')
-          .update({
-            first_name: firstName,
-            last_name: lastName,
-            nickname: nickname,
-            grade_class: cleanedGradeClass,
-            student_no: studentNo,
-            phone_number: phone,
-            discord_id: interaction.user.id,
-            updated_at: new Date()
-          })
-          .eq('id', existingPending.id)
+          .update(updatePayload)
+          .eq('id', existingMember.id)
           .select()
           .single();
+
         if (upErr) throw upErr;
         newMember = updatedMember;
       } else {
+        // เคลียร์ discord_id ออกจากแถวอื่นที่อาจตกค้างก่อน insert
+        await supabase
+          .from('members')
+          .update({ discord_id: null })
+          .eq('discord_id', interaction.user.id);
+
         const { data: insertedMember, error: inErr } = await supabase
           .from('members')
           .insert({
@@ -5995,6 +6046,7 @@ client.on('interactionCreate', async (interaction) => {
           })
           .select()
           .single();
+
         if (inErr) throw inErr;
         newMember = insertedMember;
       }
@@ -6471,8 +6523,8 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
         return;
       }
 
-      // อัปเดตหรือลบข้อความ Prompt ในช่องสาธารณะเพื่อให้ห้องสะอาด
-      if (pending?.promptMsgId && pending?.channelId) {
+      // อัปเดตหรือลบข้อความ Prompt ในช่องสาธารณะเพื่อให้ห้องสะอาด (กรณีไม่ได้กดจากข้อความ Prompt นั้นโดยตรง)
+      if (pending?.promptMsgId && pending?.channelId && (!interaction.message || interaction.message.id !== pending.promptMsgId)) {
         try {
           const ch = await client.channels.fetch(pending.channelId).catch(() => null);
           if (ch) {
@@ -10319,10 +10371,11 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
     }
     console.error('Interaction error:', error);
     try {
+      const errMsg = error?.message || 'ดำเนินการไม่สำเร็จ';
       if (interaction.deferred) {
-        await interaction.editReply({ content: 'ข้อผิดพลาด: ดำเนินการไม่สำเร็จ' }).catch(() => {});
+        await interaction.editReply({ content: `⚠️ ข้อผิดพลาด: ${errMsg}` }).catch(() => {});
       } else if (!interaction.replied) {
-        await interaction.reply({ content: 'ข้อผิดพลาด: ดำเนินการไม่สำเร็จ', ephemeral: true }).catch(() => {});
+        await interaction.reply({ content: `⚠️ ข้อผิดพลาด: ${errMsg}`, ephemeral: true }).catch(() => {});
       }
     } catch (e) {
       // ป้องกัน secondary error crash
@@ -10363,10 +10416,10 @@ async function showDutySelection(interaction, memberId, nickname, fullName) {
 
   const payload = { embeds: [embed], components: [row, cancelRow], content: null };
 
-  if (interaction.isModalSubmit()) {
-    await interaction.reply({ ...payload, ephemeral: true });
-  } else if (interaction.deferred || interaction.replied) {
+  if (interaction.deferred || interaction.replied) {
     await interaction.editReply(payload);
+  } else if (interaction.isModalSubmit()) {
+    await interaction.reply({ ...payload, ephemeral: true });
   } else {
     await interaction.update(payload);
   }
