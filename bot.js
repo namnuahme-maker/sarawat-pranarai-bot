@@ -216,6 +216,7 @@ const pendingPhotoUploads = new Map(); // memberId -> { url, name, timestamp }
 const pendingAttendanceUploads = new Map(); // userId -> { shift, dateStr, channelId, timestamp }
 const pendingPhotoConfirmations = new Map(); // memberId -> { member, photoUrl, filename, userId, timestamp }
 const activeServicePhotoSessions = new Map(); // userId -> { member, timestamp }
+const pendingPromptMessages = new Map(); // memberId -> { channelId, messageId, timestamp }
 
 function getUploadDir() {
   const dir1 = path.join(__dirname, '..', 'web', 'public', 'uploads');
@@ -421,6 +422,121 @@ function buildPrivateReviewCard(member) {
   );
 
   return { embed, row };
+}
+
+/**
+ * 🧹 ลบข้อความการ์ดยืนยันการลงทะเบียน / การ์ดรูปถ่ายในห้องลงทะเบียนโดยอัตโนมัติเมื่อได้รับการอนุมัติหรือปฏิเสธ
+ * รองรับการดึง Channel & Message ID ผ่าน 3 ชั้น (Cache Map -> Embed Footer -> Supabase crop_tokens)
+ * พร้อมระบบสแกนเก็บกวาดข้อความตกค้างของบอทเพื่อรักษาความสะอาดของห้อง 100%
+ */
+async function deleteRegistrationPromptMessage(memberId, interaction, memberData) {
+  try {
+    let targetChanId = null;
+    let targetMsgId = null;
+
+    // ชั้นที่ 1: ตรวจสอบจาก in-memory cache ก่อน
+    if (pendingPromptMessages.has(memberId)) {
+      const cached = pendingPromptMessages.get(memberId);
+      targetChanId = cached.channelId;
+      targetMsgId = cached.messageId;
+      pendingPromptMessages.delete(memberId);
+    }
+
+    // ชั้นที่ 2: ดึงจาก Embed Footer ของการ์ดขออนุมัติที่ผู้บริหารกำลังกดปุ่ม
+    if ((!targetChanId || !targetMsgId) && interaction?.message?.embeds?.[0]?.footer?.text) {
+      const footerText = interaction.message.embeds[0].footer.text;
+      const match = footerText.match(/\[msg:(\d+):(\d+)\]/);
+      if (match) {
+        targetChanId = match[1];
+        targetMsgId = match[2];
+      }
+    }
+
+    // ชั้นที่ 3: Fallback ค้นหาจาก Supabase crop_tokens
+    if (!targetChanId || !targetMsgId) {
+      try {
+        const { data: tokenRow } = await supabase
+          .from('crop_tokens')
+          .select('source_image_url')
+          .eq('token', `prompt_msg_${memberId}`)
+          .maybeSingle();
+
+        if (tokenRow?.source_image_url) {
+          const match = tokenRow.source_image_url.match(/discord_prompt:(\d+):(\d+)/);
+          if (match) {
+            targetChanId = match[1];
+            targetMsgId = match[2];
+          }
+        }
+
+        if (!targetChanId || !targetMsgId) {
+          const { data: normalTokens } = await supabase
+            .from('crop_tokens')
+            .select('source_image_url')
+            .eq('member_id', memberId)
+            .order('created_at', { ascending: false })
+            .limit(1);
+
+          if (normalTokens?.[0]?.source_image_url) {
+            const matchMeta = normalTokens[0].source_image_url.match(/#discord_meta:(\d+):(\d+)/);
+            if (matchMeta) {
+              targetChanId = matchMeta[1];
+              targetMsgId = matchMeta[2];
+            }
+          }
+        }
+      } catch (dbErr) {
+        console.warn('[DELETE PROMPT DB LOOKUP ERROR]:', dbErr.message);
+      }
+    }
+
+    // ดำเนินการลบข้อความเป้าหมายทันที
+    if (targetChanId && targetMsgId) {
+      const channel = await client.channels.fetch(targetChanId).catch(() => null);
+      if (channel) {
+        const msg = await channel.messages.fetch(targetMsgId).catch(() => null);
+        if (msg) {
+          await msg.delete().catch(delErr => console.warn('[DELETE PROMPT MSG ERROR]:', delErr.message));
+          console.log(`[DELETE PROMPT] 🧹 ลบข้อความการ์ดยืนยัน ${targetMsgId} ในช่อง ${targetChanId} ของสมาชิก ${memberId} สำเร็จ`);
+        }
+      }
+    }
+
+    // ระบบเสริม: สแกนกวาดข้อความตกค้างของบอทที่ผูกกับผู้สมัครรายนี้ในห้องลงทะเบียน/อัปโหลดรูป
+    const discordId = memberData?.discord_id || (interaction?.message?.embeds?.[0]?.description?.match(/<@(\d+)>/)?.[1]);
+    if (discordId) {
+      const verifyChanId = VERIFY_CHANNEL_ID || '1567570864835264542';
+      const photoChanId = PHOTO_CHANNEL_ID || '1567570904094085180';
+      const checkChannelIds = Array.from(new Set([targetChanId, verifyChanId, photoChanId, '1567570866663989389'].filter(Boolean)));
+
+      for (const chId of checkChannelIds) {
+        try {
+          const ch = await client.channels.fetch(chId).catch(() => null);
+          if (!ch || !ch.isTextBased()) continue;
+          const messages = await ch.messages.fetch({ limit: 30 }).catch(() => null);
+          if (!messages) continue;
+
+          for (const [, m] of messages) {
+            if (m.author?.id === client.user?.id) {
+              const hasMention = m.content && m.content.includes(discordId);
+              const isConfirmEmbed = m.embeds?.some(e =>
+                (e.title && (e.title.includes('ยืนยันข้อมูลและส่งคำขอ') || e.title.includes('ตัดแต่งรูปถ่าย'))) ||
+                (e.description && e.description.includes(discordId))
+              );
+              if (hasMention || isConfirmEmbed) {
+                await m.delete().catch(() => {});
+                console.log(`[CLEANUP PROMPT] 🧹 เก็บกวาดข้อความตกค้างของบอท ${m.id} ในช่อง ${chId} สำหรับสมาชิก <@${discordId}> สำเร็จ`);
+              }
+            }
+          }
+        } catch (scanErr) {
+          console.warn('[CLEANUP PROMPT SCAN ERROR]:', scanErr.message);
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[DELETE PROMPT OVERALL ERROR]:', err.message);
+  }
 }
 
 /**
@@ -6554,6 +6670,24 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
         : (pending?.photoUrl || member.profile_image_url);
       pendingPhotoConfirmations.delete(memberId);
 
+      // บันทึกตำแหน่งข้อความยืนยันในห้องแชท เพื่อตามไปลบอัตโนมัติเมื่ออนุมัติ/ปฏิเสธ
+      const promptChanId = interaction.channelId;
+      const promptMsgId = interaction.message?.id || pending?.promptMsgId;
+      if (promptChanId && promptMsgId) {
+        pendingPromptMessages.set(member.id, { channelId: promptChanId, messageId: promptMsgId, timestamp: Date.now() });
+        try {
+          await supabase.from('crop_tokens').upsert({
+            token: `prompt_msg_${member.id}`,
+            member_id: member.id,
+            discord_id: interaction.user.id,
+            source_image_url: `discord_prompt:${promptChanId}:${promptMsgId}`,
+            expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
+          }, { onConflict: 'token' });
+        } catch (tokenErr) {
+          console.warn('[PROMPT MSG TRACK NOTICE]:', tokenErr.message);
+        }
+      }
+
       await supabase.from('members').update({
         profile_image_url: photoUrl,
         status: 'PENDING_APPROVAL',
@@ -6631,6 +6765,8 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
         const weekday = member.duty_day ? (member.duty_day === 'TSS' ? 'Ts' : member.duty_day.replace(/S+$/, '') || member.duty_day) : 'M';
         const weekdayName = DAY_NAMES[weekday] || weekday;
 
+        const metaTag = (promptChanId && promptMsgId) ? ` • [msg:${promptChanId}:${promptMsgId}]` : '';
+
         const approvalEmbed = new EmbedBuilder()
           .setTitle('📋 คำขอลงทะเบียนสารวัตรใหม่ [รอการตรวจสอบ]')
           .setDescription(
@@ -6645,7 +6781,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
           )
           .setImage(photoUrl)
           .setColor(isSpecial ? '#9B59B6' : '#F39C12')
-          .setFooter({ text: 'ระบบลงทะเบียนสารวัตร • โรงเรียนพระนารายณ์' })
+          .setFooter({ text: `ระบบลงทะเบียนสารวัตร • โรงเรียนพระนารายณ์${metaTag}` })
           .setTimestamp();
 
         const actionRow = new ActionRowBuilder().addComponents(
@@ -6687,6 +6823,9 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
           await interaction.editReply({ content: '❌ ไม่พบข้อมูลสมาชิกในระบบ', components: [] });
           return;
         }
+
+        // 🧹 ลบข้อความการ์ดยืนยันในห้องลงทะเบียนทันทีเมื่อได้รับอนุมัติ
+        await deleteRegistrationPromptMessage(memberId, interaction, member);
 
         // กู้คืนรอบเวรและ discord_id จากการ์ด embed อัตโนมัติ (ป้องกันกรณีหลุดเป็น null)
         let dutyDay = member.duty_day;
@@ -6851,11 +6990,14 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
 
       if (interaction.customId.startsWith('btn_reject_member_')) {
         const memberId = interaction.customId.replace('btn_reject_member_', '');
-        const { data: member } = await supabase.from('members').select('*').eq('id', memberId).single();
+        const { data: member } = await supabase.from('members').select('*').eq('id', memberId).maybeSingle();
+
+        // 🧹 ลบข้อความการ์ดยืนยันในห้องลงทะเบียนทันทีเมื่อถูกปฏิเสธคำขอ
+        await deleteRegistrationPromptMessage(memberId, interaction, member);
 
         await supabase.from('members').update({ status: 'REJECTED' }).eq('id', memberId);
 
-        if (member.discord_id) {
+        if (member && member.discord_id) {
           try {
             const guildMember = await interaction.guild.members.fetch(member.discord_id).catch(() => null);
             if (guildMember && typeof guildMember.send === 'function') {
@@ -11906,6 +12048,8 @@ module.exports = {
   syncAllMediaToGoogleDrive,
   buildPrivateReviewCard,
   buildRegistrationEditModal,
+  pendingPromptMessages,
+  deleteRegistrationPromptMessage,
   logError,
   logWarn
 };
