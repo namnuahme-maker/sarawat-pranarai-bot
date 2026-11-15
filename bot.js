@@ -391,6 +391,7 @@ function resolveDutyDayForAppoint(currentDutyDay, targetShift) {
 }
 
 const APPROVAL_CHANNEL_ID = process.env.APPROVAL_CHANNEL_ID;
+const VERIFY_CHANNEL_ID = process.env.VERIFY_CHANNEL_ID || '1567570864835264542';
 const PHOTO_CHANNEL_ID = process.env.PHOTO_CHANNEL_ID;
 const ATTENDANCE_CHANNEL_ID = process.env.ATTENDANCE_CHANNEL_ID;
 const PHOTO_VAULT_CHANNEL_NAME = '📸│คลังเก็บรูปสำรอง-bot';
