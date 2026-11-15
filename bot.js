@@ -3179,21 +3179,63 @@ client.on('messageCreate', async (message) => {
           }
           const cropUrl = `${getWebDashboardUrl()}/crop?token=${cropToken}`;
 
-          // ส่งปุ่มเรียกดูรูปภาพแบบเฉพาะบุคคล (Ephemeral) เพื่อความเป็นส่วนตัวสูงสุด ไม่ให้สมาชิกอื่นเห็น
-          const viewRow = new ActionRowBuilder().addComponents(
+          // สร้าง Rich Embed พรีวิวรูปถ่าย พร้อมจัดหมวดหมู่ข้อมูลที่เข้าใจง่าย และแสดง 2 ปุ่มทันที (ครอบรูป / เปลี่ยนรูป)
+          const isSpecial = member.duty_day && member.duty_day.endsWith('S');
+          const weekday = member.duty_day ? (member.duty_day === 'TSS' ? 'Ts' : member.duty_day.replace(/S+$/, '') || member.duty_day) : 'M';
+          const weekdayName = DAY_NAMES[weekday] || weekday;
+          const shiftLabel = getShiftLabel(member.duty_day);
+
+          const previewEmbed = new EmbedBuilder()
+            .setTitle('🛡️ ตรวจสอบรูปถ่าย & ข้อมูลสารวัตรนักเรียน')
+            .setDescription(
+              `ยินดีต้อนรับคุณ **${member.first_name} ${member.last_name} (${member.nickname})**\n` +
+              `ระบบบันทึกข้อมูลการลงทะเบียนของคุณเรียบร้อยแล้ว เหลือเพียงขั้นตอนการจัดสัดส่วนรูปถ่ายหน้าตรง:\n\n` +
+              `👉 **กรุณาเลือกดำเนินการ 1 ใน 2 ตัวเลือกด้านล่าง:**\n` +
+              `1️⃣ **[🔲 ปรับแต่ง/ครอบรูป (ขนาด 1 นิ้ว)]** — กดเพื่อเปิดหน้าเว็บจัดสัดส่วนใบหน้าและตัดรูป 3:4 (ขนาด 1 นิ้ว) ให้พอดีกับกรอบบัตรประจำตัว\n` +
+              `2️⃣ **[🔄 เปลี่ยนรูปภาพใหม่]** — กดหากรูปนี้ไม่ชัดหรือไม่ถูกต้อง เพื่อส่งรูปถ่ายหน้าตรงรูปใหม่อีกครั้ง`
+            )
+            .addFields(
+              {
+                name: '👤 ข้อมูลส่วนตัวผู้สมัคร',
+                value: `• ชื่อ-สกุล: **${member.first_name} ${member.last_name}**\n• ชื่อเล่น: **${member.nickname || '-'}**\n• ชั้น/ห้อง: **ม.${member.grade_class || '-'}** เลขที่ **#${member.student_no || '-'}**`,
+                inline: true
+              },
+              {
+                name: '🛡️ ข้อมูลการปฏิบัติหน้าที่',
+                value: `• วันประจำการ: **วัน${weekdayName} (${weekday})**\n• ผลัดเวรสุทธิ: **${shiftLabel}** ${isSpecial ? '⭐' : ''}\n• เบอร์โทร: \`${member.phone_number || '-'}\``,
+                inline: true
+              },
+              {
+                name: '📸 สถานะรูปถ่ายและการดำเนินการต่อ',
+                value: `⚠️ **รูปถ่ายต้นฉบับ (ยังไม่ได้ตัดแต่ง 1 นิ้ว)**\n` +
+                       `• กดปุ่ม **"🔲 ปรับแต่ง/ครอบรูป (ขนาด 1 นิ้ว)"** ด้านล่างเพื่อเข้าสู่หน้าเว็บจัดรูป\n` +
+                       `• เมื่อตัดรูปและกดยืนยันบนเว็บ ระบบจะสำรองรูปเข้า **Google Drive** และส่งคำขออนุมัติไปยังผู้บริหารทันที`,
+                inline: false
+              }
+            )
+            .setImage(finalProfileUrl.startsWith('http') ? finalProfileUrl : attachment.url)
+            .setColor('#F59E0B')
+            .setFooter({ text: 'ระบบลงทะเบียนสารวัตร • โรงเรียนพระนารายณ์' })
+            .setTimestamp();
+
+          const photoActionRow = new ActionRowBuilder().addComponents(
             new ButtonBuilder()
-              .setCustomId(`btn_view_photo_${member.id}`)
-              .setLabel('👁️ ตรวจสอบรูปภาพของคุณ (เฉพาะคุณที่เห็น)')
-              .setEmoji('📸')
-              .setStyle(ButtonStyle.Primary)
+              .setLabel('🔲 ปรับแต่ง/ครอบรูป (ขนาด 1 นิ้ว)')
+              .setStyle(ButtonStyle.Link)
+              .setURL(cropUrl),
+            new ButtonBuilder()
+              .setCustomId(`btn_reupload_photo_${member.id}`)
+              .setLabel('🔄 เปลี่ยนรูปภาพใหม่')
+              .setStyle(ButtonStyle.Danger)
           );
 
           const promptMsg = await message.channel.send({
-            content: `📸 <@${message.author.id}> บอทได้รับรูปถ่ายของคุณแล้ว! กรุณากดปุ่มด้านล่างเพื่อตรวจสอบรูปและกดยืนยัน *(ข้อความจะแสดงเฉพาะคุณเท่านั้น)*:`,
-            components: [viewRow]
+            content: `📸 <@${message.author.id}> ได้รับรูปถ่ายสำหรับทำบัตรสารวัตรเรียบร้อยแล้ว! กรุณาเลือกดำเนินการด้านล่าง:`,
+            embeds: [previewEmbed],
+            components: [photoActionRow]
           });
 
-          // หากเป็นผู้ลงทะเบียนใหม่ (รออนุมัติ) -> บันทึกสถานะเพื่อเปิดดูแบบ Ephemeral
+          // บันทึกสถานะ pending สำหรับกรณีผู้ใช้กดเปลี่ยนรูป
           pendingPhotoConfirmations.set(member.id, {
             member,
             photoUrl: finalProfileUrl,
@@ -5801,7 +5843,23 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
 
       const pending = pendingPhotoConfirmations.get(memberId);
 
-      // ลบข้อความ Prompt ในช่องสาธารณะเพื่อให้ห้องสะอาด
+      if (!isConfirm) {
+        // กดยกเลิก / ขอเปลี่ยนรูปภาพใหม่ -> นำผู้ใช้กลับสู่กระบวนการส่งรูปใหม่อีกครั้ง
+        pendingPhotoConfirmations.delete(memberId);
+        await interaction.update({
+          content: `🔄 <@${interaction.user.id}> คุณได้ยกเลิกรูปถ่ายเดิมเรียบร้อยแล้ว **กรุณาแนบและส่งรูปถ่ายหน้าตรงรูปใหม่ในช่องนี้ได้เลยครับ**`,
+          embeds: [],
+          components: []
+        }).catch(async () => {
+          await interaction.reply({
+            content: `🔄 <@${interaction.user.id}> คุณได้ยกเลิกรูปถ่ายเดิมเรียบร้อยแล้ว **กรุณาแนบและส่งรูปถ่ายหน้าตรงรูปใหม่ในช่องนี้ได้เลยครับ**`,
+            ephemeral: false
+          }).catch(() => {});
+        });
+        return;
+      }
+
+      // ลบข้อความ Prompt ในช่องสาธารณะเพื่อให้ห้องสะอาด (เฉพาะกรณีส่งอนุมัติ)
       if (pending?.promptMsgId && pending?.channelId) {
         try {
           const ch = await client.channels.fetch(pending.channelId).catch(() => null);
@@ -5810,17 +5868,6 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
             if (pMsg) await pMsg.delete().catch(() => {});
           }
         } catch (e) {}
-      }
-
-      if (!isConfirm) {
-        // กดยกเลิก / ขอเปลี่ยนรูปภาพใหม่
-        pendingPhotoConfirmations.delete(memberId);
-        await interaction.update({
-          content: `🔄 <@${interaction.user.id}> คุณขอยกเลิกรูปเดิม **กรุณาส่งรูปถ่ายหน้าตรงรูปใหม่ในช่องนี้ได้เลยครับ**`,
-          embeds: [],
-          components: []
-        });
-        return;
       }
 
       // กดยืนยันใช้รูปนี้ -> บันทึกลง Supabase และส่งขออนุมัติเข้าห้องประชุมหัวหน้าทันที
