@@ -2536,6 +2536,108 @@ client.once(Events.ClientReady || 'ready', async () => {
   }, 1000 * 60 * 60 * 24 * 3);
   if (pingTimer.unref) pingTimer.unref();
 
+  // 📸 ระบบตรวจสอบและอัปเดตการ์ด Discord อัตโนมัติเมื่อผู้ใช้ครอปรูปบนเว็บสำเร็จ (Auto-Reconciliation Realtime)
+  const cropReconcileTimer = setInterval(async () => {
+    if (pendingPhotoConfirmations.size === 0) return;
+    try {
+      const memberIds = Array.from(pendingPhotoConfirmations.keys());
+      const { data: members } = await supabase
+        .from('members')
+        .select('id, first_name, last_name, nickname, duty_day, grade_class, student_no, photo_cropped_at, profile_image_url, status')
+        .in('id', memberIds);
+
+      if (!members || members.length === 0) return;
+
+      const approvalChanId = process.env.APPROVAL_CHANNEL_ID || '1567570916932722778';
+
+      for (const m of members) {
+        const pending = pendingPhotoConfirmations.get(m.id);
+        if (!pending) continue;
+
+        // หากตรวจพบว่าผู้ใช้ครอปรูปแล้ว (photo_cropped_at เกิดขึ้นหลังการอัปโหลด)
+        if (m.photo_cropped_at && new Date(m.photo_cropped_at).getTime() >= (pending.timestamp - 5000)) {
+          pendingPhotoConfirmations.delete(m.id);
+          if (pending.channelId && pending.promptMsgId) {
+            try {
+              const ch = await client.channels.fetch(pending.channelId).catch(() => null);
+              if (ch) {
+                const msg = await ch.messages.fetch(pending.promptMsgId).catch(() => null);
+                if (msg) {
+                  const isSpecial = m.duty_day && m.duty_day.endsWith('S');
+                  const weekday = m.duty_day ? (m.duty_day === 'TSS' ? 'Ts' : m.duty_day.replace(/S+$/, '') || m.duty_day) : 'M';
+                  const weekdayName = DAY_NAMES[weekday] || weekday;
+
+                  if (m.status === 'ACTIVE' || pending.isServiceUpdate) {
+                    await msg.edit({
+                      content: `✅ <@${pending.userId}> อัปเดตรูปถ่ายทำบัตรประจำตัว 3D สำเร็จเรียบร้อยแล้ว!`,
+                      embeds: [{
+                        title: '✨ อัปเดตรูปถ่ายทำบัตรประจำตัว 3D สำเร็จเรียบร้อยแล้ว!',
+                        description:
+                          `คุณ **${m.first_name} ${m.last_name} (${m.nickname || '-'})** ได้ตัดแต่งรูปถ่ายขนาด 1 นิ้ว (3:4) เรียบร้อยแล้ว!\n\n` +
+                          `✅ บัตรประจำตัวสารวัตรดิจิทัล 3D ของคุณได้รับการอัปเดตรูปใหม่ทันที พร้อมสำรองเข้า Google Drive เรียบร้อยแล้ว`,
+                        image: { url: m.profile_image_url },
+                        color: 0x2ECC71,
+                        footer: { text: 'ระบบบริการสารวัตร • โรงเรียนพระนารายณ์' },
+                        timestamp: new Date().toISOString()
+                      }],
+                      components: [{
+                        type: 1,
+                        components: [{
+                          type: 2,
+                          style: 5,
+                          label: '🪪 เปิดดูบัตรประจำตัว 3D',
+                          url: `${getBaseUrl()}/card?id=${m.id}`
+                        }]
+                      }]
+                    }).catch(() => {});
+                  } else {
+                    await msg.edit({
+                      content: `✅ <@${pending.userId}> ปรับแต่งรูปถ่ายขนาด 1 นิ้วเรียบร้อยแล้ว!`,
+                      embeds: [{
+                        title: '✅ ปรับแต่งรูปภาพขนาด 1 นิ้วสำเร็จ & ส่งคำขออนุมัติเรียบร้อยแล้ว',
+                        description:
+                          `ยินดีด้วยครับคุณ **${m.first_name} ${m.last_name} (${m.nickname || '-'})**\n` +
+                          `ระบบได้รับการตัดแต่งรูปภาพขนาด 1 นิ้ว (3:4) มาตรฐานทำบัตรประจำตัวเรียบร้อยแล้ว!\n\n` +
+                          `🚀 **สถานะปัจจุบัน:**\n` +
+                          `• บันทึกรูปภาพขนาด 1 นิ้วความละเอียดสูงเข้าสู่ระบบเรียบร้อย\n` +
+                          `• สำรองไฟล์ภาพเข้า **Google Drive** ของโรงเรียนเรียบร้อย\n` +
+                          `• ส่งคำขอลงทะเบียนพร้อมรูปภาพไปยังคณะผู้บริหารในห้อง <#${approvalChanId}> แล้ว\n\n` +
+                          `⏳ กรุณารอคณะผู้บริหารตรวจสอบและอนุมัติการลงทะเบียน เมื่อได้รับการอนุมัติ บอทจะแจ้งเตือนและจัดทำบัตรสารวัตร 3D ให้ทันทีครับ!`,
+                        fields: [
+                          {
+                            name: '👤 ข้อมูลสารวัตร',
+                            value: `• ชื่อ-สกุล: **${m.first_name} ${m.last_name}**\n• ชื่อเล่น: **${m.nickname || '-'}**\n• ชั้น/ห้อง: **ม.${m.grade_class || '-'}** เลขที่ **#${m.student_no || '-'}**`,
+                            inline: true
+                          },
+                          {
+                            name: '🛡️ ข้อมูลการปฏิบัติหน้าที่',
+                            value: `• วันประจำการ: **วัน${weekdayName} (${weekday})**\n• ผลัดเวร: \`${m.duty_day || '-'}\` ${isSpecial ? '⭐' : ''}`,
+                            inline: true
+                          },
+                          {
+                            name: '⏳ สถานะ',
+                            value: '⏳ **รอการอนุมัติจากผู้บริหาร (PENDING APPROVAL)**',
+                            inline: false
+                          }
+                        ],
+                        image: { url: m.profile_image_url },
+                        color: 0x2ECC71,
+                        footer: { text: 'ระบบลงทะเบียนสารวัตร • โรงเรียนพระนารายณ์' },
+                        timestamp: new Date().toISOString()
+                      }],
+                      components: []
+                    }).catch(() => {});
+                  }
+                }
+              }
+            } catch (err) {}
+          }
+        }
+      }
+    } catch (e) {}
+  }, 5000);
+  if (cropReconcileTimer.unref) cropReconcileTimer.unref();
+
   // ⏰ ระบบแจ้งเตือนเวรประจำวันอัตโนมัติ (Daily Duty Reminder) เวลา 06:30 น. (เวลาไทย UTC+7)
   let lastReminderDate = '';
   const reminderTimer = setInterval(async () => {
@@ -3121,15 +3223,6 @@ client.on('messageCreate', async (message) => {
       // 7. สร้าง Token ชั่วคราว (15 นาที) สำหรับเปิดเว็บเครื่องมือครอปรูป 1 นิ้ว (3:4)
       const cropToken = crypto.randomBytes(32).toString('hex');
       const tokenExpires = new Date(Date.now() + 15 * 60 * 1000);
-      try {
-        await supabase.from('crop_tokens').insert({
-          token: cropToken,
-          member_id: member.id,
-          discord_id: message.author.id,
-          source_image_url: finalProfileUrl.startsWith('http') ? finalProfileUrl : attachment.url,
-          expires_at: tokenExpires.toISOString()
-        });
-      } catch (tokenErr) {}
       const cropUrl = `${getWebDashboardUrl()}/crop?token=${cropToken}`;
 
       // 8. แสดงการ์ดพรีวิวรูปภาพ พร้อม 2 ปุ่ม (ครอบรูป 1 นิ้ว / เปลี่ยนรูปใหม่)
@@ -3184,6 +3277,19 @@ client.on('messageCreate', async (message) => {
         embeds: [previewEmbed],
         components: [photoActionRow]
       });
+
+      // บันทึก crop_tokens พร้อมแนบ discord_meta สำหรับ Realtime Update
+      try {
+        await supabase.from('crop_tokens').insert({
+          token: cropToken,
+          member_id: member.id,
+          discord_id: message.author.id,
+          source_image_url: `${finalProfileUrl.startsWith('http') ? finalProfileUrl : attachment.url}#discord_meta:${message.channel.id}:${promptMsg?.id || ''}`,
+          expires_at: tokenExpires.toISOString()
+        });
+      } catch (tokenErr) {
+        console.warn('[CROP TOKEN NOTICE]:', tokenErr.message);
+      }
 
       // ลบ session ออกหลังจากรับรูปเรียบร้อย
       activeServicePhotoSessions.delete(message.author.id);
@@ -3384,17 +3490,6 @@ client.on('messageCreate', async (message) => {
           // สร้าง Token ชั่วคราว (อายุ 15 นาที) สำหรับเปิดเว็บเครื่องมือครอปรูป 1:1
           const cropToken = crypto.randomBytes(32).toString('hex');
           const tokenExpires = new Date(Date.now() + 15 * 60 * 1000);
-          try {
-            await supabase.from('crop_tokens').insert({
-              token: cropToken,
-              member_id: member.id,
-              discord_id: message.author.id,
-              source_image_url: finalProfileUrl.startsWith('http') ? finalProfileUrl : attachment.url,
-              expires_at: tokenExpires.toISOString()
-            });
-          } catch (tokenErr) {
-            console.warn('[CROP TOKEN NOTICE]:', tokenErr.message);
-          }
           const cropUrl = `${getWebDashboardUrl()}/crop?token=${cropToken}`;
 
           // สร้าง Rich Embed พรีวิวรูปถ่าย พร้อมจัดหมวดหมู่ข้อมูลที่เข้าใจง่าย และแสดง 2 ปุ่มทันที (ครอบรูป / เปลี่ยนรูป)
@@ -3452,6 +3547,19 @@ client.on('messageCreate', async (message) => {
             embeds: [previewEmbed],
             components: [photoActionRow]
           });
+
+          // บันทึก crop_tokens พร้อมแนบ metadata สำหรับ Realtime Discord Card Update
+          try {
+            await supabase.from('crop_tokens').insert({
+              token: cropToken,
+              member_id: member.id,
+              discord_id: message.author.id,
+              source_image_url: `${finalProfileUrl.startsWith('http') ? finalProfileUrl : attachment.url}#discord_meta:${message.channel.id}:${promptMsg?.id || ''}`,
+              expires_at: tokenExpires.toISOString()
+            });
+          } catch (tokenErr) {
+            console.warn('[CROP TOKEN NOTICE]:', tokenErr.message);
+          }
 
           // บันทึกสถานะ pending สำหรับกรณีผู้ใช้กดเปลี่ยนรูป
           pendingPhotoConfirmations.set(member.id, {
