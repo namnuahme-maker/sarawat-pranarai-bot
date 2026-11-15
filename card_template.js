@@ -266,7 +266,7 @@ function generateCardHTML(member) {
         elementsHtml += `
           <div style="position: absolute; left: ${left}px; top: ${top}px; width: ${width}; height: ${height}; display: flex; align-items: center; justify-content: center; z-index: 5; pointer-events: none;">
             ${photoUrl 
-              ? `<img src="${photoUrl}" style="width: 100%; height: 100%; object-fit: cover; object-position: top center; -webkit-mask-image: linear-gradient(to bottom, rgba(0,0,0,1) 0%, rgba(0,0,0,1) 75%, rgba(0,0,0,0) 100%); mask-image: linear-gradient(to bottom, rgba(0,0,0,1) 0%, rgba(0,0,0,1) 75%, rgba(0,0,0,0) 100%);" crossorigin="anonymous" alt="Photo">` 
+              ? `<img src="${photoUrl}" style="width: 100%; height: 100%; object-fit: cover; object-position: top center;" crossorigin="anonymous" alt="Photo">` 
               : `<span style="font-size: 80px; color: #94a3b8;">👤</span>`
             }
           </div>
@@ -305,7 +305,6 @@ function generateCardHTML(member) {
       <!-- Ambient Glow Fades (Over photo & background, strictly below all text) -->
       <div class="glow-fade-blue"></div>
       <div class="glow-fade-red"></div>
-      <div class="glow-fade-white-bottom" style="top: ${sTopWhiteFade}px;"></div>
 
       ${elementsHtml}
     `;
@@ -321,7 +320,7 @@ function generateCardHTML(member) {
       <!-- Watermark Emblem Behind Left Shoulder -->
       ${inspectorLogoB64 ? `<img src="${inspectorLogoB64}" class="watermark-emblem" alt="Watermark">` : ''}
 
-      <!-- Center Photo with Soft Gradient Fade-Out -->
+      <!-- Center Photo with Solid Rectangle (Original Crisp) -->
       <div class="photo-center-area">
         ${photoUrl 
           ? `<img src="${photoUrl}" class="photo-fade-img" crossorigin="anonymous" alt="Photo">` 
@@ -332,7 +331,6 @@ function generateCardHTML(member) {
       <!-- Ambient Glow Fades (Over photo & background, strictly below all text) -->
       <div class="glow-fade-blue"></div>
       <div class="glow-fade-red"></div>
-      <div class="glow-fade-white-bottom" style="top: ${sTopWhiteFade}px;"></div>
 
       <!-- Top Header -->
       <div class="header-wrap" style="position: absolute; left: 13px; right: 13px; top: 10px;">
@@ -449,13 +447,7 @@ function generateCardHTML(member) {
       pointer-events: none;
     }
     .glow-fade-white-bottom {
-      position: absolute;
-      left: 0;
-      right: 0;
-      height: 180px;
-      background: linear-gradient(to top, rgba(255, 255, 255, 0.95) 0%, rgba(255, 255, 255, 0.5) 45%, rgba(255, 255, 255, 0) 100%);
-      z-index: 8;
-      pointer-events: none;
+      display: none;
     }
 
     /* Vertical PRANARAI SCHOOL text alongside red stripe */
@@ -554,8 +546,6 @@ function generateCardHTML(member) {
       height: 100%;
       object-fit: cover;
       object-position: top center;
-      -webkit-mask-image: linear-gradient(to bottom, rgba(0,0,0,1) 0%, rgba(0,0,0,1) 75%, rgba(0,0,0,0) 100%);
-      mask-image: linear-gradient(to bottom, rgba(0,0,0,1) 0%, rgba(0,0,0,1) 75%, rgba(0,0,0,0) 100%);
     }
     .photo-fallback {
       font-size: 80px;
