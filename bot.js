@@ -2940,49 +2940,40 @@ client.on('messageCreate', async (message) => {
           }
           const cropUrl = `${getWebDashboardUrl()}/crop?token=${cropToken}`;
 
-          // หากเป็นผู้ลงทะเบียนใหม่ (รออนุมัติ) -> ส่งตัวเลือกยืนยันและเปลี่ยนรูปตามความต้องการ
+          // ส่งปุ่มเรียกดูรูปภาพแบบเฉพาะบุคคล (Ephemeral) เพื่อความเป็นส่วนตัวสูงสุด ไม่ให้สมาชิกอื่นเห็น
+          const viewRow = new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+              .setCustomId(`btn_view_photo_${member.id}`)
+              .setLabel('👁️ ตรวจสอบรูปภาพของคุณ (เฉพาะคุณที่เห็น)')
+              .setEmoji('📸')
+              .setStyle(ButtonStyle.Primary)
+          );
+
+          const promptMsg = await message.channel.send({
+            content: `📸 <@${message.author.id}> บอทได้รับรูปถ่ายของคุณแล้ว! กรุณากดปุ่มด้านล่างเพื่อตรวจสอบรูปและกดยืนยัน *(ข้อความจะแสดงเฉพาะคุณเท่านั้น)*:`,
+            components: [viewRow]
+          }).catch(() => null);
+
+          // หากเป็นผู้ลงทะเบียนใหม่ (รออนุมัติ) -> บันทึกสถานะเพื่อเปิดดูแบบ Ephemeral
           pendingPhotoConfirmations.set(member.id, {
             member,
             photoUrl: finalProfileUrl,
             filename: filename,
             userId: message.author.id,
+            cropUrl: cropUrl,
+            promptMsgId: promptMsg?.id,
+            channelId: message.channel.id,
             timestamp: Date.now()
           });
 
-          const confirmEmbed = new EmbedBuilder()
-            .setTitle('📸 ตรวจสอบรูปถ่ายหน้าตรงของคุณ')
-            .setDescription(
-              `สวัสดีครับคุณ **${member.first_name} ${member.last_name} (${member.nickname})**\n\n` +
-              `บอทได้รับรูปถ่ายของคุณและส่งเข้าคลังเก็บข้อมูลในดิสคอร์ดเรียบร้อยแล้ว\n` +
-              `👉 **ต้องการใช้รูปนี้ หรือต้องการปรับตำแหน่ง/ครอปรูปให้พอดีก่อนส่งขออนุมัติ?**\n\n` +
-              `• กด **"✅ ยืนยันใช้รูปนี้"** เพื่อส่งคำขอให้ผู้บริหารอนุมัติทันที\n` +
-              `• กด **"🔲 ปรับแต่ง/ครอปรูปบนเว็บ"** เพื่อปรับรูปสี่เหลี่ยมจัตุรัส (1:1) ให้สวยงาม\n` +
-              `• กด **"🔄 เปลี่ยนรูปภาพใหม่"** หากต้องการเลือกส่งรูปอื่น`
-            )
-            .setImage(finalProfileUrl.startsWith('http') ? finalProfileUrl : attachment.url)
-            .setColor('#3498DB')
-            .setFooter({ text: 'ระบบลงทะเบียนสารวัตร • โรงเรียนพระนารายณ์' });
-
-          const confirmRow = new ActionRowBuilder().addComponents(
-            new ButtonBuilder()
-              .setCustomId(`btn_confirm_photo_${member.id}`)
-              .setLabel('✅ ยืนยันใช้รูปนี้')
-              .setStyle(ButtonStyle.Success),
-            new ButtonBuilder()
-              .setLabel('🔲 ปรับแต่ง/ครอปรูปบนเว็บ')
-              .setStyle(ButtonStyle.Link)
-              .setURL(cropUrl),
-            new ButtonBuilder()
-              .setCustomId(`btn_reupload_photo_${member.id}`)
-              .setLabel('🔄 เปลี่ยนรูปภาพใหม่')
-              .setStyle(ButtonStyle.Secondary)
-          );
-
-          await message.channel.send({
-            content: `👤 <@${message.author.id}> ตรวจสอบรูปภาพของคุณด้านล่างนี้:`,
-            embeds: [confirmEmbed],
-            components: [confirmRow]
-          });
+          // ตั้งเวลาลบข้อความ Prompt หลัง 5 นาทีเพื่อรักษาความสะอาดห้อง
+          if (promptMsg) {
+            setTimeout(async () => {
+              if (pendingPhotoConfirmations.has(member.id)) {
+                await promptMsg.delete().catch(() => {});
+              }
+            }, 5 * 60 * 1000);
+          }
           return;
         } catch (err) {
           console.error('[PHOTO UPLOAD ERROR]:', err);
@@ -5283,6 +5274,79 @@ client.on('interactionCreate', async (interaction) => {
       return;
     }
 
+    // 📸 เปิดดูรูปภาพและปุ่มตัวเลือกแบบส่วนตัว (Ephemeral - เฉพาะคุณที่มองเห็นข้อความนี้)
+    if (interaction.isButton() && interaction.customId.startsWith('btn_view_photo_')) {
+      const memberId = interaction.customId.replace('btn_view_photo_', '');
+      const { data: member } = await supabase.from('members').select('*').eq('id', memberId).maybeSingle();
+      if (!member || member.discord_id !== interaction.user.id) {
+        await interaction.reply({ content: '⛔ เมนูนี้เฉพาะเจ้าของรูปภาพเท่านั้นครับ', ephemeral: true });
+        return;
+      }
+
+      const pending = pendingPhotoConfirmations.get(memberId);
+      const photoUrl = (member.photo_cropped_at && member.profile_image_url)
+        ? member.profile_image_url
+        : (pending?.photoUrl || member.profile_image_url);
+
+      if (!photoUrl) {
+        await interaction.reply({ content: '⚠️ ไม่พบข้อมูลรูปถ่าย กรุณาส่งรูปใหม่อีกครั้งในช่องนี้ครับ', ephemeral: true });
+        return;
+      }
+
+      let cropUrl = pending?.cropUrl;
+      if (!cropUrl) {
+        const cropToken = crypto.randomBytes(32).toString('hex');
+        try {
+          await supabase.from('crop_tokens').insert({
+            token: cropToken,
+            member_id: member.id,
+            discord_id: interaction.user.id,
+            source_image_url: photoUrl,
+            expires_at: new Date(Date.now() + 15 * 60 * 1000).toISOString()
+          });
+          cropUrl = `${getWebDashboardUrl()}/crop?token=${cropToken}`;
+        } catch (e) {
+          cropUrl = `${getWebDashboardUrl()}/crop`;
+        }
+      }
+
+      const confirmEmbed = new EmbedBuilder()
+        .setTitle('📸 ตรวจสอบรูปถ่ายหน้าตรงของคุณ')
+        .setDescription(
+          `สวัสดีครับคุณ **${member.first_name} ${member.last_name} (${member.nickname})**\n\n` +
+          `บอทได้รับรูปถ่ายของคุณและส่งเข้าคลังเก็บข้อมูลเรียบร้อยแล้ว\n` +
+          `👉 **ต้องการใช้รูปนี้ หรือต้องการปรับตำแหน่ง/ครอปรูปให้พอดีก่อนส่งขออนุมัติ?**\n\n` +
+          `• กด **"✅ ยืนยันใช้รูปนี้"** เพื่อส่งคำขอให้ผู้บริหารอนุมัติทันที\n` +
+          `• กด **"🔲 ปรับแต่ง/ครอปรูปบนเว็บ"** เพื่อปรับรูปสี่เหลี่ยมจัตุรัส (1:1) ให้สวยงาม\n` +
+          `• กด **"🔄 เปลี่ยนรูปภาพใหม่"** หากต้องการเลือกส่งรูปอื่น`
+        )
+        .setImage(photoUrl)
+        .setColor('#3498DB')
+        .setFooter({ text: 'ระบบลงทะเบียนสารวัตร • โรงเรียนพระนารายณ์ (ข้อความนี้เห็นเฉพาะคุณ)' });
+
+      const confirmRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`btn_confirm_photo_${member.id}`)
+          .setLabel('✅ ยืนยันใช้รูปนี้')
+          .setStyle(ButtonStyle.Success),
+        new ButtonBuilder()
+          .setLabel('🔲 ปรับแต่ง/ครอปรูปบนเว็บ')
+          .setStyle(ButtonStyle.Link)
+          .setURL(cropUrl),
+        new ButtonBuilder()
+          .setCustomId(`btn_reupload_photo_${member.id}`)
+          .setLabel('🔄 เปลี่ยนรูปภาพใหม่')
+          .setStyle(ButtonStyle.Secondary)
+      );
+
+      await interaction.reply({
+        embeds: [confirmEmbed],
+        components: [confirmRow],
+        ephemeral: true
+      });
+      return;
+    }
+
     // 📸 จัดการปุ่มยืนยันหรือเปลี่ยนรูปถ่ายหน้าตรงสารวัตร (ก่อนส่งขออนุมัติ)
     if (interaction.isButton() && (interaction.customId.startsWith('btn_confirm_photo_') || interaction.customId.startsWith('btn_reupload_photo_'))) {
       const isConfirm = interaction.customId.startsWith('btn_confirm_photo_');
@@ -5292,6 +5356,19 @@ client.on('interactionCreate', async (interaction) => {
       if (!member || member.discord_id !== interaction.user.id) {
         await interaction.reply({ content: '⛔ ปุ่มนี้สำหรับเจ้าของข้อมูลเท่านั้นครับ', ephemeral: true });
         return;
+      }
+
+      const pending = pendingPhotoConfirmations.get(memberId);
+
+      // ลบข้อความ Prompt ในช่องสาธารณะเพื่อให้ห้องสะอาด
+      if (pending?.promptMsgId && pending?.channelId) {
+        try {
+          const ch = await client.channels.fetch(pending.channelId).catch(() => null);
+          if (ch) {
+            const pMsg = await ch.messages.fetch(pending.promptMsgId).catch(() => null);
+            if (pMsg) await pMsg.delete().catch(() => {});
+          }
+        } catch (e) {}
       }
 
       if (!isConfirm) {
@@ -5307,7 +5384,6 @@ client.on('interactionCreate', async (interaction) => {
 
       // กดยืนยันใช้รูปนี้ -> บันทึกลง Supabase และส่งขออนุมัติเข้าห้องประชุมหัวหน้าทันที
       await interaction.deferUpdate();
-      const pending = pendingPhotoConfirmations.get(memberId);
       // หากผู้ใช้ไปครอปรูปบนเว็บมาแล้ว ให้ใช้รูปที่ครอปแล้ว (จากฐานข้อมูล) เป็นอันดับแรก
       const photoUrl = (member.photo_cropped_at && member.profile_image_url)
         ? member.profile_image_url
