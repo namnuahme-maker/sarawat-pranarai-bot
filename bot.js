@@ -43,6 +43,7 @@ require('dotenv').config();
 const QRCode = require('qrcode');
 const { generateCardHTML } = require('./card_template');
 const { processAttendancePhoto, buildAttendanceDiscordCard } = require('./attendance_manager');
+const { uploadToGoogleDrive } = require('./services/gdrive_service');
 
 const PORT = process.env.PORT || 10000;
 
@@ -2922,6 +2923,22 @@ client.on('messageCreate', async (message) => {
             return;
           }
 
+          // สร้าง Token ชั่วคราว (อายุ 15 นาที) สำหรับเปิดเว็บเครื่องมือครอปรูป 1:1
+          const cropToken = crypto.randomBytes(32).toString('hex');
+          const tokenExpires = new Date(Date.now() + 15 * 60 * 1000);
+          try {
+            await supabase.from('crop_tokens').insert({
+              token: cropToken,
+              member_id: member.id,
+              discord_id: message.author.id,
+              source_image_url: finalProfileUrl.startsWith('http') ? finalProfileUrl : attachment.url,
+              expires_at: tokenExpires.toISOString()
+            });
+          } catch (tokenErr) {
+            console.warn('[CROP TOKEN NOTICE]:', tokenErr.message);
+          }
+          const cropUrl = `${getWebDashboardUrl()}/crop?token=${cropToken}`;
+
           // หากเป็นผู้ลงทะเบียนใหม่ (รออนุมัติ) -> ส่งตัวเลือกยืนยันและเปลี่ยนรูปตามความต้องการ
           pendingPhotoConfirmations.set(member.id, {
             member,
@@ -2936,17 +2953,24 @@ client.on('messageCreate', async (message) => {
             .setDescription(
               `สวัสดีครับคุณ **${member.first_name} ${member.last_name} (${member.nickname})**\n\n` +
               `บอทได้รับรูปถ่ายของคุณและส่งเข้าคลังเก็บข้อมูลในดิสคอร์ดเรียบร้อยแล้ว\n` +
-              `👉 **ต้องการใช้รูปนี้สำหรับทำบัตรและส่งขออนุมัติใช่หรือไม่?**`
+              `👉 **ต้องการใช้รูปนี้ หรือต้องการปรับตำแหน่ง/ครอปรูปให้พอดีก่อนส่งขออนุมัติ?**\n\n` +
+              `• กด **"✅ ยืนยันใช้รูปนี้"** เพื่อส่งคำขอให้ผู้บริหารอนุมัติทันที\n` +
+              `• กด **"🔲 ปรับแต่ง/ครอปรูปบนเว็บ"** เพื่อปรับรูปสี่เหลี่ยมจัตุรัส (1:1) ให้สวยงาม\n` +
+              `• กด **"🔄 เปลี่ยนรูปภาพใหม่"** หากต้องการเลือกส่งรูปอื่น`
             )
             .setImage(finalProfileUrl.startsWith('http') ? finalProfileUrl : attachment.url)
             .setColor('#3498DB')
-            .setFooter({ text: 'กด "ยืนยันใช้รูปนี้" เพื่อส่งคำขอให้ผู้บริหารอนุมัติ หรือกด "เปลี่ยนรูปภาพใหม่"' });
+            .setFooter({ text: 'ระบบลงทะเบียนสารวัตร • โรงเรียนพระนารายณ์' });
 
           const confirmRow = new ActionRowBuilder().addComponents(
             new ButtonBuilder()
               .setCustomId(`btn_confirm_photo_${member.id}`)
               .setLabel('✅ ยืนยันใช้รูปนี้')
               .setStyle(ButtonStyle.Success),
+            new ButtonBuilder()
+              .setLabel('🔲 ปรับแต่ง/ครอปรูปบนเว็บ')
+              .setStyle(ButtonStyle.Link)
+              .setURL(cropUrl),
             new ButtonBuilder()
               .setCustomId(`btn_reupload_photo_${member.id}`)
               .setLabel('🔄 เปลี่ยนรูปภาพใหม่')
@@ -5283,7 +5307,10 @@ client.on('interactionCreate', async (interaction) => {
       // กดยืนยันใช้รูปนี้ -> บันทึกลง Supabase และส่งขออนุมัติเข้าห้องประชุมหัวหน้าทันที
       await interaction.deferUpdate();
       const pending = pendingPhotoConfirmations.get(memberId);
-      const photoUrl = pending?.photoUrl || member.profile_image_url;
+      // หากผู้ใช้ไปครอปรูปบนเว็บมาแล้ว ให้ใช้รูปที่ครอปแล้ว (จากฐานข้อมูล) เป็นอันดับแรก
+      const photoUrl = (member.photo_cropped_at && member.profile_image_url)
+        ? member.profile_image_url
+        : (pending?.photoUrl || member.profile_image_url);
       pendingPhotoConfirmations.delete(memberId);
 
       await supabase.from('members').update({
@@ -5291,6 +5318,31 @@ client.on('interactionCreate', async (interaction) => {
         status: 'PENDING_APPROVAL',
         updated_at: new Date()
       }).eq('id', member.id);
+
+      // สำรองรูปภาพเข้า Google Drive เบื้องหลัง (หากยังไม่ได้อัปโหลดผ่านหน้าเว็บครอป)
+      if (!member.gdrive_file_id && (pending?.filename || photoUrl)) {
+        (async () => {
+          try {
+            const imgFetch = await fetch(photoUrl);
+            if (imgFetch.ok) {
+              const buf = Buffer.from(await imgFetch.arrayBuffer());
+              const gName = pending?.filename || `member_${(member.duty_id || 'SW').replace(/[^a-zA-Z0-9_-]/g, '_')}_${Date.now()}.jpg`;
+              const gRes = await uploadToGoogleDrive(buf, gName, {
+                memberName: `${member.first_name || ''} ${member.last_name || ''}`.trim(),
+                dutyId: member.duty_id || '-'
+              });
+              if (gRes && gRes.success) {
+                await supabase.from('members').update({
+                  gdrive_file_id: gRes.fileId,
+                  gdrive_file_url: gRes.webViewLink
+                }).eq('id', member.id);
+              }
+            }
+          } catch (gErr) {
+            console.warn('[GDRIVE BACKGROUND BACKUP NOTICE]:', gErr.message);
+          }
+        })();
+      }
 
       const shiftLabel = getShiftLabel(member.duty_day);
       const doneEmbed = new EmbedBuilder()
@@ -9680,6 +9732,13 @@ const server = http.createServer(async (req, res) => {
       fs.createReadStream(assetPath).pipe(res);
       return;
     }
+  }
+
+  // 🔲 เส้นทางเครื่องมือครอปรูปถ่าย (Redirect ไปยัง Web Dashboard)
+  if (parsedUrl.pathname === '/crop' || parsedUrl.pathname === '/crop.html') {
+    res.writeHead(302, { 'Location': `${getWebDashboardUrl()}/crop${parsedUrl.search}` });
+    res.end();
+    return;
   }
 
   // 🪪 เส้นทางเปิดดูบัตรประจำตัวสารวัตรนักเรียน: /card?id=UUID หรือ /verify?id=UUID
