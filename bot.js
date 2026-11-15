@@ -212,6 +212,7 @@ if (cleanupSheetsTimer.unref) cleanupSheetsTimer.unref();
 // ==========================================================
 const pendingPhotoUploads = new Map(); // memberId -> { url, name, timestamp }
 const pendingAttendanceUploads = new Map(); // userId -> { shift, dateStr, channelId, timestamp }
+const pendingPhotoConfirmations = new Map(); // memberId -> { member, photoUrl, filename, userId, timestamp }
 
 function getUploadDir() {
   const dir1 = path.join(__dirname, '..', 'web', 'public', 'uploads');
@@ -575,16 +576,16 @@ async function sendLostFoundGuidePanel(channel) {
 async function sendVerifyPanel(channel) {
   if (!channel) return null;
   const embed = new EmbedBuilder()
-    .setTitle('🛡️ จุดลงทะเบียนและยืนยันตัวตนสารวัตรนักเรียน')
+    .setTitle('🛡️ จุดลงทะเบียนสารวัตรนักเรียนใหม่')
     .setDescription(
       'ยินดีต้อนรับสารวัตรนักเรียนโรงเรียนพระนารายณ์ทุกท่าน เข้าสู่ระบบบริหารงานดิจิทัล\n\n' +
       '━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n' +
-      '📌 **ขั้นตอนการยืนยันตัวตน (3 ขั้นตอนง่ายๆ):**\n' +
-      '1️⃣ **[เลือกชื่อของคุณ]** — ค้นหาชื่อ-นามสกุลจากฐานข้อมูล หรือกดขอเพิ่มชื่อใหม่\n' +
-      '2️⃣ **[เลือกรอบเวร]** — กำหนดวันปฏิบัติหน้าที่หลัก (จันทร์-ศุกร์) หรือเวรพิเศษ (S)\n' +
-      '3️⃣ **[รอการอนุมัติ]** — ส่งคำขอให้คณะผู้บริหารตรวจสอบ บอทจะมอบยศและตั้งชื่อให้อัตโนมัติ\n' +
+      '📌 **ขั้นตอนการลงทะเบียน (ทำจบในช่องนี้):**\n' +
+      '1️⃣ **[กรอกข้อมูลสารวัตร]** — ค้นหาชื่อ-นามสกุล หรือกรอกข้อมูลใหม่ และเลือกรอบเวร\n' +
+      '2️⃣ **[ส่งรูปถ่ายหน้าตรง]** — แนบรูปถ่ายหน้าตรงในเครื่องแบบ ส่งเข้ามาในช่องนี้ได้ทันที\n' +
+      '3️⃣ **[ยืนยันรูป & ส่งอนุมัติ]** — ตรวจสอบรูปและกดยืนยัน บอทจะส่งคำขอให้คณะผู้บริหารตรวจสอบ\n' +
       '━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n' +
-      '👉 *กดปุ่ม **"🛡️ เริ่มต้นยืนยันตัวตน"** ด้านล่างเพื่อเริ่มทำรายการทันที*'
+      '👉 *กดปุ่ม **"🛡️ เริ่มต้นลงทะเบียนสารวัตร"** ด้านล่างเพื่อเริ่มทำรายการทันที*'
     )
     .setColor('#3498DB')
     .setFooter({ text: 'ฝ่ายบริหารงานสารวัตรนักเรียน • โรงเรียนพระนารายณ์' });
@@ -599,7 +600,7 @@ async function sendVerifyPanel(channel) {
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId('btn_start_verify')
-      .setLabel('🛡️ เริ่มต้นยืนยันตัวตน')
+      .setLabel('🛡️ เริ่มต้นลงทะเบียนสารวัตร')
       .setStyle(ButtonStyle.Primary)
   );
 
@@ -907,8 +908,29 @@ async function refreshAllChannelsAndPanels(guild, options = { purge: true }) {
   };
 
   try {
-    const chVerify = findChannel(guild, '🛡️│ยืนยันตัวตน') || guild.channels.cache.find(c => c.name.includes('ยืนยันตัวตน'));
-    const chPhoto = findChannel(guild, process.env.PHOTO_CHANNEL_ID) || guild.channels.cache.find(c => c.name.includes('อัปโหลดรูปโปรไฟล์'));
+    let chVerify = findChannel(guild, '🛡️│ลงทะเบียนสารวัตรใหม่') ||
+      findChannel(guild, '🛡️│ยืนยันตัวตน') ||
+      guild.channels.cache.find(c => c.name.includes('ลงทะเบียน') || c.name.includes('ยืนยันตัวตน'));
+
+    if (chVerify && chVerify.name && (chVerify.name.includes('ยืนยันตัวตน') && !chVerify.name.includes('ลงทะเบียนสารวัตรใหม่'))) {
+      await chVerify.setName('🛡️│ลงทะเบียนสารวัตรใหม่').catch(() => {});
+    }
+
+    if (chVerify) {
+      await chVerify.permissionOverwrites.edit(guild.roles.everyone, {
+        ViewChannel: true,
+        SendMessages: true,
+        AttachFiles: true,
+        ReadMessageHistory: true
+      }).catch(() => {});
+    }
+
+    const chPhoto = findChannel(guild, process.env.PHOTO_CHANNEL_ID) ||
+      guild.channels.cache.find(c => c.name.includes('อัปโหลดรูปโปรไฟล์') || c.name.includes('อัปโหลดรูป'));
+    if (chPhoto) {
+      console.log(`[REFRESH] 🗑️ ลบห้องอัปโหลดรูปเดิม #${chPhoto.name} เพื่อรวมเข้ากับ #🛡️│ลงทะเบียนสารวัตรใหม่`);
+      await chPhoto.delete('รวมช่องเข้ากับห้อง #🛡️│ลงทะเบียนสารวัตรใหม่').catch(() => {});
+    }
     const chAttendance = findChannel(guild, process.env.ATTENDANCE_CHANNEL_ID) ||
       findChannel(guild, '📑│เช็คชื่อ') ||
       findChannel(guild, 'เช็คชื่อ') ||
@@ -957,12 +979,6 @@ async function refreshAllChannelsAndPanels(guild, options = { purge: true }) {
     if (chVerify) {
       if (options.purge) await purgeChannelMessages(chVerify);
       await sendVerifyPanel(chVerify);
-      result.refreshedChannels++;
-    }
-
-    if (chPhoto) {
-      if (options.purge) await purgeChannelMessages(chPhoto);
-      await sendPhotoPanel(chPhoto);
       result.refreshedChannels++;
     }
 
@@ -1686,8 +1702,28 @@ async function executeDDay(guild, executorUser) {
 
     // 3. Reset Channels & Reinstall Clean Panels
     try {
-      const chVerify = findChannel(guild, '🛡️│ยืนยันตัวตน') || guild.channels.cache.find(c => c.name.includes('ยืนยันตัวตน'));
-      const chPhoto = findChannel(guild, process.env.PHOTO_CHANNEL_ID) || guild.channels.cache.find(c => c.name.includes('อัปโหลดรูปโปรไฟล์'));
+      let chVerify = findChannel(guild, '🛡️│ลงทะเบียนสารวัตรใหม่') ||
+        findChannel(guild, '🛡️│ยืนยันตัวตน') ||
+        guild.channels.cache.find(c => c.name.includes('ลงทะเบียน') || c.name.includes('ยืนยันตัวตน'));
+
+      if (chVerify && chVerify.name && (chVerify.name.includes('ยืนยันตัวตน') && !chVerify.name.includes('ลงทะเบียนสารวัตรใหม่'))) {
+        await chVerify.setName('🛡️│ลงทะเบียนสารวัตรใหม่').catch(() => {});
+      }
+
+      if (chVerify) {
+        await chVerify.permissionOverwrites.edit(guild.roles.everyone, {
+          ViewChannel: true,
+          SendMessages: true,
+          AttachFiles: true,
+          ReadMessageHistory: true
+        }).catch(() => {});
+      }
+
+      const chPhoto = findChannel(guild, process.env.PHOTO_CHANNEL_ID) ||
+        guild.channels.cache.find(c => c.name.includes('อัปโหลดรูปโปรไฟล์') || c.name.includes('อัปโหลดรูป'));
+      if (chPhoto) {
+        await chPhoto.delete('รวมช่องเข้ากับห้อง #🛡️│ลงทะเบียนสารวัตรใหม่').catch(() => {});
+      }
       const chAttendance = findChannel(guild, process.env.ATTENDANCE_CHANNEL_ID) ||
         findChannel(guild, '📑│เช็คชื่อ') ||
         findChannel(guild, 'เช็คชื่อ') ||
@@ -1706,12 +1742,6 @@ async function executeDDay(guild, executorUser) {
       if (chVerify) {
         await purgeChannelMessages(chVerify);
         await sendVerifyPanel(chVerify);
-        result.resetChannels++;
-      }
-
-      if (chPhoto) {
-        await purgeChannelMessages(chPhoto);
-        await sendPhotoPanel(chPhoto);
         result.resetChannels++;
       }
 
@@ -2741,27 +2771,32 @@ client.on('messageCreate', async (message) => {
     }
   }
 
-  // ฟังก์ชันดักรับรูปโปรไฟล์ทำบัตรในห้อง #อัปโหลดรูปโปรไฟล์-ทำบัตร
+  // ฟังก์ชันดักรับรูปโปรไฟล์ทำบัตรในห้อง #🛡️│ลงทะเบียนสารวัตรใหม่
   const isVaultChannel = message.channel && message.channel.name && (
     message.channel.name === PHOTO_VAULT_CHANNEL_NAME ||
     message.channel.name.includes('คลังเก็บรูปสำรอง')
   );
   if (isVaultChannel) return;
 
-  const isPhotoChannel = (PHOTO_CHANNEL_ID && message.channel.id === PHOTO_CHANNEL_ID) ||
+  const isRegistrationChannel = (VERIFY_CHANNEL_ID && message.channel.id === VERIFY_CHANNEL_ID) ||
+    (PHOTO_CHANNEL_ID && message.channel.id === PHOTO_CHANNEL_ID) ||
+    (message.channel.id === '1567570864835264542') ||
     (message.channel.id === '1567570866663989389') ||
     (message.channel && message.channel.name && (
-      message.channel.name.includes('รูป') ||
-      message.channel.name.includes('photo') ||
-      message.channel.name.includes('ทำบัตร')
+      message.channel.name.includes('ลงทะเบียน') ||
+      message.channel.name.includes('ยืนยันตัวตน') ||
+      message.channel.name.includes('อัปโหลดรูป')
     ));
 
-  if (isPhotoChannel && !message.author.bot) {
+  if (isRegistrationChannel && !message.author.bot) {
     if (message.attachments.size > 0) {
       const attachment = message.attachments.first();
       const isImage = (attachment.contentType && attachment.contentType.startsWith('image/')) ||
                       /\.(jpe?g|png|webp|gif|heic)$/i.test(attachment.name || attachment.url);
       if (isImage) {
+        // ลบข้อความรูปภาพของผู้ใช้ทันทีเพื่อรักษาความสะอาดห้องและความเป็นส่วนตัว
+        await message.delete().catch(() => {});
+
         try {
           const { data: member } = await supabase
             .from('members')
@@ -2771,87 +2806,95 @@ client.on('messageCreate', async (message) => {
             .limit(1)
             .maybeSingle();
 
-          if (member) {
-            // 1. ดาวน์โหลดไฟล์รูปภาพเข้าสู่ Memory Buffer ทันทีเพื่อป้องกันลิงก์ Discord หมดอายุ
-            const imgRes = await fetch(attachment.url);
-            if (!imgRes.ok) throw new Error(`Download attachment failed with status ${imgRes.status}`);
-            const imgBuffer = Buffer.from(await imgRes.arrayBuffer());
+          if (!member) {
+            const warnMsg = await message.channel.send({
+              content: `⚠️ <@${message.author.id}> ยังไม่พบข้อมูลในระบบ: กรุณากดปุ่ม **"🛡️ เริ่มต้นลงทะเบียนสารวัตร"** ด้านบนเพื่อกรอกข้อมูลก่อนส่งรูปครับ`
+            }).catch(() => null);
+            if (warnMsg) setTimeout(() => warnMsg.delete().catch(() => {}), 10000);
+            return;
+          }
 
-            const extMatch = (attachment.name || attachment.url).match(/\.(jpe?g|png|webp|gif|heic)/i);
-            const ext = extMatch ? extMatch[1].toLowerCase().replace('jpeg', 'jpg') : 'jpg';
-            const safeDutyId = (member.duty_id || member.id || 'photo').replace(/[^a-zA-Z0-9_-]/g, '_');
-            const filename = `member_${safeDutyId}_${Date.now()}.${ext}`;
+          // 1. ดาวน์โหลดไฟล์รูปภาพเข้าสู่ Memory Buffer ทันทีเพื่อป้องกันลิงก์ Discord หมดอายุ
+          const imgRes = await fetch(attachment.url);
+          if (!imgRes.ok) throw new Error(`Download attachment failed with status ${imgRes.status}`);
+          const imgBuffer = Buffer.from(await imgRes.arrayBuffer());
 
-            // 2. บันทึกสำเนาลง Local Storage สำหรับ Web Server
-            const uploadDir = path.join(__dirname, '..', 'web', 'public', 'uploads');
+          const extMatch = (attachment.name || attachment.url).match(/\.(jpe?g|png|webp|gif|heic)/i);
+          const ext = extMatch ? extMatch[1].toLowerCase().replace('jpeg', 'jpg') : 'jpg';
+          const safeDutyId = (member.duty_id || member.id || 'photo').replace(/[^a-zA-Z0-9_-]/g, '_');
+          const filename = `member_${safeDutyId}_${Date.now()}.${ext}`;
+
+          // 2. บันทึกสำเนาลง Local Storage สำหรับ Web Server
+          const uploadDir = path.join(__dirname, '..', 'web', 'public', 'uploads');
+          try {
+            if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+            fs.writeFileSync(path.join(uploadDir, filename), imgBuffer);
+          } catch (fsErr) {
+            console.warn('[PHOTO UPLOAD] Local save notice:', fsErr.message);
+          }
+
+          // 3. อัปโหลดเข้าสู่ Supabase Storage (Bucket: sarawat-photos) เพื่อให้ได้ Public CDN URL ถาวร ไม่หมดอายุ
+          let permanentUrl = null;
+          try {
+            const storagePath = `members/${filename}`;
+            const { error: storageErr } = await supabase.storage
+              .from('sarawat-photos')
+              .upload(storagePath, imgBuffer, {
+                contentType: attachment.contentType || (ext === 'png' ? 'image/png' : 'image/jpeg'),
+                upsert: true
+              });
+
+            if (!storageErr) {
+              const { data: { publicUrl } } = supabase.storage.from('sarawat-photos').getPublicUrl(storagePath);
+              permanentUrl = publicUrl;
+            } else {
+              console.warn('[SUPABASE STORAGE NOTICE]:', storageErr.message);
+            }
+          } catch (sErr) {
+            console.warn('[SUPABASE STORAGE ERROR]:', sErr.message);
+          }
+
+          // 4. สำรองไฟล์เข้าห้องคลังรูปสำรองลับของบอท (#📸│คลังเก็บรูปสำรอง-bot)
+          const vaultChannel = await getOrCreatePhotoVaultChannel(message.guild);
+          let vaultAttachmentUrl = null;
+          if (vaultChannel) {
             try {
-              if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
-              fs.writeFileSync(path.join(uploadDir, filename), imgBuffer);
-            } catch (fsErr) {
-              console.warn('[PHOTO UPLOAD] Local save notice:', fsErr.message);
-            }
+              const vaultAttachment = new AttachmentBuilder(imgBuffer, { name: filename });
+              const vaultEmbed = new EmbedBuilder()
+                .setTitle('📸 สำรองรูปถ่ายทำบัตรประจำตัว (Vault Archive)')
+                .setDescription(
+                  `• สมาชิก: **${member.first_name} ${member.last_name} (${member.nickname})**\n` +
+                  `• รหัสเวร: \`${member.duty_id || 'รอดำเนินการ'}\` • ผลัดเวร: **${getShiftLabel(member.duty_day)}**\n` +
+                  `• บัญชี Discord: <@${message.author.id}> (\`${message.author.id}\`)\n` +
+                  `• ชั้น/เลขที่: ม.${member.grade_class || '-'} #${member.student_no || '-'}\n` +
+                  `• บันทึกเวลา: <t:${Math.floor(Date.now() / 1000)}:F>`
+                )
+                .setImage(`attachment://${filename}`)
+                .setColor('#3498DB');
 
-            // 3. อัปโหลดเข้าสู่ Supabase Storage (Bucket: sarawat-photos) เพื่อให้ได้ Public CDN URL ถาวร ไม่หมดอายุ
-            let permanentUrl = null;
-            try {
-              const storagePath = `members/${filename}`;
-              const { error: storageErr } = await supabase.storage
-                .from('sarawat-photos')
-                .upload(storagePath, imgBuffer, {
-                  contentType: attachment.contentType || (ext === 'png' ? 'image/png' : 'image/jpeg'),
-                  upsert: true
-                });
-
-              if (!storageErr) {
-                const { data: { publicUrl } } = supabase.storage.from('sarawat-photos').getPublicUrl(storagePath);
-                permanentUrl = publicUrl;
-              } else {
-                console.warn('[SUPABASE STORAGE NOTICE]:', storageErr.message);
+              const vaultMsg = await vaultChannel.send({
+                embeds: [vaultEmbed],
+                files: [vaultAttachment]
+              });
+              if (vaultMsg.attachments.size > 0) {
+                vaultAttachmentUrl = vaultMsg.attachments.first().url;
               }
-            } catch (sErr) {
-              console.warn('[SUPABASE STORAGE ERROR]:', sErr.message);
+            } catch (vErr) {
+              console.error('[VAULT SEND ERROR]:', vErr.message);
             }
+          }
 
-            // 4. สำรองไฟล์เข้าห้องคลังรูปสำรองลับของบอท (#📸│คลังเก็บรูปสำรอง-bot)
-            const vaultChannel = await getOrCreatePhotoVaultChannel(message.guild);
-            let vaultAttachmentUrl = null;
-            if (vaultChannel) {
-              try {
-                const vaultAttachment = new AttachmentBuilder(imgBuffer, { name: filename });
-                const vaultEmbed = new EmbedBuilder()
-                  .setTitle('📸 สำรองรูปถ่ายทำบัตรประจำตัว (Vault Archive)')
-                  .setDescription(
-                    `• สมาชิก: **${member.first_name} ${member.last_name} (${member.nickname})**\n` +
-                    `• รหัสเวร: \`${member.duty_id || 'รอดำเนินการ'}\` • ผลัดเวร: **${getShiftLabel(member.duty_day)}**\n` +
-                    `• บัญชี Discord: <@${message.author.id}> (\`${message.author.id}\`)\n` +
-                    `• ชั้น/เลขที่: ม.${member.grade_class || '-'} #${member.student_no || '-'}\n` +
-                    `• บันทึกเวลา: <t:${Math.floor(Date.now() / 1000)}:F>`
-                  )
-                  .setImage(`attachment://${filename}`)
-                  .setColor('#3498DB');
+          // 5. URL รูปภาพที่บันทึก
+          const finalProfileUrl = permanentUrl || vaultAttachmentUrl || `/uploads/${filename}`;
 
-                const vaultMsg = await vaultChannel.send({
-                  embeds: [vaultEmbed],
-                  files: [vaultAttachment]
-                });
-                if (vaultMsg.attachments.size > 0) {
-                  vaultAttachmentUrl = vaultMsg.attachments.first().url;
-                }
-              } catch (vErr) {
-                console.error('[VAULT SEND ERROR]:', vErr.message);
-              }
-            }
-
-            // 5. บันทึก URL ที่เสถียรที่สุดเข้า Database (Supabase Public CDN > Vault URL > Local URL)
-            const finalProfileUrl = permanentUrl || vaultAttachmentUrl || `/uploads/${filename}`;
-
+          // หากเป็นสมาชิก ACTIVE อยู่แล้ว -> อัปเดตบัตรได้ทันที
+          if (member.status === 'ACTIVE') {
             await supabase
               .from('members')
               .update({ profile_image_url: finalProfileUrl, updated_at: new Date() })
               .eq('id', member.id);
 
             const shiftLabel = getShiftLabel(member.duty_day);
-            const dutyTag = member.duty_id ? `\`[${member.duty_id}]\`` : '`[รออนุมัติ]`';
             const cardUrl = `${getBaseUrl()}/card?id=${member.id}`;
             const cardRow = new ActionRowBuilder().addComponents(
               new ButtonBuilder()
@@ -2861,23 +2904,61 @@ client.on('messageCreate', async (message) => {
             );
 
             const successEmbed = new EmbedBuilder()
-              .setTitle('📸 บันทึกรูปถ่ายทำบัตรสำเร็จ')
+              .setTitle('📸 อัปเดตรูปถ่ายทำบัตรสำเร็จ')
               .setDescription(
                 `สมาชิก: **${member.first_name} ${member.last_name} (${member.nickname})**\n` +
-                `ชั้น: ม.${member.grade_class} #${member.student_no} • รหัสเวร: ${dutyTag} • เวร: ${shiftLabel}\n\n` +
-                `✅ บันทึกรูปถ่ายต้นฉบับเข้าคลังเก็บรูปสำรองบอท และอัปเดตระบบทำบัตรสารวัตรเรียบร้อยแล้ว`
+                `ชั้น: ม.${member.grade_class} #${member.student_no} • รหัสเวร: \`[${member.duty_id || 'สารวัตร'}]\` • เวร: ${shiftLabel}\n\n` +
+                `✅ บันทึกรูปถ่ายต้นฉบับเข้าคลังรูปและอัปเดตระบบทำบัตรสารวัตรเรียบร้อยแล้ว`
               )
               .setImage(finalProfileUrl.startsWith('http') ? finalProfileUrl : attachment.url)
               .setColor('#2ECC71');
 
-            await message.reply({ embeds: [successEmbed], components: [cardRow] }).catch(() => {});
-            return;
-          } else {
-            await message.reply({
-              content: `⚠️ <@${message.author.id}> ไม่พบข้อมูลในระบบ: กรุณายืนยันตัวตนที่ห้อง **#🛡️│ยืนยันตัวตน** ก่อนส่งรูป`
-            }).catch(() => {});
+            const successMsg = await message.channel.send({
+              content: `👤 <@${message.author.id}> อัปเดตรูปถ่ายสำเร็จ:`,
+              embeds: [successEmbed],
+              components: [cardRow]
+            }).catch(() => null);
+            if (successMsg) setTimeout(() => successMsg.delete().catch(() => {}), 15000);
             return;
           }
+
+          // หากเป็นผู้ลงทะเบียนใหม่ (รออนุมัติ) -> ส่งตัวเลือกยืนยันและเปลี่ยนรูปตามความต้องการ
+          pendingPhotoConfirmations.set(member.id, {
+            member,
+            photoUrl: finalProfileUrl,
+            filename: filename,
+            userId: message.author.id,
+            timestamp: Date.now()
+          });
+
+          const confirmEmbed = new EmbedBuilder()
+            .setTitle('📸 ตรวจสอบรูปถ่ายหน้าตรงของคุณ')
+            .setDescription(
+              `สวัสดีครับคุณ **${member.first_name} ${member.last_name} (${member.nickname})**\n\n` +
+              `บอทได้รับรูปถ่ายของคุณและส่งเข้าคลังเก็บข้อมูลในดิสคอร์ดเรียบร้อยแล้ว\n` +
+              `👉 **ต้องการใช้รูปนี้สำหรับทำบัตรและส่งขออนุมัติใช่หรือไม่?**`
+            )
+            .setImage(finalProfileUrl.startsWith('http') ? finalProfileUrl : attachment.url)
+            .setColor('#3498DB')
+            .setFooter({ text: 'กด "ยืนยันใช้รูปนี้" เพื่อส่งคำขอให้ผู้บริหารอนุมัติ หรือกด "เปลี่ยนรูปภาพใหม่"' });
+
+          const confirmRow = new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+              .setCustomId(`btn_confirm_photo_${member.id}`)
+              .setLabel('✅ ยืนยันใช้รูปนี้')
+              .setStyle(ButtonStyle.Success),
+            new ButtonBuilder()
+              .setCustomId(`btn_reupload_photo_${member.id}`)
+              .setLabel('🔄 เปลี่ยนรูปภาพใหม่')
+              .setStyle(ButtonStyle.Secondary)
+          );
+
+          await message.channel.send({
+            content: `👤 <@${message.author.id}> ตรวจสอบรูปภาพของคุณด้านล่างนี้:`,
+            embeds: [confirmEmbed],
+            components: [confirmRow]
+          });
+          return;
         } catch (err) {
           console.error('[PHOTO UPLOAD ERROR]:', err);
         }
@@ -4832,7 +4913,7 @@ client.on('interactionCreate', async (interaction) => {
                    `• รหัสเวร: \`[${existingActive.duty_id || '-'}]\`\n` +
                    `• เวร: ${shiftLabel}\n` +
                    `• ตำแหน่ง: ${existingActive.shift_role === 'SHIFT_HEAD' ? 'หัวหน้าเวร' : (existingActive.shift_role === 'SHIFT_DEPUTY' ? 'รองหัวหน้าเวร' : 'สารวัตรประจำเวร')}\n\n` +
-                   `*(หากต้องการส่งรูปโปรไฟล์ทำบัตร ให้ไปที่ห้อง <#${PHOTO_CHANNEL_ID || '1567570866663989389'}> ได้เลยครับ)*`
+                   `*(หากต้องการอัปเดตรูปถ่ายทำบัตร สามารถส่งรูปใหม่เข้ามาในช่องนี้ได้ตลอดเวลาครับ)*`
         });
         return;
       }
@@ -5151,50 +5232,115 @@ client.on('interactionCreate', async (interaction) => {
 
       const shiftLabel = getShiftLabel(effectiveDutyDay);
 
-      const doneEmbed = new EmbedBuilder()
-        .setTitle('✅ [ขั้นตอนที่ 3/3] ส่งคำขอลงทะเบียนเรียบร้อยแล้ว')
-        .setColor('#2ECC71')
+      const promptPhotoEmbed = new EmbedBuilder()
+        .setTitle('📸 [ขั้นตอนสุดท้าย] กรุณาส่งรูปถ่ายหน้าตรงของคุณ')
+        .setColor('#F39C12')
         .setDescription(
-          `ระบบได้บันทึกและส่งข้อมูลคำขอของคุณไปยังห้องตรวจสอบของคณะผู้บริหารแล้ว\n\n` +
-          `👤 **ผู้ลงทะเบียน:** ${member.first_name} ${member.last_name} (**${member.nickname}**)\n` +
-          `📅 **รอบการปฏิบัติหน้าที่:** **${shiftLabel}**\n` +
-          `⏳ **สถานะ:** **รอการอนุมัติจากผู้บริหาร (PENDING APPROVAL)**\n\n` +
+          `ระบบได้บันทึกข้อมูลส่วนตัวของ **${member.first_name} ${member.last_name} (${member.nickname})** เรียบร้อยแล้ว!\n\n` +
+          `👉 **ส่งรูปในช่องนี้เพื่ออัพโหลดรูปหน้าคุณ**\n` +
+          `*(แนบไฟล์รูปถ่ายหน้าตรงในเครื่องแบบของคุณ เพื่อนำไปจัดทำบัตรประจำตัวและส่งขออนุมัติ)*\n\n` +
           `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-          `🔹 **สถานะขั้นตอน:** 🟩🟩🟩 (ส่งคำขอสำเร็จ)\n` +
-          `💡 *เมื่อผู้บริหารกดอนุมัติ ระบบจะมอบยศ Discord และส่งข้อความแจ้งเตือนทาง DM ทันที*`
-        );
+          `💡 *เมื่อคุณส่งรูปเข้ามาในช่องนี้แล้ว บอทจะบันทึกรูปและให้คุณตรวจสอบเพื่อกดยืนยันก่อนเสนอผู้บริหารทันที*`
+        )
+        .setFooter({ text: 'ระบบลงทะเบียนสารวัตร • โรงเรียนพระนารายณ์' });
 
       await interaction.editReply({
-        embeds: [doneEmbed],
+        embeds: [promptPhotoEmbed],
         content: null,
         components: []
       });
 
-      // ค้นหาห้องอนุมัติ: 1. จาก APPROVAL_CHANNEL_ID 2. fallback ID 3. ค้นหาอัตโนมัติจากชื่อห้อง 'อนุมัติ' ใน Server
+      if (interaction.channel) {
+        await interaction.channel.send({
+          content: `📸 <@${interaction.user.id}> **ส่งรูปในช่องนี้เพื่ออัพโหลดรูปหน้าคุณ** *(รูปถ่ายหน้าตรงในเครื่องแบบ)*`
+        }).catch(() => {});
+      }
+      return;
+    }
+
+    // 📸 จัดการปุ่มยืนยันหรือเปลี่ยนรูปถ่ายหน้าตรงสารวัตร (ก่อนส่งขออนุมัติ)
+    if (interaction.isButton() && (interaction.customId.startsWith('btn_confirm_photo_') || interaction.customId.startsWith('btn_reupload_photo_'))) {
+      const isConfirm = interaction.customId.startsWith('btn_confirm_photo_');
+      const memberId = interaction.customId.replace(isConfirm ? 'btn_confirm_photo_' : 'btn_reupload_photo_', '');
+
+      const { data: member } = await supabase.from('members').select('*').eq('id', memberId).maybeSingle();
+      if (!member || member.discord_id !== interaction.user.id) {
+        await interaction.reply({ content: '⛔ ปุ่มนี้สำหรับเจ้าของข้อมูลเท่านั้นครับ', ephemeral: true });
+        return;
+      }
+
+      if (!isConfirm) {
+        // กดยกเลิก / ขอเปลี่ยนรูปภาพใหม่
+        pendingPhotoConfirmations.delete(memberId);
+        await interaction.update({
+          content: `🔄 <@${interaction.user.id}> คุณขอยกเลิกรูปเดิม **กรุณาส่งรูปถ่ายหน้าตรงรูปใหม่ในช่องนี้ได้เลยครับ**`,
+          embeds: [],
+          components: []
+        });
+        return;
+      }
+
+      // กดยืนยันใช้รูปนี้ -> บันทึกลง Supabase และส่งขออนุมัติเข้าห้องประชุมหัวหน้าทันที
+      await interaction.deferUpdate();
+      const pending = pendingPhotoConfirmations.get(memberId);
+      const photoUrl = pending?.photoUrl || member.profile_image_url;
+      pendingPhotoConfirmations.delete(memberId);
+
+      await supabase.from('members').update({
+        profile_image_url: photoUrl,
+        status: 'PENDING_APPROVAL',
+        updated_at: new Date()
+      }).eq('id', member.id);
+
+      const shiftLabel = getShiftLabel(member.duty_day);
+      const doneEmbed = new EmbedBuilder()
+        .setTitle('✅ ยืนยันรูปถ่ายและส่งคำขออนุมัติเรียบร้อยแล้ว')
+        .setColor('#2ECC71')
+        .setDescription(
+          `ระบบได้บันทึกรูปถ่ายและส่งคำขอของคุณไปยังห้องตรวจสอบของคณะผู้บริหารแล้ว\n\n` +
+          `👤 **สารวัตร:** ${member.first_name} ${member.last_name} (**${member.nickname}**)\n` +
+          `📅 **รอบการปฏิบัติหน้าที่:** **${shiftLabel}**\n` +
+          `⏳ **สถานะ:** **รอการอนุมัติจากผู้บริหาร (PENDING APPROVAL)**\n\n` +
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+          `💡 *เมื่อผู้บริหารกดอนุมัติ ระบบจะมอบยศและส่งข้อความแจ้งเตือนทาง DM ทันที*`
+        )
+        .setThumbnail(photoUrl);
+
+      await interaction.editReply({
+        content: `✅ <@${interaction.user.id}> ดำเนินการส่งคำขออนุมัติเรียบร้อยแล้ว`,
+        embeds: [doneEmbed],
+        components: []
+      });
+
+      // ส่งการ์ดขออนุมัติเข้าห้องประชุมหัวหน้า พร้อมรูปถ่ายขนาดใหญ่
       let approvalChannel = null;
       const targetApprovalId = APPROVAL_CHANNEL_ID || '1567570916932722778';
       approvalChannel = await client.channels.fetch(targetApprovalId).catch(() => null);
 
       if (!approvalChannel && interaction.guild) {
         approvalChannel = interaction.guild.channels.cache.find(c =>
-          c.isTextBased() && (c.name.includes('อนุมัติ') || c.name.toLowerCase().includes('approval'))
+          c.isTextBased() && (c.name.includes('อนุมัติ') || c.name.includes('ห้องประชุมหัวหน้า') || c.name.includes('ผู้นำ-all-in-one'))
         ) || null;
       }
 
       if (approvalChannel) {
+        const isSpecial = member.duty_day && member.duty_day.endsWith('S');
+        const weekday = member.duty_day ? (member.duty_day === 'TSS' ? 'Ts' : member.duty_day.replace(/S+$/, '') || member.duty_day) : 'M';
         const weekdayName = DAY_NAMES[weekday] || weekday;
+
         const approvalEmbed = new EmbedBuilder()
           .setTitle('📋 คำขอลงทะเบียนสารวัตรใหม่ [รอการตรวจสอบ]')
           .setDescription(
-            `มีสารวัตรนักเรียนทำรายการลงทะเบียนเข้ามาใหม่ โปรดตรวจสอบและดำเนินการ\n\n` +
+            `มีสารวัตรนักเรียนทำรายการลงทะเบียนและส่งรูปถ่ายเข้ามาใหม่ โปรดตรวจสอบและดำเนินการ\n\n` +
             `👤 **ชื่อ-สกุล:** ${member.first_name} ${member.last_name} (**${member.nickname}**)\n` +
             `🏫 **ชั้นเรียน:** ม.${member.grade_class} (เลขที่ ${member.student_no})\n` +
             `📞 **เบอร์โทรศัพท์:** \`${member.phone_number || '-'}\`\n` +
             `📅 **เวรประจำวัน:** วัน${weekdayName} (\`${weekday}\`)\n` +
-            `⭐ **ลักษณะเวร:** ${isSpecial ? `⭐ **เวรพิเศษ (ทุกวัน)** [ผลัด \`${effectiveDutyDay}\`]` : `👤 เวรเฉพาะวัน [ผลัด \`${effectiveDutyDay}\`]`}\n` +
+            `⭐ **ลักษณะเวร:** ${isSpecial ? `⭐ **เวรพิเศษ (ทุกวัน)** [ผลัด \`${member.duty_day}\`]` : `👤 เวรเฉพาะวัน [ผลัด \`${member.duty_day}\`]`}\n` +
             `🏷️ **ผลัดเวรสุทธิ:** **${shiftLabel}**\n` +
             `💬 **บัญชี Discord:** <@${interaction.user.id}> (\`${interaction.user.tag}\`)`
           )
+          .setImage(photoUrl)
           .setColor(isSpecial ? '#9B59B6' : '#F39C12')
           .setFooter({ text: 'ระบบลงทะเบียนสารวัตร • โรงเรียนพระนารายณ์' })
           .setTimestamp();
@@ -5213,8 +5359,6 @@ client.on('interactionCreate', async (interaction) => {
         await approvalChannel.send({ embeds: [approvalEmbed], components: [actionRow] }).catch(err => {
           console.error('[APPROVAL SEND ERROR]:', err);
         });
-      } else {
-        console.warn('[APPROVAL WARNING] Could not find approval channel. Checked ID:', targetApprovalId);
       }
       return;
     }
@@ -5345,6 +5489,14 @@ client.on('interactionCreate', async (interaction) => {
               }
 
               const shiftLabel = getShiftLabel(member.duty_day);
+              const cardUrl = `${getBaseUrl()}/card?id=${member.id}`;
+              const dmRow = new ActionRowBuilder().addComponents(
+                new ButtonBuilder()
+                  .setLabel('🪪 เปิดดูบัตรประจำตัวสารวัตร')
+                  .setStyle(ButtonStyle.Link)
+                  .setURL(cardUrl)
+              );
+
               const dmEmbed = new EmbedBuilder()
                 .setTitle('🎉 ยินดีด้วย! คำขอลงทะเบียนได้รับการอนุมัติแล้ว')
                 .setColor('#2ECC71')
@@ -5354,12 +5506,16 @@ client.on('interactionCreate', async (interaction) => {
                   `👤 **ชื่อเล่น:** คุณ**${member.nickname}** (${member.first_name})\n` +
                   `📅 **รอบการปฏิบัติหน้าที่:** **${shiftLabel}**\n\n` +
                   `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-                  `📸 **ขั้นตอนถัดไป:**\n` +
-                  `โปรดเข้าไปที่ห้อง <#${PHOTO_CHANNEL_ID || '1567570866663989389'}> เพื่อส่งรูปถ่ายหน้าตรงของคุณสำหรับจัดทำบัตรประจำตัวสารวัตรดิจิทัล 3D`
+                  `🪪 **บัตรประจำตัวดิจิทัล 3D:** พร้อมใช้งานแล้ว สามารถกดเปิดดูบัตรได้ที่ปุ่มด้านล่าง\n` +
+                  `*(หากต้องการอัปเดตรูปถ่ายใหม่ สามารถส่งรูปเข้ามาในห้องลงทะเบียนได้ตลอดเวลา)*`
                 )
                 .setFooter({ text: 'คณะกรรมการสารวัตรนักเรียน โรงเรียนพระนารายณ์' });
 
-              await guildMember.send({ embeds: [dmEmbed] }).catch(() => {});
+              if (member.profile_image_url) {
+                dmEmbed.setThumbnail(member.profile_image_url);
+              }
+
+              await guildMember.send({ embeds: [dmEmbed], components: [dmRow] }).catch(() => {});
             }
           } catch (e) {
             console.warn('Error applying approved member roles/DM:', e.message);

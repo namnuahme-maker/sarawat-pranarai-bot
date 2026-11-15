@@ -103,16 +103,18 @@ client.once(Events.ClientReady || 'ready', async () => {
 
     // 2. ตรวจสอบและสร้าง Categories & Channels
     // Category 1
-    const catOnboarding = await getOrCreateCategory(guild, '📌 จุดเริ่มต้น & ยืนยันตัวตน');
-    const chVerify = await getOrCreateTextChannel(guild, '🛡️│ยืนยันตัวตน', catOnboarding.id, [
-      { id: everyoneRole.id, allow: [PermissionsBitField.Flags.ViewChannel], deny: [PermissionsBitField.Flags.SendMessages] },
-      { id: verifiedRole.id, deny: [PermissionsBitField.Flags.ViewChannel] }
+    const catOnboarding = await getOrCreateCategory(guild, '📌 จุดเริ่มต้น & ลงทะเบียนสารวัตร');
+    const chVerify = await getOrCreateTextChannel(guild, '🛡️│ลงทะเบียนสารวัตรใหม่', catOnboarding.id, [
+      { id: everyoneRole.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.AttachFiles, PermissionsBitField.Flags.ReadMessageHistory] }
     ]);
-    const chPhoto = await getOrCreateTextChannel(guild, '📸│อัปโหลดรูปโปรไฟล์-ทำบัตร', catOnboarding.id, [
-      { id: everyoneRole.id, deny: [PermissionsBitField.Flags.ViewChannel] },
-      { id: verifiedRole.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.AttachFiles] }
-    ]);
-    createdChannelIds['PHOTO_CHANNEL_ID'] = chPhoto.id;
+    createdChannelIds['VERIFY_CHANNEL_ID'] = chVerify.id;
+
+    // ตรวจสอบและลบห้องอัปโหลดรูปเดิมออกเพื่อรวมช่อง
+    const oldPhotoCh = guild.channels.cache.find(c => c.name.includes('อัปโหลดรูปโปรไฟล์') || c.name.includes('อัปโหลดรูป'));
+    if (oldPhotoCh) {
+      console.log(`[SETUP] 🗑️ ลบห้องแยก #${oldPhotoCh.name} เพื่อรวมเข้ากับ #🛡️│ลงทะเบียนสารวัตรใหม่`);
+      await oldPhotoCh.delete('รวมช่องเข้ากับห้อง #🛡️│ลงทะเบียนสารวัตรใหม่').catch(() => {});
+    }
 
     // Category 2
     const catHQ = await getOrCreateCategory(guild, '📢 ข่าวสารและส่วนกลาง');
@@ -203,12 +205,12 @@ client.once(Events.ClientReady || 'ready', async () => {
     const verifyMessages = await chVerify.messages.fetch({ limit: 5 });
     if (verifyMessages.size === 0) {
       const embed = new EmbedBuilder()
-        .setTitle('🛡️ ยืนยันตัวตนสารวัตรนักเรียน')
+        .setTitle('🛡️ จุดลงทะเบียนสารวัตรนักเรียนใหม่')
         .setDescription(
-          'กดปุ่ม **"🛡️ ยืนยันตัวตน"** ด้านล่างเพื่อ:\n' +
-          '• ค้นหาชื่อตนเอง หรือกดเพิ่มชื่อใหม่\n' +
+          'กดปุ่ม **"🛡️ เริ่มต้นลงทะเบียนสารวัตร"** ด้านล่างเพื่อ:\n' +
+          '• กรอกข้อมูลสารวัตร หรือค้นหาชื่อตนเอง\n' +
           '• เลือกรอบเวรประจำวัน (จันทร์-ศุกร์ หรือ เวรพิเศษ S)\n' +
-          '• ส่งคำขอให้ผู้บริหารอนุมัติเข้าปฏิบัติหน้าที่'
+          '• ส่งรูปถ่ายหน้าตรงในช่องนี้เพื่อทำบัตรและส่งขออนุมัติ'
         )
         .setColor('#3498DB')
         .setFooter({ text: 'SARAWAT-BOT • ระบบลงทะเบียนสารวัตร' });
@@ -216,7 +218,7 @@ client.once(Events.ClientReady || 'ready', async () => {
       const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
           .setCustomId('btn_start_verify')
-          .setLabel('🛡️ ยืนยันตัวตน')
+          .setLabel('🛡️ เริ่มต้นลงทะเบียนสารวัตร')
           .setStyle(ButtonStyle.Primary)
       );
 
@@ -360,35 +362,7 @@ client.once(Events.ClientReady || 'ready', async () => {
       await chAllInOne.send({ embeds: [embed], components: [row1, row2], files: aioFiles });
     }
 
-    const photoMessages = await chPhoto.messages.fetch({ limit: 5 });
-    if (photoMessages.size === 0) {
-      const embed = new EmbedBuilder()
-        .setTitle('📸 ส่งรูปโปรไฟล์ทำบัตร')
-        .setDescription(
-          '1. แนบรูปถ่ายหน้าตรงแล้วส่งในห้องนี้\n' +
-          '2. บอทผูกรูปเข้ากับข้อมูลสมาชิกอัตโนมัติ\n\n' +
-          '*(ยังไม่ลงทะเบียน? ไปห้อง 🛡️│ยืนยันตัวตน ก่อน)*'
-        )
-        .setColor('#3498DB');
-
-      const photoFiles = [];
-      const photoBanner = path.join(__dirname, 'assets', 'panel_send_photo.jpg');
-      if (fs.existsSync(photoBanner)) {
-        photoFiles.push(new AttachmentBuilder(photoBanner, { name: 'panel_send_photo.jpg' }));
-        embed.setImage('attachment://panel_send_photo.jpg');
-      }
-
-      const row = new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-          .setCustomId('btn_check_my_photo')
-          .setLabel('🔍 เช็ครูปของฉัน')
-          .setStyle(ButtonStyle.Primary)
-      );
-
-      await chPhoto.send({ embeds: [embed], components: [row], files: photoFiles });
-    }
-
-    console.log(`[SETUP] Interactive buttons deployed (#ยืนยันตัวตน, #อัปโหลดรูปโปรไฟล์, #ขอใบตารางเช็คชื่อ, #ขอลาเวร, #ตรวจสอบข้อมูลสมาชิก)`);
+    console.log(`[SETUP] Interactive buttons deployed (#ลงทะเบียนสารวัตรใหม่, #ขอใบตารางเช็คชื่อ, #ขอลาเวร, #ตรวจสอบข้อมูลสมาชิก)`);
 
     // 4. บันทึกค่า Config ลง .env
     updateEnvFile({

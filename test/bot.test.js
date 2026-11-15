@@ -290,16 +290,16 @@ describe('SARAWAT-BOT New Shift & Combined Duty ID Verification', () => {
     assert.equal(delta.obsoleteDayRoles.includes('role_special'), false); // Special role kept
   });
 
-  test('Slash Commands list must contain all 15 commands and valid Discord naming conventions', () => {
+  test('Slash Commands list must contain all 17 commands and valid Discord naming conventions', () => {
     const { slashCommands } = require('../bot.js');
     assert.equal(Array.isArray(slashCommands), true);
-    assert.equal(slashCommands.length, 15);
+    assert.equal(slashCommands.length, 17);
 
     const commandNames = slashCommands.map(c => c.name);
     const expected = [
       'status', 'my-card', 'sync-roles', 'semester',
       'setup-verify', 'setup-leave', 'setup-attendance',
-      'setup-photo', 'setup-appoint', 'setup-lost-found', 'setup-all', 'd-day', 'killfile', 'demote', 'test-duty'
+      'setup-photo', 'setup-appoint', 'setup-all', 'setup-service', 'setup-lost-found', 'd-day', 'killfile', 'purge-system-data', 'demote', 'test-duty'
     ];
 
     for (const exp of expected) {
