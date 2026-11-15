@@ -2796,9 +2796,6 @@ client.on('messageCreate', async (message) => {
       const isImage = (attachment.contentType && attachment.contentType.startsWith('image/')) ||
                       /\.(jpe?g|png|webp|gif|heic)$/i.test(attachment.name || attachment.url);
       if (isImage) {
-        // ลบข้อความรูปภาพของผู้ใช้ทันทีเพื่อรักษาความสะอาดห้องและความเป็นส่วนตัว
-        await message.delete().catch(() => {});
-
         try {
           const { data: member } = await supabase
             .from('members')
@@ -2816,17 +2813,20 @@ client.on('messageCreate', async (message) => {
             return;
           }
 
-          // 1. ดาวน์โหลดไฟล์รูปภาพเข้าสู่ Memory Buffer ทันทีเพื่อป้องกันลิงก์ Discord หมดอายุ
+          // 1. ดาวน์โหลดไฟล์รูปภาพเข้าสู่ Memory Buffer ทันที ก่อนลบข้อความ เพื่อป้องกันลิงก์ Discord CDN 404/หมดอายุ
           const imgRes = await fetch(attachment.url);
-          if (!imgRes.ok) throw new Error(`Download attachment failed with status ${imgRes.status}`);
+          if (!imgRes.ok) throw new Error(`ไม่สามารถดาวน์โหลดรูปภาพจาก Discord ได้ (Status ${imgRes.status})`);
           const imgBuffer = Buffer.from(await imgRes.arrayBuffer());
+
+          // 2. เมื่อดาวน์โหลดเข้า Memory สำเร็จแล้ว จึงลบข้อความรูปภาพของผู้ใช้เพื่อความเป็นส่วนตัวและรักษาความสะอาดห้อง
+          await message.delete().catch(() => {});
 
           const extMatch = (attachment.name || attachment.url).match(/\.(jpe?g|png|webp|gif|heic)/i);
           const ext = extMatch ? extMatch[1].toLowerCase().replace('jpeg', 'jpg') : 'jpg';
           const safeDutyId = (member.duty_id || member.id || 'photo').replace(/[^a-zA-Z0-9_-]/g, '_');
           const filename = `member_${safeDutyId}_${Date.now()}.${ext}`;
 
-          // 2. บันทึกสำเนาลง Local Storage สำหรับ Web Server
+          // 3. บันทึกสำเนาลง Local Storage สำหรับ Web Server
           const uploadDir = path.join(__dirname, '..', 'web', 'public', 'uploads');
           try {
             if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
@@ -2835,7 +2835,7 @@ client.on('messageCreate', async (message) => {
             console.warn('[PHOTO UPLOAD] Local save notice:', fsErr.message);
           }
 
-          // 3. อัปโหลดเข้าสู่ Supabase Storage (Bucket: sarawat-photos) เพื่อให้ได้ Public CDN URL ถาวร ไม่หมดอายุ
+          // 4. อัปโหลดเข้าสู่ Supabase Storage (Bucket: sarawat-photos) เพื่อให้ได้ Public CDN URL ถาวร ไม่หมดอายุ
           let permanentUrl = null;
           try {
             const storagePath = `members/${filename}`;
@@ -2856,7 +2856,7 @@ client.on('messageCreate', async (message) => {
             console.warn('[SUPABASE STORAGE ERROR]:', sErr.message);
           }
 
-          // 4. สำรองไฟล์เข้าห้องคลังรูปสำรองลับของบอท (#📸│คลังเก็บรูปสำรอง-bot)
+          // 5. สำรองไฟล์เข้าห้องคลังรูปสำรองลับของบอท (#📸│คลังเก็บรูปสำรอง-bot)
           const vaultChannel = await getOrCreatePhotoVaultChannel(message.guild);
           let vaultAttachmentUrl = null;
           if (vaultChannel) {
@@ -2886,7 +2886,7 @@ client.on('messageCreate', async (message) => {
             }
           }
 
-          // 5. URL รูปภาพที่บันทึก
+          // 6. URL รูปภาพที่บันทึก
           const finalProfileUrl = permanentUrl || vaultAttachmentUrl || `/uploads/${filename}`;
 
           // หากเป็นสมาชิก ACTIVE อยู่แล้ว -> อัปเดตบัตรได้ทันที
@@ -2952,7 +2952,7 @@ client.on('messageCreate', async (message) => {
           const promptMsg = await message.channel.send({
             content: `📸 <@${message.author.id}> บอทได้รับรูปถ่ายของคุณแล้ว! กรุณากดปุ่มด้านล่างเพื่อตรวจสอบรูปและกดยืนยัน *(ข้อความจะแสดงเฉพาะคุณเท่านั้น)*:`,
             components: [viewRow]
-          }).catch(() => null);
+          });
 
           // หากเป็นผู้ลงทะเบียนใหม่ (รออนุมัติ) -> บันทึกสถานะเพื่อเปิดดูแบบ Ephemeral
           pendingPhotoConfirmations.set(member.id, {
@@ -2977,6 +2977,10 @@ client.on('messageCreate', async (message) => {
           return;
         } catch (err) {
           console.error('[PHOTO UPLOAD ERROR]:', err);
+          const errNotice = await message.channel.send({
+            content: `⚠️ <@${message.author.id}> เกิดข้อผิดพลาดในการประมวลผลรูปถ่าย: \`${err.message || 'ระบบขัดข้อง'}\` กรุณาลองส่งใหม่อีกครั้งครับ`
+          }).catch(() => null);
+          if (errNotice) setTimeout(() => errNotice.delete().catch(() => {}), 15000);
         }
       }
     }
