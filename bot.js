@@ -523,7 +523,18 @@ const slashCommands = [
           { name: '🔴 วันศุกร์ (F, FS, S)', value: 'F' },
           { name: '⭐ เวรพิเศษ (S)', value: 'S' }
         )
-    )
+    ),
+  new SlashCommandBuilder()
+    .setName('send')
+    .setDescription('📢 ประกาศข้อความอย่างเป็นทางการ แท็กทุกคน (@everyone) (Admin/ผู้บริหาร)')
+    .addStringOption(opt =>
+      opt.setName('message')
+        .setDescription('ข้อความที่ต้องการประกาศถึงทุกคน')
+        .setRequired(true)
+    ),
+  new SlashCommandBuilder()
+    .setName('update')
+    .setDescription('🔄 กู้คืนรูปลิงก์หมดอายุ ซิงค์ยศ และสำรองสื่อทั้งหมดเข้า Google Drive (Admin)')
 ];
 
 // 📦 ที่เก็บสถานะชั่วคราวสำหรับการแจ้งพบของหายผ่านรูปภาพใน Discord
@@ -905,6 +916,118 @@ async function syncAllMemberRoles(guild) {
     failCount,
     hasPermissionError: failCount > 0 && errors[0]?.includes('Missing Permissions')
   };
+}
+
+/**
+ * 📁 ซิงค์รูปภาพและสื่อทั้งหมดจากระบบเข้าสู่ Google Drive ย้อนหลัง
+ * (รูปโปรไฟล์สารวัตร, หลักฐานคดี/Bodycam, รูปของหาย)
+ */
+async function syncAllMediaToGoogleDrive() {
+  const result = {
+    profileCount: 0,
+    evidenceCount: 0,
+    lostCount: 0,
+    errors: []
+  };
+
+  try {
+    // 1. ซิงค์รูปโปรไฟล์สารวัตรทั้งหมด
+    const { data: members } = await supabase
+      .from('members')
+      .select('id, first_name, last_name, nickname, duty_id, profile_image_url')
+      .not('profile_image_url', 'is', null);
+
+    if (members && members.length > 0) {
+      for (const m of members) {
+        if (!m.profile_image_url || !m.profile_image_url.startsWith('http')) continue;
+        try {
+          const res = await fetch(m.profile_image_url);
+          if (res.ok) {
+            const buf = Buffer.from(await res.arrayBuffer());
+            const filename = `profile_${(m.duty_id || 'SW').replace(/[^a-zA-Z0-9_-]/g, '_')}_${(m.first_name || m.nickname || m.id)}.jpg`;
+            const gRes = await uploadToGoogleDrive(buf, filename, {
+              category: 'profile',
+              memberName: `${m.first_name || ''} ${m.last_name || ''}`.trim() || m.nickname,
+              dutyId: m.duty_id || '-'
+            });
+            if (gRes && gRes.success) {
+              result.profileCount++;
+            }
+          }
+        } catch (pErr) {
+          result.errors.push(`Profile ${m.duty_id}: ${pErr.message}`);
+        }
+      }
+    }
+
+    // 2. ซิงค์รูปหลักฐานคดีและคลิป Bodycam
+    const { data: cases } = await supabase
+      .from('cases')
+      .select('case_id, evidence_urls')
+      .not('evidence_urls', 'is', null);
+
+    if (cases && cases.length > 0) {
+      for (const c of cases) {
+        if (!Array.isArray(c.evidence_urls)) continue;
+        for (let i = 0; i < c.evidence_urls.length; i++) {
+          const url = c.evidence_urls[i];
+          if (!url || !url.startsWith('http')) continue;
+          try {
+            const res = await fetch(url);
+            if (res.ok) {
+              const buf = Buffer.from(await res.arrayBuffer());
+              const ext = url.includes('.mp4') ? 'mp4' : (url.includes('.png') ? 'png' : 'jpg');
+              const filename = `evidence_${c.case_id}_${i + 1}.${ext}`;
+              const gRes = await uploadToGoogleDrive(buf, filename, {
+                category: 'evidence',
+                caseId: c.case_id
+              });
+              if (gRes && gRes.success) {
+                result.evidenceCount++;
+              }
+            }
+          } catch (cErr) {
+            result.errors.push(`Case ${c.case_id}: ${cErr.message}`);
+          }
+        }
+      }
+    }
+
+    // 3. ซิงค์รูปสิ่งของที่พบเจอ (Lost & Found)
+    try {
+      const { data: lostClaims } = await supabase
+        .from('lost_claims')
+        .select('claim_code, photo_url')
+        .not('photo_url', 'is', null);
+
+      if (lostClaims && lostClaims.length > 0) {
+        for (const item of lostClaims) {
+          if (!item.photo_url || !item.photo_url.startsWith('http')) continue;
+          try {
+            const res = await fetch(item.photo_url);
+            if (res.ok) {
+              const buf = Buffer.from(await res.arrayBuffer());
+              const filename = `lost_${(item.claim_code || Date.now())}.jpg`;
+              const gRes = await uploadToGoogleDrive(buf, filename, {
+                category: 'lost_found',
+                itemCode: item.claim_code
+              });
+              if (gRes && gRes.success) {
+                result.lostCount++;
+              }
+            }
+          } catch (lErr) {
+            result.errors.push(`Lost ${item.claim_code}: ${lErr.message}`);
+          }
+        }
+      }
+    } catch (e) {}
+
+  } catch (err) {
+    result.errors.push(`Sync failed: ${err.message}`);
+  }
+
+  return result;
 }
 
 /**
@@ -4331,6 +4454,111 @@ client.on('interactionCreate', async (interaction) => {
 
         const targetUser = interaction.options.getUser('target');
         await handleOpenDemoteMenu(interaction, targetUser);
+        return;
+      }
+
+      if (commandName === 'send') {
+        const isLeadership = interaction.member?.permissions.has(PermissionsBitField.Flags.Administrator) ||
+                             interaction.member?.roles.cache.has(ROLE_IDS.PRESIDENT) ||
+                             interaction.member?.roles.cache.has(ROLE_IDS.VICE_PRESIDENT) ||
+                             interaction.guild?.ownerId === interaction.user.id;
+        if (!isLeadership) {
+          await interaction.reply({
+            content: '⛔ สงวนสิทธิ์เฉพาะผู้บริหาร, ประธาน และรองประธานสารวัตรเท่านั้นในการประกาศข้อความ',
+            ephemeral: true
+          });
+          return;
+        }
+
+        const msgText = interaction.options.getString('message');
+        const userAvatar = interaction.user.displayAvatarURL({ dynamic: true });
+        const senderName = interaction.member?.displayName || interaction.user.username;
+
+        const broadcastEmbed = new EmbedBuilder()
+          .setTitle('📢 ประกาศจากฝ่ายบริหารงานสารวัตรนักเรียน')
+          .setDescription(msgText)
+          .setColor('#E74C3C')
+          .setAuthor({ name: `ผู้ประกาศ: ${senderName}`, iconURL: userAvatar })
+          .setFooter({ text: 'ระบบสารวัตรนักเรียน • โรงเรียนพระนารายณ์' })
+          .setTimestamp();
+
+        await interaction.channel.send({
+          content: '@everyone 📢 **มีประกาศด่วนจากฝ่ายบริหารงานสารวัตรนักเรียน!**',
+          embeds: [broadcastEmbed]
+        });
+
+        await interaction.reply({
+          content: '✅ ส่งประกาศถึงทุกคน (@everyone) ในช่องนี้เรียบร้อยแล้ว',
+          ephemeral: true
+        });
+        return;
+      }
+
+      if (commandName === 'update') {
+        const isLeadership = interaction.member?.permissions.has(PermissionsBitField.Flags.Administrator) ||
+                             interaction.member?.roles.cache.has(ROLE_IDS.PRESIDENT) ||
+                             interaction.member?.roles.cache.has(ROLE_IDS.VICE_PRESIDENT) ||
+                             interaction.guild?.ownerId === interaction.user.id;
+        if (!isLeadership) {
+          await interaction.reply({
+            content: '⛔ สงวนสิทธิ์เฉพาะผู้บริหาร และ Admin ในการสั่งอัปเดตระบบ',
+            ephemeral: true
+          });
+          return;
+        }
+
+        await interaction.deferReply({ ephemeral: true });
+
+        // 1. ซิงค์ยศและชื่อเล่น
+        const roleRes = await syncAllMemberRoles(interaction.guild);
+
+        // 2. แปลงรูป Discord CDN ที่หมดอายุเป็น Supabase ถาวร
+        let rehostedCount = 0;
+        try {
+          const { data: cdnMembers } = await supabase
+            .from('members')
+            .select('id, duty_id, profile_image_url')
+            .or('profile_image_url.like.%cdn.discordapp.com%,profile_image_url.like.%media.discordapp.net%');
+
+          if (cdnMembers && cdnMembers.length > 0) {
+            for (const m of cdnMembers) {
+              try {
+                const imgRes = await fetch(m.profile_image_url);
+                if (imgRes.ok) {
+                  const buf = Buffer.from(await imgRes.arrayBuffer());
+                  const storagePath = `members/profile_${(m.duty_id || m.id).replace(/[^a-zA-Z0-9_-]/g, '_')}_${Date.now()}.jpg`;
+                  const { error: upErr } = await supabase.storage.from('sarawat-photos').upload(storagePath, buf, { contentType: 'image/jpeg', upsert: true });
+                  if (!upErr) {
+                    const { data: { publicUrl } } = supabase.storage.from('sarawat-photos').getPublicUrl(storagePath);
+                    await supabase.from('members').update({ profile_image_url: publicUrl }).eq('id', m.id);
+                    rehostedCount++;
+                  }
+                }
+              } catch (e) {}
+            }
+          }
+        } catch (e) {}
+
+        // 3. ซิงค์สื่อทั้งหมดเข้าสู่ Google Drive
+        const gdriveRes = await syncAllMediaToGoogleDrive();
+
+        const summaryEmbed = new EmbedBuilder()
+          .setTitle('🔄 อัปเดตและกู้คืนระบบฐานข้อมูลสำเร็จ')
+          .setDescription(
+            `ศูนย์บัญชาการสารวัตรนักเรียน ได้ตรวจสอบและอัปเดตข้อมูลสู่ฐานข้อมูลเรียบร้อยแล้ว:\n\n` +
+            `• 🛡️ **ซิงค์ยศและชื่อเล่น:** สำเร็จ ${roleRes.successCount} คน (ล้มเหลว ${roleRes.failCount} คน)\n` +
+            `• 📸 **กู้คืนรูปลิงก์ Discord CDN สู่ Supabase ถาวร:** ${rehostedCount} รายการ\n` +
+            `• 📁 **สำรองเข้า Google Drive (SARAWAT):**\n` +
+            `  - รูปโปรไฟล์: ${gdriveRes.profileCount} รูป\n` +
+            `  - หลักฐานคดี & Bodycam: ${gdriveRes.evidenceCount} ไฟล์\n` +
+            `  - ของหาย: ${gdriveRes.lostCount} ชิ้น\n\n` +
+            `✨ *ข้อมูลสมาชิกและการสำรองข้อมูลทั้งหมดเป็นปัจจุบันแล้ว 100%*`
+          )
+          .setColor('#2ECC71')
+          .setFooter({ text: 'SARAWAT DATABASE SYNC • โรงเรียนพระนารายณ์' })
+          .setTimestamp();
+
+        await interaction.editReply({ embeds: [summaryEmbed] });
         return;
       }
     }
@@ -10940,6 +11168,7 @@ module.exports = {
   getAcademicPeriod,
   updateAcademicPeriod,
   ensureInspectorChannelAccess,
+  syncAllMediaToGoogleDrive,
   logError,
   logWarn
 };

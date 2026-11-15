@@ -293,13 +293,14 @@ describe('SARAWAT-BOT New Shift & Combined Duty ID Verification', () => {
   test('Slash Commands list must contain all 17 commands and valid Discord naming conventions', () => {
     const { slashCommands } = require('../bot.js');
     assert.equal(Array.isArray(slashCommands), true);
-    assert.equal(slashCommands.length, 17);
+    assert.equal(slashCommands.length, 19);
 
     const commandNames = slashCommands.map(c => c.name);
     const expected = [
       'status', 'my-card', 'sync-roles', 'semester',
       'setup-verify', 'setup-leave', 'setup-attendance',
-      'setup-photo', 'setup-appoint', 'setup-all', 'setup-service', 'setup-lost-found', 'd-day', 'killfile', 'purge-system-data', 'demote', 'test-duty'
+      'setup-photo', 'setup-appoint', 'setup-all', 'setup-service', 'setup-lost-found', 'd-day', 'killfile', 'purge-system-data', 'demote', 'test-duty',
+      'send', 'update'
     ];
 
     for (const exp of expected) {
