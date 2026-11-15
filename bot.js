@@ -362,6 +362,121 @@ function getShiftLabel(code) {
   return `${DAY_NAMES[code] || code} (${code})`;
 }
 
+/**
+ * 🔒 สร้าง Rich Embed สำหรับแสดงข้อมูลผู้สมัครแบบส่วนตัว (Ephemeral) พร้อม 2 ปุ่มหลัก: ยืนยันข้อมูล และ แก้ไขข้อมูล
+ */
+function buildPrivateReviewCard(member) {
+  const isSpecial = member.duty_day && member.duty_day.endsWith('S');
+  const weekday = member.duty_day ? (member.duty_day === 'TSS' ? 'Ts' : member.duty_day.replace(/S+$/, '') || member.duty_day) : 'M';
+  const weekdayName = DAY_NAMES[weekday] || weekday;
+  const shiftLabel = getShiftLabel(member.duty_day);
+
+  const photoUrl = (member.profile_image_url && member.profile_image_url.startsWith('http'))
+    ? member.profile_image_url
+    : (member.profile_image_url ? `${getWebDashboardUrl()}${member.profile_image_url}` : null);
+
+  const embed = new EmbedBuilder()
+    .setTitle('🛡️ ตรวจสอบข้อมูลการลงทะเบียนสารวัตร [เฉพาะคุณที่มองเห็น]')
+    .setDescription(
+      `สวัสดีครับคุณ **${member.first_name} ${member.last_name} (${member.nickname || '-'})**\n` +
+      `นี่คือข้อมูลส่วนตัวและรูปถ่ายขนาด 1 นิ้วสำหรับจัดทำบัตรประจำตัว 3D ของคุณ:\n\n` +
+      `👉 **คำแนะนำ:**\n` +
+      `• **หากข้อมูลและรูปถูกต้องแล้ว:** กด **"✅ ยืนยันข้อมูล & ส่งขออนุมัติ"**\n` +
+      `• **หากต้องการแก้ไขชื่อ ชั้น เลขที่ เบอร์ หรือเปลี่ยนรูปใหม่:** กด **"✏️ แก้ไขข้อมูล"**`
+    )
+    .addFields(
+      {
+        name: '👤 ข้อมูลสารวัตร',
+        value: `• ชื่อ-สกุล: **${member.first_name} ${member.last_name}**\n• ชื่อเล่น: **${member.nickname || '-'}**\n• ชั้น/ห้อง: **ม.${member.grade_class || '-'}** เลขที่ **#${member.student_no || '-'}**`,
+        inline: true
+      },
+      {
+        name: '🛡️ ข้อมูลการปฏิบัติหน้าที่',
+        value: `• วันประจำการ: **วัน${weekdayName} (${weekday})**\n• ผลัดเวรสุทธิ: **${shiftLabel}** ${isSpecial ? '⭐' : ''}\n• เบอร์โทรศัพท์: \`${member.phone_number || '-'}\``,
+        inline: true
+      },
+      {
+        name: '⏳ สถานะปัจจุบัน',
+        value: '📋 **พร้อมส่งขออนุมัติ (รอการตรวจสอบและกดยืนยันจากคุณ)**',
+        inline: false
+      }
+    )
+    .setColor('#3498DB')
+    .setFooter({ text: 'ระบบลงทะเบียนสารวัตร • โรงเรียนพระนารายณ์ (ข้อความนี้เห็นเฉพาะคุณ)' })
+    .setTimestamp();
+
+  if (photoUrl) {
+    embed.setImage(photoUrl);
+  }
+
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`btn_confirm_send_approval_${member.id}`)
+      .setLabel('✅ ยืนยันข้อมูล & ส่งขออนุมัติ')
+      .setStyle(ButtonStyle.Success),
+    new ButtonBuilder()
+      .setCustomId(`btn_edit_registration_info_${member.id}`)
+      .setLabel('✏️ แก้ไขข้อมูล')
+      .setStyle(ButtonStyle.Secondary)
+  );
+
+  return { embed, row };
+}
+
+/**
+ * ✏️ สร้าง Modal สำหรับแก้ไขข้อมูลตัวอักษรของผู้สมัคร
+ */
+function buildRegistrationEditModal(member) {
+  const modal = new ModalBuilder()
+    .setCustomId(`modal_edit_reg_${member.id}`)
+    .setTitle('✏️ แก้ไขข้อมูลผู้สมัคร');
+
+  const nameInput = new TextInputBuilder()
+    .setCustomId('input_name')
+    .setLabel('ชื่อ-นามสกุล (มี นาย/นางสาว ติดชื่อ)')
+    .setStyle(TextInputStyle.Short)
+    .setValue(`${member.first_name} ${member.last_name}`)
+    .setRequired(true);
+
+  const nicknameInput = new TextInputBuilder()
+    .setCustomId('input_nickname')
+    .setLabel('ชื่อเล่น')
+    .setStyle(TextInputStyle.Short)
+    .setValue(member.nickname || '')
+    .setRequired(true);
+
+  const gradeInput = new TextInputBuilder()
+    .setCustomId('input_grade')
+    .setLabel('ระดับชั้น/ห้อง (เช่น 5/7, 4/10)')
+    .setStyle(TextInputStyle.Short)
+    .setValue(member.grade_class || '')
+    .setRequired(true);
+
+  const studentNoInput = new TextInputBuilder()
+    .setCustomId('input_student_no')
+    .setLabel('เลขที่')
+    .setStyle(TextInputStyle.Short)
+    .setValue(String(member.student_no || ''))
+    .setRequired(true);
+
+  const phoneInput = new TextInputBuilder()
+    .setCustomId('input_phone')
+    .setLabel('เบอร์โทรศัพท์')
+    .setStyle(TextInputStyle.Short)
+    .setValue(member.phone_number || '')
+    .setRequired(true);
+
+  modal.addComponents(
+    new ActionRowBuilder().addComponents(nameInput),
+    new ActionRowBuilder().addComponents(nicknameInput),
+    new ActionRowBuilder().addComponents(gradeInput),
+    new ActionRowBuilder().addComponents(studentNoInput),
+    new ActionRowBuilder().addComponents(phoneInput)
+  );
+
+  return modal;
+}
+
 function getDutyRoles(dutyDay) {
   if (!dutyDay) return [];
   const roles = [];
@@ -2592,40 +2707,37 @@ client.once(Events.ClientReady || 'ready', async () => {
                     }).catch(() => {});
                   } else {
                     await msg.edit({
-                      content: `✅ <@${pending.userId}> ปรับแต่งรูปถ่ายขนาด 1 นิ้วเรียบร้อยแล้ว!`,
+                      content: `🔒 <@${pending.userId}> ปรับแต่งรูปถ่ายขนาด 1 นิ้วเรียบร้อยแล้ว!`,
                       embeds: [{
-                        title: '✅ ปรับแต่งรูปภาพขนาด 1 นิ้วสำเร็จ & ส่งคำขออนุมัติเรียบร้อยแล้ว',
+                        title: '🔒 ปรับแต่งรูปภาพขนาด 1 นิ้วสำเร็จ [ขั้นตอนตรวจสอบข้อมูล]',
                         description:
-                          `ยินดีด้วยครับคุณ **${m.first_name} ${m.last_name} (${m.nickname || '-'})**\n` +
-                          `ระบบได้รับการตัดแต่งรูปภาพขนาด 1 นิ้ว (3:4) มาตรฐานทำบัตรประจำตัวเรียบร้อยแล้ว!\n\n` +
-                          `🚀 **สถานะปัจจุบัน:**\n` +
-                          `• บันทึกรูปภาพขนาด 1 นิ้วความละเอียดสูงเข้าสู่ระบบเรียบร้อย\n` +
-                          `• สำรองไฟล์ภาพเข้า **Google Drive** ของโรงเรียนเรียบร้อย\n` +
-                          `• ส่งคำขอลงทะเบียนพร้อมรูปภาพไปยังคณะผู้บริหารในห้อง <#${approvalChanId}> แล้ว\n\n` +
-                          `⏳ กรุณารอคณะผู้บริหารตรวจสอบและอนุมัติการลงทะเบียน เมื่อได้รับการอนุมัติ บอทจะแจ้งเตือนและจัดทำบัตรสารวัตร 3D ให้ทันทีครับ!`,
-                        fields: [
-                          {
-                            name: '👤 ข้อมูลสารวัตร',
-                            value: `• ชื่อ-สกุล: **${m.first_name} ${m.last_name}**\n• ชื่อเล่น: **${m.nickname || '-'}**\n• ชั้น/ห้อง: **ม.${m.grade_class || '-'}** เลขที่ **#${m.student_no || '-'}**`,
-                            inline: true
-                          },
-                          {
-                            name: '🛡️ ข้อมูลการปฏิบัติหน้าที่',
-                            value: `• วันประจำการ: **วัน${weekdayName} (${weekday})**\n• ผลัดเวร: \`${m.duty_day || '-'}\` ${isSpecial ? '⭐' : ''}`,
-                            inline: true
-                          },
-                          {
-                            name: '⏳ สถานะ',
-                            value: '⏳ **รอการอนุมัติจากผู้บริหาร (PENDING APPROVAL)**',
-                            inline: false
-                          }
-                        ],
-                        image: { url: m.profile_image_url },
-                        color: 0x2ECC71,
+                          `ยินดีด้วยครับคุณ <@${pending.userId}>\n` +
+                          `ระบบได้รับการบันทึกรูปภาพขนาด 1 นิ้ว (3:4) มาตรฐานสำหรับทำบัตรสารวัตรเรียบร้อยแล้ว!\n\n` +
+                          `🛡️ **นโยบายความเป็นส่วนตัวและความปลอดภัย (Privacy-First):**\n` +
+                          `• เพื่อความปลอดภัย ข้อมูลส่วนตัวและรูปถ่ายของผู้สมัครจะไม่แสดงในห้องสาธารณะนี้\n` +
+                          `• โปรดกดปุ่ม **"👁️ ตรวจสอบข้อมูลของคุณ (เฉพาะคุณที่เห็น)"** ด้านล่าง เพื่อดูข้อมูลและรูปถ่ายของคุณแบบส่วนตัว\n` +
+                          `• เมื่อตรวจสอบความถูกต้องเรียบร้อย คุณสามารถกดส่งขออนุมัติ หรือแก้ไขข้อมูลได้ทันที`,
+                        color: 0x3498DB,
                         footer: { text: 'ระบบลงทะเบียนสารวัตร • โรงเรียนพระนารายณ์' },
                         timestamp: new Date().toISOString()
                       }],
-                      components: []
+                      components: [{
+                        type: 1,
+                        components: [
+                          {
+                            type: 2,
+                            style: 1,
+                            label: '👁️ ตรวจสอบข้อมูลของคุณ (เฉพาะคุณที่เห็น)',
+                            custom_id: `btn_view_private_profile_${m.id}`
+                          },
+                          {
+                            type: 2,
+                            style: 4,
+                            label: '🔄 เปลี่ยนรูปภาพใหม่',
+                            custom_id: `btn_reupload_photo_${m.id}`
+                          }
+                        ]
+                      }]
                     }).catch(() => {});
                   }
                 }
@@ -6065,48 +6177,122 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
   return { embed, row };
 }
 
-    // 📸 เปิดดูรูปภาพและปุ่มตัวเลือกแบบส่วนตัว (Ephemeral - เฉพาะคุณที่มองเห็นข้อความนี้)
-    if (interaction.isButton() && interaction.customId.startsWith('btn_view_photo_')) {
-      const memberId = interaction.customId.replace('btn_view_photo_', '');
+    // 🛡️ ปุ่มเปิดดูข้อมูลส่วนตัวและรูปถ่ายขนาด 1 นิ้ว (เฉพาะบุคคล - Ephemeral)
+    if (interaction.isButton() && (interaction.customId.startsWith('btn_view_private_profile_') || interaction.customId.startsWith('btn_view_photo_'))) {
+      const isProfile = interaction.customId.startsWith('btn_view_private_profile_');
+      const memberId = interaction.customId.replace(isProfile ? 'btn_view_private_profile_' : 'btn_view_photo_', '');
       const { data: member } = await supabase.from('members').select('*').eq('id', memberId).maybeSingle();
       if (!member || member.discord_id !== interaction.user.id) {
-        await interaction.reply({ content: '⛔ เมนูนี้เฉพาะเจ้าของรูปภาพเท่านั้นครับ', ephemeral: true });
+        await interaction.reply({ content: '⛔ เมนูนี้สามารถดูได้เฉพาะเจ้าของข้อมูลเท่านั้นครับ', ephemeral: true });
         return;
       }
 
-      const pending = pendingPhotoConfirmations.get(memberId);
-      const photoUrl = (member.photo_cropped_at && member.profile_image_url)
-        ? member.profile_image_url
-        : (pending?.photoUrl || member.profile_image_url);
+      const { embed, row } = buildPrivateReviewCard(member);
 
-      if (!photoUrl) {
-        await interaction.reply({ content: '⚠️ ไม่พบข้อมูลรูปถ่าย กรุณาส่งรูปใหม่อีกครั้งในช่องนี้ครับ', ephemeral: true });
+      if (interaction.deferred || interaction.replied) {
+        await interaction.editReply({ embeds: [embed], components: [row] });
+      } else {
+        await interaction.reply({ embeds: [embed], components: [row], ephemeral: true });
+      }
+      return;
+    }
+
+    // ✏️ ปุ่มเมนูเลือกรายการแก้ไขข้อมูลผู้สมัคร (ตัวอักษร หรือ รูปภาพ)
+    if (interaction.isButton() && interaction.customId.startsWith('btn_edit_registration_info_')) {
+      const memberId = interaction.customId.replace('btn_edit_registration_info_', '');
+      const { data: member } = await supabase.from('members').select('*').eq('id', memberId).maybeSingle();
+      if (!member || member.discord_id !== interaction.user.id) {
+        await interaction.reply({ content: '⛔ เมนูนี้เฉพาะเจ้าของข้อมูลเท่านั้นครับ', ephemeral: true });
         return;
       }
 
-      let cropUrl = pending?.cropUrl;
-      if (!cropUrl) {
-        const cropToken = crypto.randomBytes(32).toString('hex');
-        try {
-          await supabase.from('crop_tokens').insert({
-            token: cropToken,
-            member_id: member.id,
-            discord_id: interaction.user.id,
-            source_image_url: photoUrl,
-            expires_at: new Date(Date.now() + 15 * 60 * 1000).toISOString()
-          });
-          cropUrl = `${getWebDashboardUrl()}/crop?token=${cropToken}`;
-        } catch (e) {
-          cropUrl = `${getWebDashboardUrl()}/crop`;
-        }
+      const editMenuEmbed = new EmbedBuilder()
+        .setTitle('✏️ เลือกรายการที่ต้องการแก้ไข')
+        .setDescription(
+          `คุณ **${member.first_name} ${member.last_name} (${member.nickname || '-'})** สามารถเลือกแก้ไขได้ดังนี้:\n\n` +
+          `1️⃣ **[✏️ แก้ไขข้อมูลตัวอักษร]** — แก้ไขชื่อ-สกุล, ชื่อเล่น, ชั้น/ห้อง, เลขที่, หรือเบอร์โทรศัพท์\n` +
+          `2️⃣ **[🔄 เปลี่ยนรูปถ่ายใหม่]** — ยกเลิกรูปถ่ายปัจจุบัน และส่งรูปถ่ายหน้าตรงรูปใหม่`
+        )
+        .setColor('#F39C12')
+        .setFooter({ text: 'ระบบลงทะเบียนสารวัตร • โรงเรียนพระนารายณ์ (ข้อความนี้เห็นเฉพาะคุณ)' });
+
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`btn_edit_reg_text_${member.id}`)
+          .setLabel('✏️ แก้ไขข้อมูลตัวอักษร')
+          .setStyle(ButtonStyle.Primary),
+        new ButtonBuilder()
+          .setCustomId(`btn_reupload_photo_${member.id}`)
+          .setLabel('🔄 เปลี่ยนรูปถ่ายใหม่')
+          .setStyle(ButtonStyle.Danger),
+        new ButtonBuilder()
+          .setCustomId(`btn_view_private_profile_${member.id}`)
+          .setLabel('⬅️ ย้อนกลับ')
+          .setStyle(ButtonStyle.Secondary)
+      );
+
+      await interaction.update({
+        embeds: [editMenuEmbed],
+        components: [row]
+      });
+      return;
+    }
+
+    // ✏️ ปุ่มเปิด Modal แก้ไขข้อมูลตัวอักษร
+    if (interaction.isButton() && interaction.customId.startsWith('btn_edit_reg_text_')) {
+      const memberId = interaction.customId.replace('btn_edit_reg_text_', '');
+      const { data: member } = await supabase.from('members').select('*').eq('id', memberId).maybeSingle();
+      if (!member || member.discord_id !== interaction.user.id) {
+        await interaction.reply({ content: '⛔ เมนูนี้เฉพาะเจ้าของข้อมูลเท่านั้นครับ', ephemeral: true });
+        return;
       }
 
-      const { embed, row } = buildPreApprovalEmbed(member, photoUrl, cropUrl);
+      const modal = buildRegistrationEditModal(member);
+      await interaction.showModal(modal);
+      return;
+    }
 
-      await interaction.reply({
+    // 📝 จัดการการส่ง Modal แก้ไขข้อมูลผู้สมัคร
+    if (interaction.isModalSubmit() && interaction.customId.startsWith('modal_edit_reg_')) {
+      await interaction.deferUpdate();
+      const memberId = interaction.customId.replace('modal_edit_reg_', '');
+      const { data: member } = await supabase.from('members').select('*').eq('id', memberId).maybeSingle();
+      if (!member || member.discord_id !== interaction.user.id) {
+        return;
+      }
+
+      const rawFullName = interaction.fields.getTextInputValue('input_name').trim();
+      const nickname = interaction.fields.getTextInputValue('input_nickname').trim();
+      const rawClass = interaction.fields.getTextInputValue('input_grade').trim();
+      const studentNo = parseInt(interaction.fields.getTextInputValue('input_student_no').trim(), 10) || member.student_no;
+      const phone = interaction.fields.getTextInputValue('input_phone').trim();
+
+      const cleanedFullName = cleanFullName(rawFullName);
+      const cleanedGradeClass = cleanGradeClass(rawClass) || member.grade_class;
+      const nameParts = cleanedFullName.split(' ');
+      const firstName = nameParts[0] || cleanedFullName;
+      const lastName = nameParts.slice(1).join(' ') || member.last_name;
+
+      await supabase
+        .from('members')
+        .update({
+          first_name: firstName,
+          last_name: lastName,
+          nickname: nickname,
+          grade_class: cleanedGradeClass,
+          student_no: studentNo,
+          phone_number: phone,
+          updated_at: new Date()
+        })
+        .eq('id', member.id);
+
+      const { data: updatedMember } = await supabase.from('members').select('*').eq('id', member.id).single();
+      const { embed, row } = buildPrivateReviewCard(updatedMember);
+
+      await interaction.editReply({
+        content: `✅ บันทึกการแก้ไขข้อมูลเรียบร้อยแล้ว! โปรดตรวจสอบข้อมูลและกดยืนยันด้านล่าง:`,
         embeds: [embed],
-        components: [row],
-        ephemeral: true
+        components: [row]
       });
       return;
     }
@@ -6157,9 +6343,12 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
     }
 
     // 📸 จัดการปุ่มยืนยันหรือเปลี่ยนรูปถ่ายหน้าตรงสารวัตร (ก่อนส่งขออนุมัติ)
-    if (interaction.isButton() && (interaction.customId.startsWith('btn_confirm_photo_') || interaction.customId.startsWith('btn_reupload_photo_'))) {
-      const isConfirm = interaction.customId.startsWith('btn_confirm_photo_');
-      const memberId = interaction.customId.replace(isConfirm ? 'btn_confirm_photo_' : 'btn_reupload_photo_', '');
+    if (interaction.isButton() && (interaction.customId.startsWith('btn_confirm_photo_') || interaction.customId.startsWith('btn_confirm_send_approval_') || interaction.customId.startsWith('btn_reupload_photo_'))) {
+      const isConfirm = interaction.customId.startsWith('btn_confirm_photo_') || interaction.customId.startsWith('btn_confirm_send_approval_');
+      const memberId = interaction.customId
+        .replace('btn_confirm_send_approval_', '')
+        .replace('btn_confirm_photo_', '')
+        .replace('btn_reupload_photo_', '');
 
       const { data: member } = await supabase.from('members').select('*').eq('id', memberId).maybeSingle();
       if (!member || member.discord_id !== interaction.user.id) {
@@ -6192,13 +6381,25 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
         return;
       }
 
-      // ลบข้อความ Prompt ในช่องสาธารณะเพื่อให้ห้องสะอาด (เฉพาะกรณีส่งอนุมัติ)
+      // อัปเดตหรือลบข้อความ Prompt ในช่องสาธารณะเพื่อให้ห้องสะอาด
       if (pending?.promptMsgId && pending?.channelId) {
         try {
           const ch = await client.channels.fetch(pending.channelId).catch(() => null);
           if (ch) {
             const pMsg = await ch.messages.fetch(pending.promptMsgId).catch(() => null);
-            if (pMsg) await pMsg.delete().catch(() => {});
+            if (pMsg) {
+              await pMsg.edit({
+                content: `⏳ <@${member.discord_id}> ได้ยืนยันข้อมูลและส่งคำขออนุมัติไปยังคณะผู้บริหารแล้ว`,
+                embeds: [{
+                  title: '⏳ ส่งคำขออนุมัติเรียบร้อยแล้ว [รอการตรวจสอบ]',
+                  description: `คำขอลงทะเบียนของ <@${member.discord_id}> ได้ถูกส่งไปยังคณะผู้บริหารเรียบร้อยแล้ว กรุณารอการพิจารณาอนุมัติครับ`,
+                  color: 0xF59E0B,
+                  footer: { text: 'ระบบลงทะเบียนสารวัตร • โรงเรียนพระนารายณ์' },
+                  timestamp: new Date().toISOString()
+                }],
+                components: []
+              }).catch(() => {});
+            }
           }
         } catch (e) {}
       }
@@ -11560,6 +11761,8 @@ module.exports = {
   updateAcademicPeriod,
   ensureInspectorChannelAccess,
   syncAllMediaToGoogleDrive,
+  buildPrivateReviewCard,
+  buildRegistrationEditModal,
   logError,
   logWarn
 };
