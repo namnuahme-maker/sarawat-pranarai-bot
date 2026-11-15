@@ -215,6 +215,7 @@ if (cleanupSheetsTimer.unref) cleanupSheetsTimer.unref();
 const pendingPhotoUploads = new Map(); // memberId -> { url, name, timestamp }
 const pendingAttendanceUploads = new Map(); // userId -> { shift, dateStr, channelId, timestamp }
 const pendingPhotoConfirmations = new Map(); // memberId -> { member, photoUrl, filename, userId, timestamp }
+const activeServicePhotoSessions = new Map(); // userId -> { member, timestamp }
 
 function getUploadDir() {
   const dir1 = path.join(__dirname, '..', 'web', 'public', 'uploads');
@@ -1258,7 +1259,7 @@ async function refreshAllChannelsAndPanels(guild, options = { purge: true }) {
     if (chInspectorService) {
       if (options.purge) await purgeChannelMessages(chInspectorService);
       await sendInspectorServicePanel(chInspectorService);
-      await ensureInspectorChannelAccess(guild, chInspectorService, { allowSend: false });
+      await ensureInspectorChannelAccess(guild, chInspectorService, { allowSend: true });
       result.refreshedChannels++;
     }
 
@@ -2993,6 +2994,223 @@ client.on('messageCreate', async (message) => {
     }
   }
 
+  // ==========================================================
+  // 🛎️ ระบบ Auto-Clean Guard และรับรูปถ่ายในห้องศูนย์บริการสารวัตร (# 🛎️│บริการสารวัตร)
+  // ==========================================================
+  const isServiceHubChannel = message.channel && message.channel.name && (
+    message.channel.name.includes('บริการสารวัตร') ||
+    (process.env.SERVICE_HUB_CHANNEL_ID && message.channel.id === process.env.SERVICE_HUB_CHANNEL_ID)
+  );
+
+  if (isServiceHubChannel && !message.author.bot) {
+    const session = activeServicePhotoSessions.get(message.author.id);
+    const now = Date.now();
+
+    // กรณีไม่มี Session หรือ Session หมดอายุเกิน 5 นาที
+    if (!session || (now - session.timestamp > 5 * 60 * 1000)) {
+      if (session) activeServicePhotoSessions.delete(message.author.id);
+      await message.delete().catch(() => {});
+      const warnMsg = await message.channel.send({
+        content: `⚠️ <@${message.author.id}> ช่องนี้สงวนไว้สำหรับการกดทำรายการผ่านปุ่มบริการเท่านั้น (ระบบได้ลบข้อความของคุณอัตโนมัติ เพื่อรักษาความสะอาดของห้อง)`
+      }).catch(() => null);
+      if (warnMsg) setTimeout(() => warnMsg.delete().catch(() => {}), 5000);
+      return;
+    }
+
+    // กรณีมี Session แต่ไม่ได้แนบไฟล์รูปภาพมา (เช่น พิมพ์แชทคุย)
+    if (message.attachments.size === 0) {
+      await message.delete().catch(() => {});
+      const warnMsg = await message.channel.send({
+        content: `⚠️ <@${message.author.id}> กรุณาแนบส่ง **ไฟล์รูปถ่ายหน้าตรง** เท่านั้นครับ (ระบบได้ลบข้อความตัวอักษรของคุณอัตโนมัติ)`
+      }).catch(() => null);
+      if (warnMsg) setTimeout(() => warnMsg.delete().catch(() => {}), 5000);
+      return;
+    }
+
+    // มี Session และแนบไฟล์รูปภาพเข้ามา -> ตรวจสอบชนิดไฟล์
+    const attachment = message.attachments.first();
+    const isImage = (attachment.contentType && attachment.contentType.startsWith('image/')) ||
+                    /\.(jpe?g|png|webp|gif|heic)$/i.test(attachment.name || attachment.url);
+    if (!isImage) {
+      await message.delete().catch(() => {});
+      const warnMsg = await message.channel.send({
+        content: `⚠️ <@${message.author.id}> ไฟล์ที่คุณส่งไม่ใช่ไฟล์รูปภาพ กรุณาส่งไฟล์รูปภาพ (JPG, PNG, WEBP) เท่านั้นครับ`
+      }).catch(() => null);
+      if (warnMsg) setTimeout(() => warnMsg.delete().catch(() => {}), 5000);
+      return;
+    }
+
+    try {
+      // 1. ดาวน์โหลดไฟล์รูปภาพเข้า Memory Buffer ก่อนลบข้อความ
+      const imgRes = await fetch(attachment.url);
+      if (!imgRes.ok) throw new Error(`ไม่สามารถดาวน์โหลดรูปภาพจาก Discord ได้ (Status ${imgRes.status})`);
+      const imgBuffer = Buffer.from(await imgRes.arrayBuffer());
+
+      // 2. ลบข้อความรูปภาพของผู้ใช้เพื่อความสะอาดห้อง
+      await message.delete().catch(() => {});
+
+      const member = session.member;
+      const extMatch = (attachment.name || attachment.url).match(/\.(jpe?g|png|webp|gif|heic)/i);
+      const ext = extMatch ? extMatch[1].toLowerCase().replace('jpeg', 'jpg') : 'jpg';
+      const safeDutyId = (member.duty_id || member.id || 'photo').replace(/[^a-zA-Z0-9_-]/g, '_');
+      const filename = `member_${safeDutyId}_${Date.now()}.${ext}`;
+
+      // 3. บันทึกสำเนาลง Local Storage สำหรับ Web Server
+      const uploadDir = path.join(__dirname, '..', 'web', 'public', 'uploads');
+      try {
+        if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+        fs.writeFileSync(path.join(uploadDir, filename), imgBuffer);
+      } catch (fsErr) {
+        console.warn('[SERVICE PHOTO] Local save notice:', fsErr.message);
+      }
+
+      // 4. อัปโหลดเข้าสู่ Supabase Storage (Bucket: sarawat-photos)
+      let permanentUrl = null;
+      try {
+        const storagePath = `members/${filename}`;
+        const { error: storageErr } = await supabase.storage
+          .from('sarawat-photos')
+          .upload(storagePath, imgBuffer, {
+            contentType: attachment.contentType || (ext === 'png' ? 'image/png' : 'image/jpeg'),
+            upsert: true
+          });
+        if (!storageErr) {
+          const { data: { publicUrl } } = supabase.storage.from('sarawat-photos').getPublicUrl(storagePath);
+          permanentUrl = publicUrl;
+        }
+      } catch (sErr) {}
+
+      // 5. สำรองไฟล์เข้าห้องคลังรูปสำรองลับของบอท
+      const vaultChannel = await getOrCreatePhotoVaultChannel(message.guild);
+      let vaultAttachmentUrl = null;
+      if (vaultChannel) {
+        try {
+          const vaultAttachment = new AttachmentBuilder(imgBuffer, { name: filename });
+          const vaultEmbed = new EmbedBuilder()
+            .setTitle('📸 สำรองรูปถ่ายทำบัตรประจำตัว (บริการปรับรูปสารวัตร)')
+            .setDescription(
+              `• สมาชิก: **${member.first_name} ${member.last_name} (${member.nickname})**\n` +
+              `• รหัสเวร: \`${member.duty_id || '-'}\` • บัญชี Discord: <@${message.author.id}>\n` +
+              `• บันทึกเวลา: <t:${Math.floor(Date.now() / 1000)}:F>`
+            )
+            .setImage(`attachment://${filename}`)
+            .setColor('#2ECC71');
+          const vaultMsg = await vaultChannel.send({ embeds: [vaultEmbed], files: [vaultAttachment] });
+          if (vaultMsg.attachments.size > 0) {
+            vaultAttachmentUrl = vaultMsg.attachments.first().url;
+          }
+        } catch (vErr) {}
+      }
+
+      // 6. สำรองไฟล์ภาพเข้าสู่ Google Drive
+      let gdriveFileId = null;
+      let gdriveFileUrl = null;
+      try {
+        const gdriveRes = await uploadToGoogleDrive(imgBuffer, filename, {
+          memberName: `${member.first_name || ''} ${member.last_name || ''}`.trim() || member.nickname,
+          dutyId: member.duty_id || '-'
+        });
+        if (gdriveRes && gdriveRes.success) {
+          gdriveFileId = gdriveRes.fileId;
+          gdriveFileUrl = gdriveRes.webViewLink;
+        }
+      } catch (gdErr) {}
+
+      const finalProfileUrl = permanentUrl || vaultAttachmentUrl || `/uploads/${filename}`;
+
+      // 7. สร้าง Token ชั่วคราว (15 นาที) สำหรับเปิดเว็บเครื่องมือครอปรูป 1 นิ้ว (3:4)
+      const cropToken = crypto.randomBytes(32).toString('hex');
+      const tokenExpires = new Date(Date.now() + 15 * 60 * 1000);
+      try {
+        await supabase.from('crop_tokens').insert({
+          token: cropToken,
+          member_id: member.id,
+          discord_id: message.author.id,
+          source_image_url: finalProfileUrl.startsWith('http') ? finalProfileUrl : attachment.url,
+          expires_at: tokenExpires.toISOString()
+        });
+      } catch (tokenErr) {}
+      const cropUrl = `${getWebDashboardUrl()}/crop?token=${cropToken}`;
+
+      // 8. แสดงการ์ดพรีวิวรูปภาพ พร้อม 2 ปุ่ม (ครอบรูป 1 นิ้ว / เปลี่ยนรูปใหม่)
+      const isSpecial = member.duty_day && member.duty_day.endsWith('S');
+      const weekday = member.duty_day ? (member.duty_day === 'TSS' ? 'Ts' : member.duty_day.replace(/S+$/, '') || member.duty_day) : 'M';
+      const weekdayName = DAY_NAMES[weekday] || weekday;
+      const shiftLabel = getShiftLabel(member.duty_day);
+
+      const previewEmbed = new EmbedBuilder()
+        .setTitle('📸 ตรวจสอบรูปถ่าย & ปรับเปลี่ยนบัตรประจำตัว 3D')
+        .setDescription(
+          `สวัสดีครับคุณ **${member.first_name} ${member.last_name} (${member.nickname})**\n` +
+          `บอทได้รับรูปถ่ายใหม่ของคุณเรียบร้อยแล้ว กรุณาเลือกดำเนินการ 1 ใน 2 ตัวเลือกด้านล่าง:\n\n` +
+          `1️⃣ **[🔲 ปรับแต่ง/ครอบรูป (ขนาด 1 นิ้ว)]** — กดเพื่อเปิดหน้าเว็บจัดสัดส่วนใบหน้า 3:4 (ขนาด 1 นิ้ว) ให้พอดีกับกรอบบัตรประจำตัว 3D\n` +
+          `2️⃣ **[🔄 เปลี่ยนรูปภาพใหม่]** — กดหากต้องการยกเลิกรูปนี้ และส่งรูปถ่ายหน้าตรงรูปใหม่อีกครั้ง`
+        )
+        .addFields(
+          {
+            name: '👤 ข้อมูลสารวัตร',
+            value: `• ชื่อ-สกุล: **${member.first_name} ${member.last_name}**\n• ชื่อเล่น: **${member.nickname || '-'}**\n• รหัสเวร: \`[${member.duty_id || 'สารวัตร'}]\``,
+            inline: true
+          },
+          {
+            name: '🛡️ ข้อมูลเวรประจำวัน',
+            value: `• วันประจำการ: **วัน${weekdayName} (${weekday})**\n• ผลัดเวร: **${shiftLabel}** ${isSpecial ? '⭐' : ''}`,
+            inline: true
+          },
+          {
+            name: '📸 สถานะและการอัปเดตบัตร',
+            value: `💡 **เมื่อกดครอบรูปและกดยืนยันบนเว็บ บัตรประจำตัว 3D จะอัปเดตรูปใหม่ทันที!** พร้อมสำรองรูปเข้า Google Drive ของโรงเรียนอัตโนมัติ`,
+            inline: false
+          }
+        )
+        .setImage(finalProfileUrl.startsWith('http') ? finalProfileUrl : attachment.url)
+        .setColor('#2ECC71')
+        .setFooter({ text: 'ระบบบริการสารวัตร • โรงเรียนพระนารายณ์' })
+        .setTimestamp();
+
+      const photoActionRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setLabel('🔲 ปรับแต่ง/ครอบรูป (ขนาด 1 นิ้ว)')
+          .setStyle(ButtonStyle.Link)
+          .setURL(cropUrl),
+        new ButtonBuilder()
+          .setCustomId(`btn_reupload_photo_${member.id}`)
+          .setLabel('🔄 เปลี่ยนรูปภาพใหม่')
+          .setStyle(ButtonStyle.Danger)
+      );
+
+      const promptMsg = await message.channel.send({
+        content: `📸 <@${message.author.id}> ได้รับรูปถ่ายใหม่ของคุณเรียบร้อยแล้ว! กรุณาเลือกดำเนินการด้านล่าง:`,
+        embeds: [previewEmbed],
+        components: [photoActionRow]
+      });
+
+      // ลบ session ออกหลังจากรับรูปเรียบร้อย
+      activeServicePhotoSessions.delete(message.author.id);
+
+      // บันทึก pending สำหรับปุ่มเปลี่ยนรูป
+      pendingPhotoConfirmations.set(member.id, {
+        member,
+        photoUrl: finalProfileUrl,
+        filename: filename,
+        userId: message.author.id,
+        cropUrl: cropUrl,
+        promptMsgId: promptMsg?.id,
+        channelId: message.channel.id,
+        isServiceUpdate: true,
+        timestamp: Date.now()
+      });
+      return;
+    } catch (err) {
+      console.error('[SERVICE PHOTO PROCESS ERROR]:', err);
+      const errNotice = await message.channel.send({
+        content: `⚠️ <@${message.author.id}> เกิดข้อผิดพลาดในการประมวลผลรูปถ่าย: \`${err.message || 'ระบบขัดข้อง'}\` กรุณาลองใหม่อีกครั้งครับ`
+      }).catch(() => null);
+      if (errNotice) setTimeout(() => errNotice.delete().catch(() => {}), 15000);
+      return;
+    }
+  }
+
   // ฟังก์ชันดักรับรูปโปรไฟล์ทำบัตรในห้อง #🛡️│ลงทะเบียนสารวัตรใหม่
   const isVaultChannel = message.channel && message.channel.name && (
     message.channel.name === PHOTO_VAULT_CHANNEL_NAME ||
@@ -4254,7 +4472,7 @@ client.on('interactionCreate', async (interaction) => {
         } else {
           const chService = findChannel(interaction.guild, '🛎️│บริการสารวัตร') || findChannel(interaction.guild, 'บริการสารวัตร');
           const chLost = findChannel(interaction.guild, '📦│แจ้งพบของหาย') || findChannel(interaction.guild, 'แจ้งพบของหาย');
-          if (chService) await ensureInspectorChannelAccess(interaction.guild, chService, { allowSend: false });
+          if (chService) await ensureInspectorChannelAccess(interaction.guild, chService, { allowSend: true });
           if (chLost) await ensureInspectorChannelAccess(interaction.guild, chLost, { allowSend: true });
 
           await interaction.editReply({ content: `✅ ซิงค์ยศและชื่อเรียบร้อย: สำเร็จ ${res.successCount} คน (พร้อมอัปเดตสิทธิ์การเข้าถึงศูนย์บริการและจุดรับแจ้งของหาย)` });
@@ -4352,8 +4570,8 @@ client.on('interactionCreate', async (interaction) => {
           return;
         }
         await sendInspectorServicePanel(interaction.channel);
-        await ensureInspectorChannelAccess(interaction.guild, interaction.channel, { allowSend: false });
-        await interaction.reply({ content: '✅ ติดตั้งแผงศูนย์บริการสารวัตร (+ขออนุญาตตัว / +ส่งหลักฐานคดี) และตั้งค่าสิทธิ์ให้สารวัตรทุกคนเข้าถึงได้เรียบร้อยแล้ว', ephemeral: true });
+        await ensureInspectorChannelAccess(interaction.guild, interaction.channel, { allowSend: true });
+        await interaction.reply({ content: '✅ ติดตั้งแผงศูนย์บริการสารวัตร (+ขออนุญาตตัว / +ส่งหลักฐานคดี) และเปิดสิทธิ์พร้อมระบบ Auto-Clean เรียบร้อยแล้ว', ephemeral: true });
         return;
       }
 
@@ -5845,7 +6063,14 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
 
       if (!isConfirm) {
         // กดยกเลิก / ขอเปลี่ยนรูปภาพใหม่ -> นำผู้ใช้กลับสู่กระบวนการส่งรูปใหม่อีกครั้ง
+        const isServiceUpdate = pending?.isServiceUpdate;
         pendingPhotoConfirmations.delete(memberId);
+        if (isServiceUpdate && member.discord_id) {
+          activeServicePhotoSessions.set(member.discord_id, {
+            member,
+            timestamp: Date.now()
+          });
+        }
         await interaction.update({
           content: `🔄 <@${interaction.user.id}> คุณได้ยกเลิกรูปถ่ายเดิมเรียบร้อยแล้ว **กรุณาแนบและส่งรูปถ่ายหน้าตรงรูปใหม่ในช่องนี้ได้เลยครับ**`,
           embeds: [],
@@ -7485,6 +7710,12 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
         return;
       }
 
+      // เปิด Session รับรูปถ่ายในห้องศูนย์บริการสารวัตรเป็นเวลา 5 นาที
+      activeServicePhotoSessions.set(interaction.user.id, {
+        member,
+        timestamp: Date.now()
+      });
+
       // สร้าง token สำหรับเปิดหน้าเว็บครอปรูป 1 นิ้ว (3:4)
       const cropToken = crypto.randomBytes(32).toString('hex');
       try {
@@ -7500,17 +7731,20 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
       const cropUrl = `${getWebDashboardUrl()}/crop?token=${cropToken}`;
 
       const photoEmbed = new EmbedBuilder()
-        .setTitle('📸 ปรับเปลี่ยนรูปถ่ายหน้าตรง 1 นิ้ว (อัปเดตทันที)')
+        .setTitle('📸 ปรับเปลี่ยนรูปถ่ายหน้าตรง 1 นิ้ว (เปิดรับรูปในช่องนี้แล้ว)')
         .setDescription(
-          `คุณสามารถตัดแต่งรูปถ่ายหน้าตรงขนาด 1 นิ้ว (3:4) สำหรับทำบัตรประจำตัวสารวัตรดิจิทัล 3D ได้ทันที\n\n` +
+          `สวัสดีครับคุณ **${member.first_name} ${member.last_name} (${member.nickname})**\n` +
+          `บอทได้เปิดรับรูปถ่ายของคุณในห้องนี้เรียบร้อยแล้ว (Session มีอายุ 5 นาที)\n\n` +
           `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-          `👉 **วิธีที่ 1 (แนะนำ):** กดปุ่ม **"🔲 เปิดเว็บครอปรูปขนาด 1 นิ้ว"** ด้านล่าง เพื่ออัปโหลดและปรับขนาดรูปให้พอดี\n` +
-          `👉 **วิธีที่ 2:** แนบไฟล์รูปถ่ายหน้าตรงส่งเข้ามาในห้อง <#${VERIFY_CHANNEL_ID || '1567570864835264542'}> บอทจะตรวจจับและอัปเดตบัตรให้อัตโนมัติ\n` +
+          `👉 **ขั้นตอนดำเนินการ:**\n` +
+          `1. **แนบส่งรูปถ่ายหน้าตรงใหม่** ของคุณเข้ามาในช่องนี้ได้ทันที\n` +
+          `2. เมื่อส่งแล้ว บอทจะส่งการ์ดพร้อมปุ่ม **[🔲 ปรับแต่ง/ครอบรูป (ขนาด 1 นิ้ว)]** ให้จัดสัดส่วนใบหน้า 3:4 บนเว็บ\n` +
+          `3. เมื่อตัดแต่งและกดยืนยันบนเว็บ บัตรประจำตัว 3D ของคุณจะอัปเดตทันที!\n` +
           `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-          `💡 *การเปลี่ยนเฉพาะรูปถ่ายจะมีผลบนบัตรประจำตัวทันที โดยไม่ต้องรอให้ผู้บริหารอนุมัติ*`
+          `💡 *หรือกดปุ่ม "🔲 เปิดเว็บครอปรูปขนาด 1 นิ้ว" ด้านล่างเพื่อจัดตำแหน่งรูปเดิมได้ทันที*`
         )
         .setColor('#2ECC71')
-        .setFooter({ text: 'ระบบบริการสารวัตร • โรงเรียนพระนารายณ์' });
+        .setFooter({ text: 'ศูนย์บริการสารวัตร • โรงเรียนพระนารายณ์ (ข้อความนี้เห็นเฉพาะคุณ)' });
 
       if (member.profile_image_url) {
         photoEmbed.setThumbnail(member.profile_image_url);
@@ -11205,6 +11439,8 @@ module.exports = {
   cleanGradeClass,
   cleanFullName,
   pendingPhotoUploads,
+  pendingPhotoConfirmations,
+  activeServicePhotoSessions,
   pendingLostReports,
   getUploadDir,
   getWebDashboardUrl,
