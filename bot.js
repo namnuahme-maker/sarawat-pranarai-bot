@@ -5936,23 +5936,69 @@ client.on('interactionCreate', async (interaction) => {
       const firstName = nameParts[0] || cleanedFullName;
       const lastName = nameParts.slice(1).join(' ') || '-';
 
-      const { data: newMember, error } = await supabase
-        .from('members')
-        .insert({
-          first_name: firstName,
-          last_name: lastName,
-          nickname: nickname,
-          grade_class: cleanedGradeClass,
-          student_no: studentNo,
-          phone_number: phone,
-          role: 'MEMBER',
-          shift_role: 'MEMBER',
-          status: 'PENDING_APPROVAL'
-        })
-        .select()
-        .single();
+      // 3. ตรวจสอบว่ามีใบสมัครรออนุมัติเดิมของผู้ใช้นี้อยู่แล้วหรือไม่ (เพื่อป้องกันการสร้างแถวซ้ำซ้อน)
+      let existingPending = null;
+      try {
+        const { data: byDiscord } = await supabase
+          .from('members')
+          .select('id')
+          .eq('discord_id', interaction.user.id)
+          .eq('status', 'PENDING_APPROVAL')
+          .maybeSingle();
+        if (byDiscord?.id) existingPending = byDiscord;
 
-      if (error) throw error;
+        if (!existingPending) {
+          const { data: byName } = await supabase
+            .from('members')
+            .select('id')
+            .eq('first_name', firstName)
+            .eq('last_name', lastName)
+            .eq('status', 'PENDING_APPROVAL')
+            .maybeSingle();
+          if (byName?.id) existingPending = byName;
+        }
+      } catch (e) {}
+
+      let newMember = null;
+      if (existingPending?.id) {
+        const { data: updatedMember, error: upErr } = await supabase
+          .from('members')
+          .update({
+            first_name: firstName,
+            last_name: lastName,
+            nickname: nickname,
+            grade_class: cleanedGradeClass,
+            student_no: studentNo,
+            phone_number: phone,
+            discord_id: interaction.user.id,
+            updated_at: new Date()
+          })
+          .eq('id', existingPending.id)
+          .select()
+          .single();
+        if (upErr) throw upErr;
+        newMember = updatedMember;
+      } else {
+        const { data: insertedMember, error: inErr } = await supabase
+          .from('members')
+          .insert({
+            first_name: firstName,
+            last_name: lastName,
+            nickname: nickname,
+            grade_class: cleanedGradeClass,
+            student_no: studentNo,
+            phone_number: phone,
+            discord_id: interaction.user.id,
+            role: 'MEMBER',
+            shift_role: 'MEMBER',
+            status: 'PENDING_APPROVAL'
+          })
+          .select()
+          .single();
+        if (inErr) throw inErr;
+        newMember = insertedMember;
+      }
+
       await showDutySelection(interaction, newMember.id, nickname, `${firstName} ${lastName}`);
     }
 
