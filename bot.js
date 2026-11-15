@@ -4909,10 +4909,8 @@ client.on('interactionCreate', async (interaction) => {
       return;
     }
 
-    // 1. ยืนยันตัวตน
+    // 1. เริ่มต้นลงทะเบียนสารวัตรใหม่ (ข้ามขั้นตอนเลือกชื่อเดิม -> เปิดแบบฟอร์มกรอกข้อมูลทันที)
     if (interaction.isButton() && interaction.customId === 'btn_start_verify') {
-      await interaction.deferReply({ ephemeral: true });
-
       // ตรวจสอบว่าบัญชีนี้ได้รับการอนุมัติเป็นสารวัตรอยู่แล้วหรือไม่
       const { data: existingActive } = await supabase
         .from('members')
@@ -4923,54 +4921,65 @@ client.on('interactionCreate', async (interaction) => {
 
       if (existingActive) {
         const shiftLabel = getShiftLabel(existingActive.duty_day);
-        await interaction.editReply({
+        await interaction.reply({
           content: `✅ คุณได้รับการยืนยันตัวตนและอนุมัติเป็นสารวัตรนักเรียนแล้ว:\n` +
                    `• ชื่อ: ${existingActive.first_name} ${existingActive.last_name} (${existingActive.nickname})\n` +
                    `• รหัสเวร: \`[${existingActive.duty_id || '-'}]\`\n` +
                    `• เวร: ${shiftLabel}\n` +
                    `• ตำแหน่ง: ${existingActive.shift_role === 'SHIFT_HEAD' ? 'หัวหน้าเวร' : (existingActive.shift_role === 'SHIFT_DEPUTY' ? 'รองหัวหน้าเวร' : 'สารวัตรประจำเวร')}\n\n` +
-                   `*(หากต้องการอัปเดตรูปถ่ายทำบัตร สามารถส่งรูปใหม่เข้ามาในช่องนี้ได้ตลอดเวลาครับ)*`
+                   `*(หากต้องการอัปเดตรูปถ่ายทำบัตร สามารถส่งรูปใหม่เข้ามาในช่องนี้ได้ตลอดเวลาครับ)*`,
+          ephemeral: true
         });
         return;
       }
 
-      const { data: members } = await supabase
-        .from('members')
-        .select('id, first_name, last_name, nickname, grade_class, student_no, phone_number')
-        .is('discord_id', null)
-        .order('grade_class', { ascending: true });
+      // ข้ามขั้นตอนการเลือกรายชื่อดั้งเดิมทั้งหมด -> เปิดแบบฟอร์มกรอกข้อมูลสมัครทันที
+      const modal = new ModalBuilder()
+        .setCustomId('modal_new_member')
+        .setTitle('📝 แบบฟอร์มลงทะเบียนสารวัตรใหม่');
 
-      const selectMenu = new StringSelectMenuBuilder()
-        .setCustomId('select_member_identity')
-        .setPlaceholder('🔍 ค้นหาและเลือกชื่อของคุณจากรายชื่อ');
+      const nameInput = new TextInputBuilder()
+        .setCustomId('input_full_name')
+        .setLabel('ชื่อจริง-นามสกุล (มี นาย/นาง/นางสาว ติดชื่อ)')
+        .setPlaceholder('เช่น นายสมชาย ใจดี หรือ นางสาวสมหญิง รักเรียน')
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true);
 
-      selectMenu.addOptions({
-        label: '➕ ขอเพิ่มชื่อใหม่ (ไม่มีชื่อในระบบ)',
-        description: 'กดเพื่อกรอก ชื่อ-นามสกุล, ชื่อเล่น, ชั้น, เลขที่ และเบอร์โทร',
-        value: 'action_add_new_member'
-      });
+      const nicknameInput = new TextInputBuilder()
+        .setCustomId('input_nickname')
+        .setLabel('ชื่อเล่น')
+        .setPlaceholder('เช่น น้ำเหนือ, ปัน, นน')
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true);
 
-      (members || []).slice(0, 24).forEach(m => {
-        selectMenu.addOptions({
-          label: `${m.nickname} — ${m.first_name} ${m.last_name}`,
-          description: `ชั้น ม.${m.grade_class} เลขที่ #${m.student_no}`,
-          value: m.id
-        });
-      });
+      const classInput = new TextInputBuilder()
+        .setCustomId('input_class')
+        .setLabel('ระดับชั้น (เช่น 6/7, 4/10 ไม่ต้องใส่ ม.)')
+        .setPlaceholder('เช่น 6/7, 4/10, 5/2 (ห้ามใส่ ม.)')
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true);
 
-      const row = new ActionRowBuilder().addComponents(selectMenu);
-      const step1Embed = new EmbedBuilder()
-        .setTitle('🛡️ [ขั้นตอนที่ 1/3] ค้นหาและเลือกชื่อของคุณ')
-        .setColor('#3498DB')
-        .setDescription(
-          'โปรดค้นหาและเลือกชื่อของคุณจากเมนูด้านล่างนี้\n' +
-          '*(หากไม่มีชื่อของคุณในระบบ ให้กดเลือก **"➕ ขอเพิ่มชื่อใหม่"**)*'
-        );
+      const noInput = new TextInputBuilder()
+        .setCustomId('input_no')
+        .setLabel('เลขที่')
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true);
 
-      await interaction.editReply({
-        embeds: [step1Embed],
-        components: [row]
-      });
+      const phoneInput = new TextInputBuilder()
+        .setCustomId('input_phone')
+        .setLabel('เบอร์โทรศัพท์ (เช่น 0891234567)')
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true);
+
+      modal.addComponents(
+        new ActionRowBuilder().addComponents(nameInput),
+        new ActionRowBuilder().addComponents(nicknameInput),
+        new ActionRowBuilder().addComponents(classInput),
+        new ActionRowBuilder().addComponents(noInput),
+        new ActionRowBuilder().addComponents(phoneInput)
+      );
+
+      await interaction.showModal(modal);
       return;
     }
 
@@ -5265,12 +5274,6 @@ client.on('interactionCreate', async (interaction) => {
         content: null,
         components: []
       });
-
-      if (interaction.channel) {
-        await interaction.channel.send({
-          content: `📸 <@${interaction.user.id}> **ส่งรูปในช่องนี้เพื่ออัพโหลดรูปหน้าคุณ** *(รูปถ่ายหน้าตรงในเครื่องแบบ)*`
-        }).catch(() => {});
-      }
       return;
     }
 
@@ -8756,7 +8759,7 @@ async function showDutySelection(interaction, memberId, nickname, fullName) {
   const cancelRow = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId('btn_start_verify')
-      .setLabel('↩️ ย้อนกลับไปเลือกชื่อใหม่')
+      .setLabel('↩️ ย้อนกลับไปกรอกข้อมูลใหม่')
       .setStyle(ButtonStyle.Secondary)
   );
 
