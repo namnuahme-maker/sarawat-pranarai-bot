@@ -908,6 +908,92 @@ async function syncAllMemberRoles(guild) {
 }
 
 /**
+ * 🛡️ ตั้งค่าสิทธิ์ให้สารวัตรทุกคนสามารถเข้าถึงห้องระบบได้ (ศูนย์บริการ / จุดรับแจ้งของหาย)
+ * @param {Guild} guild 
+ * @param {GuildChannel} channel 
+ * @param {Object} options 
+ * @param {boolean} options.allowSend - อนุญาตให้ส่งข้อความ/แนบไฟล์ได้หรือไม่ (true สำหรับแจ้งของหาย, false สำหรับศูนย์บริการ)
+ */
+async function ensureInspectorChannelAccess(guild, channel, { allowSend = false } = {}) {
+  if (!guild || !channel || !channel.permissionOverwrites) return;
+  try {
+    // 1. ซ่อนห้องจาก @everyone
+    if (guild.roles?.everyone) {
+      await channel.permissionOverwrites.edit(guild.roles.everyone.id, {
+        ViewChannel: false
+      }).catch(err => console.warn(`[PERMS] ไม่สามารถซ่อนห้อง #${channel.name} จาก @everyone:`, err.message));
+    }
+
+    // 2. ซ่อนห้องจาก UNVERIFIED (ถ้ามี)
+    if (ROLE_IDS.UNVERIFIED && guild.roles?.cache?.has(ROLE_IDS.UNVERIFIED)) {
+      await channel.permissionOverwrites.edit(ROLE_IDS.UNVERIFIED, {
+        ViewChannel: false
+      }).catch(() => {});
+    }
+
+    // 3. รวบรวมทุกบทบาทที่เป็นสารวัตร
+    const inspectorRoleIds = new Set();
+    if (ROLE_IDS.VERIFIED && guild.roles?.cache?.has(ROLE_IDS.VERIFIED)) {
+      inspectorRoleIds.add(ROLE_IDS.VERIFIED);
+    }
+    if (guild.roles?.cache) {
+      guild.roles.cache.forEach(r => {
+        if (r.name.includes('สารวัตรนักเรียน') || r.name.includes('สารวัตร')) {
+          inspectorRoleIds.add(r.id);
+        }
+      });
+    }
+    Object.values(ROLE_IDS.DAYS || {}).forEach(rid => {
+      if (rid && guild.roles?.cache?.has(rid)) inspectorRoleIds.add(rid);
+    });
+    Object.values(ROLE_IDS.HEADS || {}).forEach(rid => {
+      if (rid && guild.roles?.cache?.has(rid)) inspectorRoleIds.add(rid);
+    });
+    Object.values(ROLE_IDS.DEPUTIES || {}).forEach(rid => {
+      if (rid && guild.roles?.cache?.has(rid)) inspectorRoleIds.add(rid);
+    });
+    if (ROLE_IDS.PRESIDENT && guild.roles?.cache?.has(ROLE_IDS.PRESIDENT)) inspectorRoleIds.add(ROLE_IDS.PRESIDENT);
+    if (ROLE_IDS.VICE_PRESIDENT && guild.roles?.cache?.has(ROLE_IDS.VICE_PRESIDENT)) inspectorRoleIds.add(ROLE_IDS.VICE_PRESIDENT);
+
+    // 4. สิทธิ์ของสารวัตร
+    const inspectorPerms = {
+      ViewChannel: true,
+      ReadMessageHistory: true
+    };
+    if (allowSend) {
+      inspectorPerms.SendMessages = true;
+      inspectorPerms.AttachFiles = true;
+      inspectorPerms.EmbedLinks = true;
+    } else {
+      inspectorPerms.SendMessages = false;
+    }
+
+    for (const rid of inspectorRoleIds) {
+      await channel.permissionOverwrites.edit(rid, inspectorPerms).catch(err => {
+        console.warn(`[PERMS] ไม่สามารถตั้งสิทธิ์ Role ${rid} ใน #${channel.name}:`, err.message);
+      });
+    }
+
+    // 5. ให้สิทธิ์บอท (Client User / me) สิทธิ์เต็มเสมอ
+    const me = guild.members?.me || (client.user && guild.members?.cache?.get(client.user.id));
+    if (me) {
+      await channel.permissionOverwrites.edit(me.id, {
+        ViewChannel: true,
+        SendMessages: true,
+        EmbedLinks: true,
+        AttachFiles: true,
+        ManageMessages: true,
+        ReadMessageHistory: true
+      }).catch(() => {});
+    }
+
+    console.log(`[PERMS] 🛡️ อัปเดตสิทธิ์ห้อง #${channel.name} ให้สารวัตร (${inspectorRoleIds.size} บทบาท) สำเร็จ [allowSend: ${allowSend}]`);
+  } catch (err) {
+    console.error(`[PERMS] Error setting permissions for #${channel.name}:`, err);
+  }
+}
+
+/**
  * 🔄 เคลียร์ข้อความเก่าและติดตั้งแผงฟีเจอร์เวอร์ชันล่าสุดในทุกช่องระบบ (ไม่ใช่ D-Day ข้อมูลไม่หาย)
  */
 async function refreshAllChannelsAndPanels(guild, options = { purge: true }) {
@@ -1008,6 +1094,7 @@ async function refreshAllChannelsAndPanels(guild, options = { purge: true }) {
     if (chLostFound) {
       if (options.purge) await purgeChannelMessages(chLostFound);
       await sendLostFoundGuidePanel(chLostFound);
+      await ensureInspectorChannelAccess(guild, chLostFound, { allowSend: true });
       result.refreshedChannels++;
     }
 
@@ -1048,6 +1135,7 @@ async function refreshAllChannelsAndPanels(guild, options = { purge: true }) {
     if (chInspectorService) {
       if (options.purge) await purgeChannelMessages(chInspectorService);
       await sendInspectorServicePanel(chInspectorService);
+      await ensureInspectorChannelAccess(guild, chInspectorService, { allowSend: false });
       result.refreshedChannels++;
     }
 
@@ -3980,7 +4068,12 @@ client.on('interactionCreate', async (interaction) => {
               `👉 **วิธีแก้:** ไปที่ Server Settings > Roles > ลากยศ **SARAWAT-BOT** ขึ้นไปไว้ด้านบนสุด แล้วสั่ง \`/sync-roles\` อีกครั้ง`
           });
         } else {
-          await interaction.editReply({ content: `✅ ซิงค์ยศและชื่อเรียบร้อย: สำเร็จ ${res.successCount} คน` });
+          const chService = findChannel(interaction.guild, '🛎️│บริการสารวัตร') || findChannel(interaction.guild, 'บริการสารวัตร');
+          const chLost = findChannel(interaction.guild, '📦│แจ้งพบของหาย') || findChannel(interaction.guild, 'แจ้งพบของหาย');
+          if (chService) await ensureInspectorChannelAccess(interaction.guild, chService, { allowSend: false });
+          if (chLost) await ensureInspectorChannelAccess(interaction.guild, chLost, { allowSend: true });
+
+          await interaction.editReply({ content: `✅ ซิงค์ยศและชื่อเรียบร้อย: สำเร็จ ${res.successCount} คน (พร้อมอัปเดตสิทธิ์การเข้าถึงศูนย์บริการและจุดรับแจ้งของหาย)` });
         }
         return;
       }
@@ -4064,7 +4157,8 @@ client.on('interactionCreate', async (interaction) => {
           return;
         }
         await sendLostFoundGuidePanel(interaction.channel);
-        await interaction.reply({ content: '✅ ติดตั้งแผงจุดรับแจ้งของหายเรียบร้อยแล้ว', ephemeral: true });
+        await ensureInspectorChannelAccess(interaction.guild, interaction.channel, { allowSend: true });
+        await interaction.reply({ content: '✅ ติดตั้งแผงจุดรับแจ้งของหาย และตั้งค่าสิทธิ์ให้สารวัตรทุกคนส่งรูป/ข้อความได้เรียบร้อยแล้ว', ephemeral: true });
         return;
       }
 
@@ -4074,7 +4168,8 @@ client.on('interactionCreate', async (interaction) => {
           return;
         }
         await sendInspectorServicePanel(interaction.channel);
-        await interaction.reply({ content: '✅ ติดตั้งแผงศูนย์บริการสารวัตร (+ขออนุญาตตัว / +ส่งหลักฐานคดี) เรียบร้อยแล้ว', ephemeral: true });
+        await ensureInspectorChannelAccess(interaction.guild, interaction.channel, { allowSend: false });
+        await interaction.reply({ content: '✅ ติดตั้งแผงศูนย์บริการสารวัตร (+ขออนุญาตตัว / +ส่งหลักฐานคดี) และตั้งค่าสิทธิ์ให้สารวัตรทุกคนเข้าถึงได้เรียบร้อยแล้ว', ephemeral: true });
         return;
       }
 
@@ -10825,6 +10920,7 @@ module.exports = {
   getCurrentQuarterAndYear,
   getAcademicPeriod,
   updateAcademicPeriod,
+  ensureInspectorChannelAccess,
   logError,
   logWarn
 };
