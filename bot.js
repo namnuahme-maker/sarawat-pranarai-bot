@@ -5288,6 +5288,67 @@ client.on('interactionCreate', async (interaction) => {
       return;
     }
 
+/**
+ * 🛡️ สร้าง Rich Embed และแถบปุ่มสำหรับหน้าตรวจสอบข้อมูลสารวัตรและรูปถ่ายก่อนส่งขออนุมัติ
+ */
+function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
+  const isCropped = !!(member.photo_cropped_at);
+  const isSpecial = member.duty_day && member.duty_day.endsWith('S');
+  const weekday = member.duty_day ? (member.duty_day === 'TSS' ? 'Ts' : member.duty_day.replace(/S+$/, '') || member.duty_day) : 'M';
+  const weekdayName = DAY_NAMES[weekday] || weekday;
+  const shiftLabel = getShiftLabel(member.duty_day);
+
+  const embed = new EmbedBuilder()
+    .setTitle('🛡️ ตรวจสอบข้อมูลการลงทะเบียนสารวัตร [ก่อนส่งขออนุมัติ]')
+    .setDescription(
+      `สวัสดีครับคุณ **${member.first_name} ${member.last_name} (${member.nickname})**\n` +
+      `โปรดตรวจสอบข้อมูลส่วนตัวและรูปถ่ายทำบัตรของคุณด้านล่างให้ถูกต้องครบถ้วน:\n\n` +
+      `• **หากข้อมูลและรูปถูกต้องแล้ว:** กด **"✅ ยืนยันข้อมูล & ส่งขออนุมัติ"**\n` +
+      `• **หากเพิ่งตัดต่อ/ครอปรูปบนเว็บมา:** กด **"🔄 รีเฟรชรูปภาพ"** เพื่อดึงรูปใหม่ทันที\n` +
+      `• **หากต้องการปรับตำแหน่งรูป:** กด **"🔲 ปรับแต่ง/ครอปรูปบนเว็บ"**`
+    )
+    .addFields(
+      { name: '👤 ชื่อ-นามสกุล', value: `\`${member.first_name} ${member.last_name}\``, inline: true },
+      { name: '🏷️ ชื่อเล่น', value: `\`${member.nickname || '-'}\``, inline: true },
+      { name: '🏫 ชั้น / เลขที่', value: `ม.\`${member.grade_class || '-'}\` เลขที่ \`#${member.student_no || '-'}\``, inline: true },
+      { name: '📞 เบอร์โทรศัพท์', value: `\`${member.phone_number || '-'}\``, inline: true },
+      { name: '📅 วันปฏิบัติหน้าที่', value: `วัน${weekdayName} (\`${weekday}\`)`, inline: true },
+      { name: '🏷️ ผลัดเวรสุทธิ', value: `**${shiftLabel}** ${isSpecial ? '⭐' : ''}`, inline: true },
+      {
+        name: '📸 สถานะรูปถ่าย',
+        value: isCropped
+          ? '✅ **ปรับแต่ง/ครอปรูปสี่เหลี่ยมจัตุรัส (1:1) เรียบร้อยแล้ว** (พร้อมนำไปจัดทำบัตรดิจิทัล 3D)'
+          : '⚠️ **รูปถ่ายต้นฉบับ (ยังไม่ได้ครอป 1:1)** — แนะนำให้กดปุ่มครอปรูปบนเว็บเพื่อความสวยงามบนบัตร',
+        inline: false
+      }
+    )
+    .setImage(photoUrl)
+    .setColor(isCropped ? '#2ECC71' : '#3498DB')
+    .setFooter({ text: 'ระบบลงทะเบียนสารวัตร • โรงเรียนพระนารายณ์ (ข้อความนี้เห็นเฉพาะคุณ)' })
+    .setTimestamp();
+
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`btn_confirm_photo_${member.id}`)
+      .setLabel('✅ ยืนยันข้อมูล & ส่งขออนุมัติ')
+      .setStyle(ButtonStyle.Success),
+    new ButtonBuilder()
+      .setLabel('🔲 ปรับแต่ง/ครอปรูปบนเว็บ')
+      .setStyle(ButtonStyle.Link)
+      .setURL(cropUrl),
+    new ButtonBuilder()
+      .setCustomId(`btn_refresh_photo_${member.id}`)
+      .setLabel('🔄 รีเฟรชรูปภาพ')
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setCustomId(`btn_reupload_photo_${member.id}`)
+      .setLabel('❌ เปลี่ยนรูปใหม่')
+      .setStyle(ButtonStyle.Secondary)
+  );
+
+  return { embed, row };
+}
+
     // 📸 เปิดดูรูปภาพและปุ่มตัวเลือกแบบส่วนตัว (Ephemeral - เฉพาะคุณที่มองเห็นข้อความนี้)
     if (interaction.isButton() && interaction.customId.startsWith('btn_view_photo_')) {
       const memberId = interaction.customId.replace('btn_view_photo_', '');
@@ -5324,39 +5385,57 @@ client.on('interactionCreate', async (interaction) => {
         }
       }
 
-      const confirmEmbed = new EmbedBuilder()
-        .setTitle('📸 ตรวจสอบรูปถ่ายหน้าตรงของคุณ')
-        .setDescription(
-          `สวัสดีครับคุณ **${member.first_name} ${member.last_name} (${member.nickname})**\n\n` +
-          `บอทได้รับรูปถ่ายของคุณและส่งเข้าคลังเก็บข้อมูลเรียบร้อยแล้ว\n` +
-          `👉 **ต้องการใช้รูปนี้ หรือต้องการปรับตำแหน่ง/ครอปรูปให้พอดีก่อนส่งขออนุมัติ?**\n\n` +
-          `• กด **"✅ ยืนยันใช้รูปนี้"** เพื่อส่งคำขอให้ผู้บริหารอนุมัติทันที\n` +
-          `• กด **"🔲 ปรับแต่ง/ครอปรูปบนเว็บ"** เพื่อปรับรูปสี่เหลี่ยมจัตุรัส (1:1) ให้สวยงาม\n` +
-          `• กด **"🔄 เปลี่ยนรูปภาพใหม่"** หากต้องการเลือกส่งรูปอื่น`
-        )
-        .setImage(photoUrl)
-        .setColor('#3498DB')
-        .setFooter({ text: 'ระบบลงทะเบียนสารวัตร • โรงเรียนพระนารายณ์ (ข้อความนี้เห็นเฉพาะคุณ)' });
-
-      const confirmRow = new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-          .setCustomId(`btn_confirm_photo_${member.id}`)
-          .setLabel('✅ ยืนยันใช้รูปนี้')
-          .setStyle(ButtonStyle.Success),
-        new ButtonBuilder()
-          .setLabel('🔲 ปรับแต่ง/ครอปรูปบนเว็บ')
-          .setStyle(ButtonStyle.Link)
-          .setURL(cropUrl),
-        new ButtonBuilder()
-          .setCustomId(`btn_reupload_photo_${member.id}`)
-          .setLabel('🔄 เปลี่ยนรูปภาพใหม่')
-          .setStyle(ButtonStyle.Secondary)
-      );
+      const { embed, row } = buildPreApprovalEmbed(member, photoUrl, cropUrl);
 
       await interaction.reply({
-        embeds: [confirmEmbed],
-        components: [confirmRow],
+        embeds: [embed],
+        components: [row],
         ephemeral: true
+      });
+      return;
+    }
+
+    // 🔄 รีเฟรชรูปภาพเพื่อดึงรูปที่เพิ่งครอปบนเว็บมาแสดงทันที
+    if (interaction.isButton() && interaction.customId.startsWith('btn_refresh_photo_')) {
+      const memberId = interaction.customId.replace('btn_refresh_photo_', '');
+      const { data: member } = await supabase.from('members').select('*').eq('id', memberId).maybeSingle();
+      if (!member || member.discord_id !== interaction.user.id) {
+        await interaction.reply({ content: '⛔ เมนูนี้เฉพาะเจ้าของรูปภาพเท่านั้นครับ', ephemeral: true });
+        return;
+      }
+
+      const pending = pendingPhotoConfirmations.get(memberId);
+      const photoUrl = (member.photo_cropped_at && member.profile_image_url)
+        ? member.profile_image_url
+        : (pending?.photoUrl || member.profile_image_url);
+
+      if (!photoUrl) {
+        await interaction.reply({ content: '⚠️ ไม่พบข้อมูลรูปถ่าย กรุณาส่งรูปใหม่อีกครั้งในช่องนี้ครับ', ephemeral: true });
+        return;
+      }
+
+      let cropUrl = pending?.cropUrl;
+      if (!cropUrl) {
+        const cropToken = crypto.randomBytes(32).toString('hex');
+        try {
+          await supabase.from('crop_tokens').insert({
+            token: cropToken,
+            member_id: member.id,
+            discord_id: interaction.user.id,
+            source_image_url: photoUrl,
+            expires_at: new Date(Date.now() + 15 * 60 * 1000).toISOString()
+          });
+          cropUrl = `${getWebDashboardUrl()}/crop?token=${cropToken}`;
+        } catch (e) {
+          cropUrl = `${getWebDashboardUrl()}/crop`;
+        }
+      }
+
+      const { embed, row } = buildPreApprovalEmbed(member, photoUrl, cropUrl);
+
+      await interaction.update({
+        embeds: [embed],
+        components: [row]
       });
       return;
     }
@@ -5436,18 +5515,28 @@ client.on('interactionCreate', async (interaction) => {
       }
 
       const shiftLabel = getShiftLabel(member.duty_day);
+      const isSpecial = member.duty_day && member.duty_day.endsWith('S');
+      const weekday = member.duty_day ? (member.duty_day === 'TSS' ? 'Ts' : member.duty_day.replace(/S+$/, '') || member.duty_day) : 'M';
+      const weekdayName = DAY_NAMES[weekday] || weekday;
+
       const doneEmbed = new EmbedBuilder()
-        .setTitle('✅ ยืนยันรูปถ่ายและส่งคำขออนุมัติเรียบร้อยแล้ว')
-        .setColor('#2ECC71')
+        .setTitle('✅ ยืนยันข้อมูลและส่งคำขออนุมัติเรียบร้อยแล้ว')
         .setDescription(
-          `ระบบได้บันทึกรูปถ่ายและส่งคำขอของคุณไปยังห้องตรวจสอบของคณะผู้บริหารแล้ว\n\n` +
-          `👤 **สารวัตร:** ${member.first_name} ${member.last_name} (**${member.nickname}**)\n` +
-          `📅 **รอบการปฏิบัติหน้าที่:** **${shiftLabel}**\n` +
-          `⏳ **สถานะ:** **รอการอนุมัติจากผู้บริหาร (PENDING APPROVAL)**\n\n` +
-          `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-          `💡 *เมื่อผู้บริหารกดอนุมัติ ระบบจะมอบยศและส่งข้อความแจ้งเตือนทาง DM ทันที*`
+          `ระบบได้บันทึกข้อมูลและส่งคำขอลงทะเบียนของคุณไปยังห้องประชุมของคณะผู้บริหารแล้ว!\n\n` +
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━`
         )
-        .setThumbnail(photoUrl);
+        .addFields(
+          { name: '👤 สารวัตร', value: `\`${member.first_name} ${member.last_name}\` (\`${member.nickname}\`)`, inline: true },
+          { name: '🏫 ชั้น / เลขที่', value: `ม.\`${member.grade_class}\` เลขที่ \`#${member.student_no}\``, inline: true },
+          { name: '📞 เบอร์โทรศัพท์', value: `\`${member.phone_number || '-'}\``, inline: true },
+          { name: '📅 วันปฏิบัติหน้าที่', value: `วัน${weekdayName} (\`${weekday}\`)`, inline: true },
+          { name: '🏷️ ผลัดเวรสุทธิ', value: `**${shiftLabel}** ${isSpecial ? '⭐' : ''}`, inline: true },
+          { name: '⏳ สถานะ', value: '⏳ **รอการอนุมัติ (PENDING APPROVAL)**', inline: true }
+        )
+        .setImage(photoUrl)
+        .setColor('#2ECC71')
+        .setFooter({ text: 'ระบบลงทะเบียนสารวัตร • โรงเรียนพระนารายณ์ (ข้อความนี้เห็นเฉพาะคุณ)' })
+        .setTimestamp();
 
       await interaction.editReply({
         content: `✅ <@${interaction.user.id}> ดำเนินการส่งคำขออนุมัติเรียบร้อยแล้ว`,
