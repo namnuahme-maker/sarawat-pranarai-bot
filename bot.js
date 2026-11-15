@@ -733,7 +733,11 @@ async function sendVerifyPanel(channel) {
     new ButtonBuilder()
       .setCustomId('btn_start_verify')
       .setLabel('🛡️ เริ่มต้นลงทะเบียนสารวัตร')
-      .setStyle(ButtonStyle.Primary)
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setCustomId('btn_check_my_registration_status')
+      .setLabel('👁️ ตรวจสอบสถานะของฉัน (เฉพาะคุณที่เห็น)')
+      .setStyle(ButtonStyle.Secondary)
   );
 
   return await channel.send({ embeds: [embed], components: [row], files });
@@ -2677,72 +2681,50 @@ client.once(Events.ClientReady || 'ready', async () => {
               const ch = await client.channels.fetch(pending.channelId).catch(() => null);
               if (ch) {
                 const msg = await ch.messages.fetch(pending.promptMsgId).catch(() => null);
-                if (msg) {
-                  const isSpecial = m.duty_day && m.duty_day.endsWith('S');
-                  const weekday = m.duty_day ? (m.duty_day === 'TSS' ? 'Ts' : m.duty_day.replace(/S+$/, '') || m.duty_day) : 'M';
-                  const weekdayName = DAY_NAMES[weekday] || weekday;
-
-                  if (m.status === 'ACTIVE' || pending.isServiceUpdate) {
-                    await msg.edit({
-                      content: `✅ <@${pending.userId}> อัปเดตรูปถ่ายทำบัตรประจำตัว 3D สำเร็จเรียบร้อยแล้ว!`,
-                      embeds: [{
-                        title: '✨ อัปเดตรูปถ่ายทำบัตรประจำตัว 3D สำเร็จเรียบร้อยแล้ว!',
-                        description:
-                          `คุณ **${m.first_name} ${m.last_name} (${m.nickname || '-'})** ได้ตัดแต่งรูปถ่ายขนาด 1 นิ้ว (3:4) เรียบร้อยแล้ว!\n\n` +
-                          `✅ บัตรประจำตัวสารวัตรดิจิทัล 3D ของคุณได้รับการอัปเดตรูปใหม่ทันที พร้อมสำรองเข้า Google Drive เรียบร้อยแล้ว`,
-                        image: { url: m.profile_image_url },
-                        color: 0x2ECC71,
-                        footer: { text: 'ระบบบริการสารวัตร • โรงเรียนพระนารายณ์' },
-                        timestamp: new Date().toISOString()
-                      }],
-                      components: [{
-                        type: 1,
-                        components: [{
-                          type: 2,
-                          style: 5,
-                          label: '🪪 เปิดดูบัตรประจำตัว 3D',
-                          url: `${getBaseUrl()}/card?id=${m.id}`
-                        }]
-                      }]
-                    }).catch(() => {});
-                  } else {
-                    await msg.edit({
-                      content: `🔒 <@${pending.userId}> ปรับแต่งรูปถ่ายขนาด 1 นิ้วเรียบร้อยแล้ว!`,
-                      embeds: [{
-                        title: '🔒 ปรับแต่งรูปภาพขนาด 1 นิ้วสำเร็จ [ขั้นตอนตรวจสอบข้อมูล]',
-                        description:
-                          `ยินดีด้วยครับคุณ <@${pending.userId}>\n` +
-                          `ระบบได้รับการบันทึกรูปภาพขนาด 1 นิ้ว (3:4) มาตรฐานสำหรับทำบัตรสารวัตรเรียบร้อยแล้ว!\n\n` +
-                          `🛡️ **นโยบายความเป็นส่วนตัวและความปลอดภัย (Privacy-First):**\n` +
-                          `• เพื่อความปลอดภัย ข้อมูลส่วนตัวและรูปถ่ายของผู้สมัครจะไม่แสดงในห้องสาธารณะนี้\n` +
-                          `• โปรดกดปุ่ม **"👁️ ตรวจสอบข้อมูลของคุณ (เฉพาะคุณที่เห็น)"** ด้านล่าง เพื่อดูข้อมูลและรูปถ่ายของคุณแบบส่วนตัว\n` +
-                          `• เมื่อตรวจสอบความถูกต้องเรียบร้อย คุณสามารถกดส่งขออนุมัติ หรือแก้ไขข้อมูลได้ทันที`,
-                        color: 0x3498DB,
-                        footer: { text: 'ระบบลงทะเบียนสารวัตร • โรงเรียนพระนารายณ์' },
-                        timestamp: new Date().toISOString()
-                      }],
-                      components: [{
-                        type: 1,
-                        components: [
-                          {
-                            type: 2,
-                            style: 1,
-                            label: '👁️ ตรวจสอบข้อมูลของคุณ (เฉพาะคุณที่เห็น)',
-                            custom_id: `btn_view_private_profile_${m.id}`
-                          },
-                          {
-                            type: 2,
-                            style: 4,
-                            label: '🔄 เปลี่ยนรูปภาพใหม่',
-                            custom_id: `btn_reupload_photo_${m.id}`
-                          }
-                        ]
-                      }]
-                    }).catch(() => {});
-                  }
+                if (msg && msg.deletable) {
+                  // 🔒 ลบการ์ดในห้องแชทสาธารณะทิ้งทันที เพื่อความเป็นส่วนตัวสูงสุด ไม่ให้สมาชิกคนอื่นมองเห็น
+                  await msg.delete().catch(() => {});
                 }
               }
             } catch (err) {}
+          }
+
+          // 📩 ส่งข้อความและการ์ดตรวจสอบส่วนตัวเข้าแชท Direct Message (DM) ของผู้สมัครโดยตรง
+          if (pending.userId) {
+            try {
+              const targetUser = await client.users.fetch(pending.userId).catch(() => null);
+              if (targetUser) {
+                if (m.status === 'ACTIVE' || pending.isServiceUpdate) {
+                  await targetUser.send({
+                    embeds: [{
+                      title: '✨ อัปเดตรูปถ่ายทำบัตรประจำตัว 3D สำเร็จเรียบร้อยแล้ว!',
+                      description:
+                        `คุณ **${m.first_name} ${m.last_name} (${m.nickname || '-'})** ได้ตัดแต่งรูปถ่ายขนาด 1 นิ้ว (3:4) เรียบร้อยแล้ว!\n\n` +
+                        `✅ บัตรประจำตัวสารวัตรดิจิทัล 3D ของคุณได้รับการอัปเดตรูปใหม่ทันที พร้อมสำรองเข้า Google Drive เรียบร้อยแล้ว`,
+                      image: { url: m.profile_image_url },
+                      color: 0x2ECC71,
+                      footer: { text: 'ระบบบริการสารวัตร • โรงเรียนพระนารายณ์ (ข้อความส่วนตัว)' }
+                    }],
+                    components: [{
+                      type: 1,
+                      components: [{
+                        type: 2,
+                        style: 5,
+                        label: '🪪 เปิดดูบัตรประจำตัว 3D',
+                        url: `${getBaseUrl()}/card?id=${m.id}`
+                      }]
+                    }]
+                  }).catch(() => {});
+                } else {
+                  const { embed, row } = buildPrivateReviewCard(m);
+                  await targetUser.send({
+                    content: `🔒 <@${pending.userId}> นี่คือข้อมูลส่วนตัวและรูปถ่ายขนาด 1 นิ้วของคุณ (ข้อความส่วนตัว)`,
+                    embeds: [embed],
+                    components: [row]
+                  }).catch(() => {});
+                }
+              }
+            } catch (dmErr) {}
           }
         }
       }
@@ -6176,6 +6158,68 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
 
   return { embed, row };
 }
+
+    // 👁️ ปุ่มตรวจสอบสถานะการสมัครของฉันบนแผงลงทะเบียน (เฉพาะบุคคล - Ephemeral)
+    if (interaction.isButton() && interaction.customId === 'btn_check_my_registration_status') {
+      const { data: member } = await supabase
+        .from('members')
+        .select('*')
+        .eq('discord_id', interaction.user.id)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (!member) {
+        await interaction.reply({
+          content: '⚠️ ไม่พบข้อมูลการลงทะเบียนของคุณในระบบ กรุณากดปุ่ม **"🛡️ เริ่มต้นลงทะเบียนสารวัตร"** ด้านบนเพื่อเริ่มต้นลงทะเบียนครับ',
+          ephemeral: true
+        });
+        return;
+      }
+
+      if (member.status === 'ACTIVE') {
+        const activeEmbed = new EmbedBuilder()
+          .setTitle('✅ คุณเป็นสารวัตรนักเรียนที่ได้รับการอนุมัติแล้ว')
+          .setDescription(
+            `สวัสดีครับคุณ **${member.first_name} ${member.last_name} (${member.nickname || '-'})**\n` +
+            `รหัสเวร: \`[${member.duty_id || 'สารวัตร'}]\` | ผลัด: \`${member.duty_day || '-'}\`\n\n` +
+            `บัตรประจำตัวสารวัตรดิจิทัล 3D ของคุณพร้อมใช้งานแล้ว สามารถกดดูได้ที่ปุ่มด้านล่างครับ`
+          )
+          .setColor('#2ECC71')
+          .setFooter({ text: 'ระบบบริการสารวัตร • โรงเรียนพระนารายณ์ (ข้อความนี้เห็นเฉพาะคุณ)' });
+
+        const activeRow = new ActionRowBuilder().addComponents(
+          new ButtonBuilder()
+            .setLabel('🪪 เปิดดูบัตรประจำตัว 3D')
+            .setStyle(ButtonStyle.Link)
+            .setURL(`${getWebDashboardUrl()}/card?id=${member.id}`)
+        );
+
+        await interaction.reply({ embeds: [activeEmbed], components: [activeRow], ephemeral: true });
+        return;
+      }
+
+      if (member.status === 'PENDING_APPROVAL') {
+        const pendingEmbed = new EmbedBuilder()
+          .setTitle('⏳ ข้อมูลของคุณอยู่ระหว่างรอคณะผู้บริหารตรวจสอบและอนุมัติ')
+          .setDescription(
+            `สวัสดีครับคุณ **${member.first_name} ${member.last_name} (${member.nickname || '-'})**\n` +
+            `คำขอลงทะเบียนและรูปถ่ายของคุณได้ถูกส่งไปยังห้องประชุมของคณะผู้บริหารแล้ว\n\n` +
+            `เมื่อได้รับการอนุมัติเรียบร้อย บอทจะแจ้งเตือนและจัดทำ **บัตรประจำตัวสารวัตร 3D** ให้คุณทันทีครับ!`
+          )
+          .setImage(member.profile_image_url)
+          .setColor('#F59E0B')
+          .setFooter({ text: 'ระบบลงทะเบียนสารวัตร • โรงเรียนพระนารายณ์ (ข้อความนี้เห็นเฉพาะคุณ)' });
+
+        await interaction.reply({ embeds: [pendingEmbed], ephemeral: true });
+        return;
+      }
+
+      // หากมีรูปหรือยังไม่ได้ยืนยัน ให้เปิดการ์ดตรวจสอบข้อมูลส่วนตัว
+      const { embed, row } = buildPrivateReviewCard(member);
+      await interaction.reply({ embeds: [embed], components: [row], ephemeral: true });
+      return;
+    }
 
     // 🛡️ ปุ่มเปิดดูข้อมูลส่วนตัวและรูปถ่ายขนาด 1 นิ้ว (เฉพาะบุคคล - Ephemeral)
     if (interaction.isButton() && (interaction.customId.startsWith('btn_view_private_profile_') || interaction.customId.startsWith('btn_view_photo_'))) {
