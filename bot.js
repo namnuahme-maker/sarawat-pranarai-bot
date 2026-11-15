@@ -2983,14 +2983,33 @@ client.on('messageCreate', async (message) => {
             }
           }
 
+          // 5.1 สำรองไฟล์ภาพเข้าสู่ Google Drive (Zero-dependency Service Account)
+          let gdriveFileId = null;
+          let gdriveFileUrl = null;
+          try {
+            const gdriveRes = await uploadToGoogleDrive(imgBuffer, filename, {
+              memberName: `${member.first_name || ''} ${member.last_name || ''}`.trim() || member.nickname,
+              dutyId: member.duty_id || '-'
+            });
+            if (gdriveRes && gdriveRes.success) {
+              gdriveFileId = gdriveRes.fileId;
+              gdriveFileUrl = gdriveRes.webViewLink;
+            }
+          } catch (gdErr) {
+            console.warn('[GDRIVE BOT UPLOAD NOTICE]:', gdErr.message);
+          }
+
           // 6. URL รูปภาพที่บันทึก
           const finalProfileUrl = permanentUrl || vaultAttachmentUrl || `/uploads/${filename}`;
 
           // หากเป็นสมาชิก ACTIVE อยู่แล้ว -> อัปเดตบัตรได้ทันที
           if (member.status === 'ACTIVE') {
+            const updatePayload = { profile_image_url: finalProfileUrl, updated_at: new Date() };
+            if (gdriveFileId) updatePayload.gdrive_file_id = gdriveFileId;
+            if (gdriveFileUrl) updatePayload.gdrive_file_url = gdriveFileUrl;
             await supabase
               .from('members')
-              .update({ profile_image_url: finalProfileUrl, updated_at: new Date() })
+              .update(updatePayload)
               .eq('id', member.id);
 
             const shiftLabel = getShiftLabel(member.duty_day);
