@@ -44,6 +44,7 @@ const QRCode = require('qrcode');
 const { generateCardHTML } = require('./card_template');
 const { processAttendancePhoto, buildAttendanceDiscordCard } = require('./attendance_manager');
 const { uploadToGoogleDrive } = require('./services/gdrive_service');
+const { initLogger, logError, logWarn } = require('./services/logger');
 
 const PORT = process.env.PORT || 10000;
 
@@ -277,16 +278,18 @@ const client = new Client({
   ]
 });
 
+initLogger({ client, supabase });
+
 client.on('error', err => {
-  console.warn('[Discord Client Error]', err?.message || err);
+  logWarn('Discord Client Error', err);
 });
 
 process.on('unhandledRejection', reason => {
-  console.warn('[Unhandled Rejection]', reason?.message || reason);
+  logError('Unhandled Rejection', reason);
 });
 
 process.on('uncaughtException', err => {
-  console.error('[Uncaught Exception]', err?.message || err);
+  logError('Uncaught Exception', err);
 });
 
 const ROLE_IDS = {
@@ -2976,7 +2979,11 @@ client.on('messageCreate', async (message) => {
           }
           return;
         } catch (err) {
-          console.error('[PHOTO UPLOAD ERROR]:', err);
+          logError('Photo Upload Processing Error', err, {
+            authorId: message.author.id,
+            authorTag: message.author.tag,
+            channelId: message.channel.id
+          });
           const errNotice = await message.channel.send({
             content: `⚠️ <@${message.author.id}> เกิดข้อผิดพลาดในการประมวลผลรูปถ่าย: \`${err.message || 'ระบบขัดข้อง'}\` กรุณาลองส่งใหม่อีกครั้งครับ`
           }).catch(() => null);
@@ -10263,5 +10270,7 @@ module.exports = {
   broadcastConsolidatedShiftLeaveCard,
   getCurrentQuarterAndYear,
   getAcademicPeriod,
-  updateAcademicPeriod
+  updateAcademicPeriod,
+  logError,
+  logWarn
 };
