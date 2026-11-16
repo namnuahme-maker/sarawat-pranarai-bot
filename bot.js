@@ -188,13 +188,29 @@ const tempAttendanceSheets = new Map(); // id -> { html, dayName, createdAt, exp
 
 function storeTempAttendanceSheet(html, dayName) {
   const id = crypto.randomBytes(6).toString('hex');
-  const ttl = 30 * 60 * 1000; // 30 นาที (ชั่วคราวแล้วลบออก)
+  const ttl = 60 * 60 * 1000; // 60 นาที (ชั่วคราวแล้วลบออก)
   tempAttendanceSheets.set(id, {
     html,
     dayName,
     createdAt: Date.now(),
     expiresAt: Date.now() + ttl
   });
+
+  // ซิงค์บันทึกลง Supabase Storage ทันที เพื่อให้เข้าถึงได้จากทุกเซิร์ฟเวอร์ (ทั้ง Local และ Render) ตลอดเวลา
+  try {
+    if (supabase && supabase.storage) {
+      const buf = Buffer.from(html, 'utf-8');
+      supabase.storage.from('sarawat-photos')
+        .upload(`temp-sheets/${id}.html`, buf, { contentType: 'text/html; charset=utf-8', upsert: true })
+        .then(({ error }) => {
+          if (error) console.error('[TEMP-SHEET] Supabase Storage upload error:', error.message);
+        })
+        .catch(err => console.error('[TEMP-SHEET] Supabase Storage upload catch:', err.message));
+    }
+  } catch (err) {
+    console.error('[TEMP-SHEET] Error scheduling Supabase upload:', err.message);
+  }
+
   return id;
 }
 
@@ -11991,9 +12007,30 @@ const server = http.createServer(async (req, res) => {
   // เส้นทางเปิดดู/พิมพ์ใบเช็คชื่อชั่วคราว: /sheet/:id
   if (parsedUrl.pathname.startsWith('/sheet/')) {
     const sheetId = parsedUrl.pathname.replace('/sheet/', '').split('/')[0].trim();
-    const sheet = tempAttendanceSheets.get(sheetId);
+    let sheet = tempAttendanceSheets.get(sheetId);
+    let htmlContent = sheet && Date.now() <= sheet.expiresAt ? sheet.html : null;
 
-    if (!sheet || Date.now() > sheet.expiresAt) {
+    // หากไม่พบในหน่วยความจำ RAM (เช่น บอทเพิ่งรีสตาร์ต หรือสร้างจากเครื่อง Local / Render คนละตัว)
+    // ให้ดึงไฟล์จาก Supabase Storage โดยตรง
+    if (!htmlContent && supabase && supabase.storage) {
+      try {
+        const { data, error } = await supabase.storage.from('sarawat-photos').download(`temp-sheets/${sheetId}.html`);
+        if (!error && data) {
+          htmlContent = await data.text();
+          // แคชกลับเข้า memory เพื่อความรวดเร็วในการเปิดซ้ำ
+          tempAttendanceSheets.set(sheetId, {
+            html: htmlContent,
+            dayName: 'กู้คืนจาก Supabase Storage',
+            createdAt: Date.now(),
+            expiresAt: Date.now() + 60 * 60 * 1000
+          });
+        }
+      } catch (storageErr) {
+        console.error('[TEMP-SHEET] Error reading from Supabase Storage:', storageErr.message);
+      }
+    }
+
+    if (!htmlContent) {
       res.writeHead(404, { 'Content-Type': 'text/html; charset=utf-8' });
       res.end(`
         <!DOCTYPE html>
@@ -12027,7 +12064,7 @@ const server = http.createServer(async (req, res) => {
       'Content-Type': 'text/html; charset=utf-8',
       'Cache-Control': 'no-cache, no-store, must-revalidate'
     });
-    res.end(sheet.html);
+    res.end(htmlContent);
     return;
   }
 
