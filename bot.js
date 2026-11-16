@@ -10961,6 +10961,63 @@ function getAttendanceDates(dayCode, count = 12, qNumber = null, acadYear = null
   return dates;
 }
 
+// 📄 ฟังก์ชันสร้างใบหน้าปก A4 สำหรับชุดเอกสารสารวัตรเช็คชื่อ
+function generateAttendanceCoverPageHTML(options) {
+  const logoBase64 = options.logoBase64 || getSarawatLogoBase64();
+  return `
+  <section class="sheet-page cover-page" id="cover-page" style="width: 281mm; height: 196mm; min-height: 196mm; max-height: 196mm; padding: 10mm 12mm; margin: 0 auto 20px auto; background: #ffffff; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); border-radius: 4px; position: relative; display: flex; flex-direction: column; justify-content: space-between; page-break-after: always; break-after: page; page-break-inside: avoid; break-inside: avoid; overflow: hidden; box-sizing: border-box;">
+    <!-- Double border inner box -->
+    <div style="border: 3px double #1a5276; width: 100%; height: 100%; padding: 8mm 10mm; display: flex; flex-direction: column; justify-content: space-between; align-items: center; text-align: center; box-sizing: border-box; position: relative; background: radial-gradient(circle at center, #ffffff 60%, #f8fafc 100%);">
+      
+      <!-- Corner Accents -->
+      <div style="position: absolute; top: 3mm; left: 3mm; width: 6mm; height: 6mm; border-top: 2px solid #1a5276; border-left: 2px solid #1a5276;"></div>
+      <div style="position: absolute; top: 3mm; right: 3mm; width: 6mm; height: 6mm; border-top: 2px solid #1a5276; border-right: 2px solid #1a5276;"></div>
+      <div style="position: absolute; bottom: 3mm; left: 3mm; width: 6mm; height: 6mm; border-bottom: 2px solid #1a5276; border-left: 2px solid #1a5276;"></div>
+      <div style="position: absolute; bottom: 3mm; right: 3mm; width: 6mm; height: 6mm; border-bottom: 2px solid #1a5276; border-right: 2px solid #1a5276;"></div>
+
+      <!-- Header Section -->
+      <div style="width: 100%; border-bottom: 1.5px solid #cbd5e1; padding-bottom: 3.5mm;">
+        <div style="font-size: 13pt; font-weight: 700; color: #1e3a8a; letter-spacing: 0.5px;">กลุ่มงานกิจการนักเรียน • ฝ่ายสารวัตรนักเรียน</div>
+        <div style="font-size: 10.5pt; font-weight: 600; color: #475569; margin-top: 1.5px;">โรงเรียนพระนารายณ์ • สำนักงานเขตพื้นที่การศึกษามัธยมศึกษาลพบุรี</div>
+      </div>
+
+      <!-- Center Logo & Title Section -->
+      <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; margin: auto 0;">
+        <!-- โลโก้สารวัตรแปะตรงกลาง -->
+        <div style="width: 52mm; height: 52mm; border-radius: 50%; border: 3px solid #1a5276; box-shadow: 0 8px 20px rgba(26,82,118,0.22); background-image: url('${logoBase64}'); background-size: cover; background-repeat: no-repeat; background-position: center; margin-bottom: 5mm; background-color: #ffffff;"></div>
+
+        <!-- ข้อความใต้โลโก้: สารวัตรเช็คชื่อ -->
+        <div style="font-size: 32pt; font-weight: 800; color: #0f172a; letter-spacing: 2px; line-height: 1.15;">
+          สารวัตรเช็คชื่อ
+        </div>
+        <div style="font-size: 14pt; font-weight: 700; color: #1e3a8a; margin-top: 2.5mm; letter-spacing: 0.5px;">
+          ${options.subtitle || 'สมุดบันทึกการมาปฏิบัติหน้าที่ประจำจุด • 12 สัปดาห์'}
+        </div>
+
+        <!-- Info Box -->
+        <div style="margin-top: 6mm; background: #ffffff; border: 1.5px solid #cbd5e1; border-radius: 8px; padding: 3.5mm 18mm; display: inline-flex; flex-direction: column; gap: 3px; box-shadow: 0 2px 6px rgba(0,0,0,0.04);">
+          <div style="font-size: 11pt; font-weight: 700; color: #0f172a;">
+            ${options.periodText || 'ไตรมาสที่ 1 (พ.ย. - ม.ค.) • ปีการศึกษา 2569'}
+          </div>
+          <div style="font-size: 10pt; color: #475569; font-weight: 600;">
+            ${options.shiftText || 'รวมทุกรอบผลัดเวรปฏิบัติหน้าที่ (วันจันทร์ - วันศุกร์)'}
+          </div>
+          ${options.leadInfo ? `<div style="font-size: 9pt; color: #334155; border-top: 1px dashed #cbd5e1; padding-top: 2px; margin-top: 2px;">${options.leadInfo}</div>` : ''}
+        </div>
+      </div>
+
+      <!-- Footer Section -->
+      <div style="width: 100%; border-top: 1.5px solid #cbd5e1; padding-top: 3mm; display: flex; justify-content: space-between; align-items: center; font-size: 8pt; color: #64748b; font-family: monospace;">
+        <span>SARAWAT PRANARAI COMMAND OS // ATTENDANCE DOSSIER</span>
+        <span>• OFFICIAL RECORD COVER •</span>
+        <span>ACADEMIC YEAR ${options.academicYear || '2569'}</span>
+      </div>
+
+    </div>
+  </section>
+  `;
+}
+
 // ฟังก์ชันสร้างหน้าเว็บใบเช็คชื่อ A4 มาตรฐาน พร้อมระบุชื่อหัวหน้า/รองหัวหน้าบนหัวกระดาษ (OMR + Vision Anchor ฉบับปรับปรุง 11 ข้อ)
 function generateAttendanceSheetHTML(dayCode, dayName, members) {
   const period = getAcademicPeriod();
@@ -10973,6 +11030,15 @@ function generateAttendanceSheetHTML(dayCode, dayName, members) {
   const englishDay = getEnglishDayName(dayCode);
   const isSpecial = dayCode === 'S';
   const dates = getAttendanceDates(dayCode, 12, period.quarter, period.academicYear);
+
+  const coverPageHtml = generateAttendanceCoverPageHTML({
+    logoBase64,
+    subtitle: `สมุดบันทึกการมาปฏิบัติหน้าที่ประจำจุด • เวร${dayName} (${dayCode})`,
+    periodText: `${period.fullLabel}`,
+    shiftText: `เวร${dayName} (${dayCode}) • จำนวนสารวัตร ${members.length} นาย`,
+    leadInfo: headText !== 'ยังไม่ได้แต่งตั้ง' ? `หัวหน้าเวร: ${headText}` : 'โรงเรียนพระนารายณ์ • อ.เมือง จ.ลพบุรี',
+    academicYear: period.academicYear
+  });
 
   const tableColspanHeader = isSpecial 
     ? 'บันทึกการมาปฏิบัติหน้าที่ (สัปดาห์ที่ 1 ถึง 12)' 
@@ -11267,12 +11333,16 @@ function generateAttendanceSheetHTML(dayCode, dayName, members) {
 <body>
   <div class="nav-bar no-print">
     <div style="font-weight: bold; font-size: 14px;">
-      ใบเช็คชื่อ - ${dayName} (${dayCode})
+      สารวัตรเช็คชื่อ - ${dayName} (${dayCode})
     </div>
-    <div>
+    <div style="display: flex; gap: 8px;">
+      <a href="#cover-page" class="nav-btn" style="color: #cbd5e1; text-decoration: none; padding: 6px 12px; border-radius: 4px; background: #334155; font-size: 12px;">หน้าปก</a>
+      <a href="#sheet-single" class="nav-btn" style="color: #cbd5e1; text-decoration: none; padding: 6px 12px; border-radius: 4px; background: #334155; font-size: 12px;">ตารางเช็คชื่อ</a>
       <button class="btn-print" onclick="window.print()">สั่งพิมพ์เอกสารนี้ (Print A4)</button>
     </div>
   </div>
+
+  ${coverPageHtml}
 
   <section class="sheet-page" id="sheet-single">
     <!-- 4 Corner Fiducial Markers: 8mm Solid Squares with TL orientation white dot -->
@@ -11388,6 +11458,16 @@ function generateAttendanceSheetHTML(dayCode, dayName, members) {
 function generateCombinedAttendanceSheetHTML(allMembers) {
   const period = getAcademicPeriod();
   const logoBase64 = getSarawatLogoBase64();
+
+  const coverPageHtml = generateAttendanceCoverPageHTML({
+    logoBase64,
+    subtitle: 'สมุดบันทึกการมาปฏิบัติหน้าที่ประจำจุด • รวมทุกรอบผลัดเวร (วันจันทร์ - วันศุกร์)',
+    periodText: `${period.fullLabel}`,
+    shiftText: `รวม 5 ผลัดเวรปฏิบัติหน้าที่ (วันจันทร์ - วันศุกร์) • กำลังพลทั้งหมด ${allMembers.length} นาย`,
+    leadInfo: 'กลุ่มงานกิจการนักเรียน • ฝ่ายสารวัตรนักเรียน โรงเรียนพระนารายณ์',
+    academicYear: period.academicYear
+  });
+
   const shifts = [
     { code: 'M', name: 'เวรวันจันทร์' },
     { code: 'T', name: 'เวรวันอังคาร' },
@@ -11840,10 +11920,11 @@ function generateCombinedAttendanceSheetHTML(allMembers) {
 <body>
   <div class="nav-bar no-print">
     <div style="font-weight: bold; font-size: 14px;">
-      ใบเช็คชื่อ (รวมทุกเวร - สมาชิกทั้งหมด ${allMembers.length} นาย)
+      สารวัตรเช็คชื่อ (รวมทุกรอบเวร - สมาชิกทั้งหมด ${allMembers.length} นาย)
     </div>
     <div class="nav-links">
-      <span style="font-size: 11px; color: #94a3b8;">ข้ามไปเวร:</span>
+      <span style="font-size: 11px; color: #94a3b8;">ข้ามไป:</span>
+      <a href="#cover-page" class="nav-btn" style="background: #1e3a8a; color: #ffffff; font-weight: bold;">หน้าปก</a>
       <a href="#shift-M" class="nav-btn">จันทร์</a>
       <a href="#shift-T" class="nav-btn">อังคาร</a>
       <a href="#shift-W" class="nav-btn">พุธ</a>
@@ -11853,6 +11934,7 @@ function generateCombinedAttendanceSheetHTML(allMembers) {
     </div>
   </div>
 
+  ${coverPageHtml}
   ${sectionsHtml}
 </body>
 </html>`;
