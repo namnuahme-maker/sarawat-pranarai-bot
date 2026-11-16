@@ -295,6 +295,7 @@ process.on('uncaughtException', err => {
 });
 
 const ROLE_IDS = {
+  ADMIN: process.env.ROLE_ADMIN || '1567570796000000000',
   VERIFIED: process.env.ROLE_VERIFIED || '1567570844472053943',
   UNVERIFIED: process.env.ROLE_UNVERIFIED || '1567570858937946152',
   PRESIDENT: process.env.ROLE_PRESIDENT || '1567570798242439320',
@@ -1102,6 +1103,7 @@ async function syncAllMemberRoles(guild) {
       if (!gm) continue;
 
       const rolesToAdd = [ROLE_IDS.VERIFIED, ...getDutyRoles(m.duty_day)];
+      if (m.role === 'ADMIN' && ROLE_IDS.ADMIN) rolesToAdd.push(ROLE_IDS.ADMIN);
       if (m.role === 'PRESIDENT' && ROLE_IDS.PRESIDENT) rolesToAdd.push(ROLE_IDS.PRESIDENT);
       if (m.role === 'VICE_PRESIDENT' && ROLE_IDS.VICE_PRESIDENT) rolesToAdd.push(ROLE_IDS.VICE_PRESIDENT);
       const baseDay = m.duty_day === 'TSS' ? 'Ts' : m.duty_day.replace(/S+$/, '');
@@ -1123,6 +1125,7 @@ async function syncAllMemberRoles(guild) {
         ...Object.values(ROLE_IDS.DAYS || {}),
         ...Object.values(ROLE_IDS.HEADS || {}),
         ...Object.values(ROLE_IDS.DEPUTIES || {}),
+        ROLE_IDS.ADMIN,
         ROLE_IDS.PRESIDENT,
         ROLE_IDS.VICE_PRESIDENT
       ].filter(rid => rid && guild.roles.cache.has(rid));
@@ -1311,6 +1314,7 @@ async function ensureInspectorChannelAccess(guild, channel, { allowSend = false 
     Object.values(ROLE_IDS.DEPUTIES || {}).forEach(rid => {
       if (rid && guild.roles?.cache?.has(rid)) inspectorRoleIds.add(rid);
     });
+    if (ROLE_IDS.ADMIN && guild.roles?.cache?.has(ROLE_IDS.ADMIN)) inspectorRoleIds.add(ROLE_IDS.ADMIN);
     if (ROLE_IDS.PRESIDENT && guild.roles?.cache?.has(ROLE_IDS.PRESIDENT)) inspectorRoleIds.add(ROLE_IDS.PRESIDENT);
     if (ROLE_IDS.VICE_PRESIDENT && guild.roles?.cache?.has(ROLE_IDS.VICE_PRESIDENT)) inspectorRoleIds.add(ROLE_IDS.VICE_PRESIDENT);
 
@@ -2449,6 +2453,7 @@ async function executeDemoteLeader(memberId, operatorId, guild) {
       const guildMember = await guild.members.fetch(member.discord_id).catch(() => null);
       if (guildMember) {
         const leadershipRoles = [
+          ROLE_IDS.ADMIN,
           ROLE_IDS.PRESIDENT,
           ROLE_IDS.VICE_PRESIDENT,
           ROLE_IDS.HEAD_S,
@@ -2520,6 +2525,7 @@ async function executeDismissMember(memberId, operatorId, guild) {
       const guildMember = await guild.members.fetch(member.discord_id).catch(() => null);
       if (guildMember) {
         const rolesToRemove = [
+          ROLE_IDS.ADMIN,
           ROLE_IDS.VERIFIED,
           ROLE_IDS.PRESIDENT,
           ROLE_IDS.VICE_PRESIDENT,
@@ -5045,6 +5051,7 @@ client.on('interactionCreate', async (interaction) => {
 
       if (commandName === 'demote') {
         const isLeadership = interaction.member?.permissions.has(PermissionsBitField.Flags.Administrator) ||
+                             (ROLE_IDS.ADMIN && interaction.member?.roles.cache.has(ROLE_IDS.ADMIN)) ||
                              interaction.member?.roles.cache.has(ROLE_IDS.PRESIDENT) ||
                              interaction.member?.roles.cache.has(ROLE_IDS.VICE_PRESIDENT) ||
                              interaction.guild?.ownerId === interaction.user.id;
@@ -5064,6 +5071,7 @@ client.on('interactionCreate', async (interaction) => {
 
       if (commandName === 'send') {
         const isLeadership = interaction.member?.permissions.has(PermissionsBitField.Flags.Administrator) ||
+                             (ROLE_IDS.ADMIN && interaction.member?.roles.cache.has(ROLE_IDS.ADMIN)) ||
                              interaction.member?.roles.cache.has(ROLE_IDS.PRESIDENT) ||
                              interaction.member?.roles.cache.has(ROLE_IDS.VICE_PRESIDENT) ||
                              interaction.guild?.ownerId === interaction.user.id;
@@ -5101,6 +5109,7 @@ client.on('interactionCreate', async (interaction) => {
 
       if (commandName === 'update') {
         const isLeadership = interaction.member?.permissions.has(PermissionsBitField.Flags.Administrator) ||
+                             (ROLE_IDS.ADMIN && interaction.member?.roles.cache.has(ROLE_IDS.ADMIN)) ||
                              interaction.member?.roles.cache.has(ROLE_IDS.PRESIDENT) ||
                              interaction.member?.roles.cache.has(ROLE_IDS.VICE_PRESIDENT) ||
                              interaction.guild?.ownerId === interaction.user.id;
@@ -5359,6 +5368,7 @@ client.on('interactionCreate', async (interaction) => {
     // กำหนดภาคเรียนปัจจุบัน (เฉพาะประธานและแอดมิน)
     if (interaction.isButton() && interaction.customId === 'btn_set_semester') {
       const isLeader = interaction.member.permissions.has(PermissionsBitField.Flags.Administrator) ||
+                       (ROLE_IDS.ADMIN && interaction.member.roles.cache.has(ROLE_IDS.ADMIN)) ||
                        interaction.member.roles.cache.has(ROLE_IDS.PRESIDENT) ||
                        interaction.member.roles.cache.has(ROLE_IDS.VICE_PRESIDENT);
 
@@ -6805,6 +6815,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
     // 3. จัดการการอนุมัติโดยผู้บริหาร + แจกยศหัวหน้า/รองหัวหน้าเวรเฉพาะวัน
     if (interaction.isButton() && (interaction.customId.startsWith('btn_approve_member_') || interaction.customId.startsWith('btn_reject_member_'))) {
       const isLeader = interaction.member.permissions.has(PermissionsBitField.Flags.Administrator) ||
+                       (ROLE_IDS.ADMIN && interaction.member.roles.cache.has(ROLE_IDS.ADMIN)) ||
                        interaction.member.roles.cache.has(ROLE_IDS.PRESIDENT) ||
                        interaction.member.roles.cache.has(ROLE_IDS.VICE_PRESIDENT);
 
@@ -6891,6 +6902,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
               }
 
               const rolesToAdd = [ROLE_IDS.VERIFIED, ...getDutyRoles(member.duty_day)];
+              if (member.role === 'ADMIN' && ROLE_IDS.ADMIN) rolesToAdd.push(ROLE_IDS.ADMIN);
               if (member.role === 'PRESIDENT' && ROLE_IDS.PRESIDENT) rolesToAdd.push(ROLE_IDS.PRESIDENT);
               if (member.role === 'VICE_PRESIDENT' && ROLE_IDS.VICE_PRESIDENT) rolesToAdd.push(ROLE_IDS.VICE_PRESIDENT);
               
@@ -8560,6 +8572,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
     // 👑 ผู้บริหารกดอนุมัติหรือปฏิเสธคำขอแก้ไขข้อมูลตัวอักษร
     if (interaction.isButton() && (interaction.customId.startsWith('btn_approve_edit_') || interaction.customId.startsWith('btn_reject_edit_'))) {
       const isLeader = interaction.member.permissions.has(PermissionsBitField.Flags.Administrator) ||
+                       (ROLE_IDS.ADMIN && interaction.member.roles.cache.has(ROLE_IDS.ADMIN)) ||
                        interaction.member.roles.cache.has(ROLE_IDS.PRESIDENT) ||
                        interaction.member.roles.cache.has(ROLE_IDS.VICE_PRESIDENT);
 
@@ -8955,6 +8968,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
     if (interaction.isButton() && interaction.customId.startsWith('btn_approve_insp_')) {
       const isLeadership = interaction.member.permissions.has(PermissionsBitField.Flags.Administrator) ||
         interaction.guild?.ownerId === interaction.user.id ||
+        (ROLE_IDS.ADMIN && interaction.member.roles.cache.has(ROLE_IDS.ADMIN)) ||
         (ROLE_IDS.PRESIDENT && interaction.member.roles.cache.has(ROLE_IDS.PRESIDENT)) ||
         (ROLE_IDS.VICE_PRESIDENT && interaction.member.roles.cache.has(ROLE_IDS.VICE_PRESIDENT)) ||
         interaction.member.roles.cache.some(r => Object.values(ROLE_IDS.HEADS || {}).filter(Boolean).includes(r.id));
@@ -8988,6 +9002,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
     if (interaction.isButton() && interaction.customId.startsWith('btn_reject_insp_')) {
       const isLeadership = interaction.member.permissions.has(PermissionsBitField.Flags.Administrator) ||
         interaction.guild?.ownerId === interaction.user.id ||
+        (ROLE_IDS.ADMIN && interaction.member.roles.cache.has(ROLE_IDS.ADMIN)) ||
         (ROLE_IDS.PRESIDENT && interaction.member.roles.cache.has(ROLE_IDS.PRESIDENT)) ||
         (ROLE_IDS.VICE_PRESIDENT && interaction.member.roles.cache.has(ROLE_IDS.VICE_PRESIDENT)) ||
         interaction.member.roles.cache.some(r => Object.values(ROLE_IDS.HEADS || {}).filter(Boolean).includes(r.id));
@@ -9675,6 +9690,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
 
       const isOwner = member.discord_id === interaction.user.id;
       const isLeadership = interaction.member.permissions.has(PermissionsBitField.Flags.Administrator) ||
+                           (ROLE_IDS.ADMIN && interaction.member.roles.cache.has(ROLE_IDS.ADMIN)) ||
                            interaction.member.roles.cache.has(ROLE_IDS.PRESIDENT) ||
                            interaction.member.roles.cache.has(ROLE_IDS.VICE_PRESIDENT);
 
@@ -9803,6 +9819,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
     // 8. ระบบมอบหมายและแต่งตั้งตำแหน่ง (Leadership Appointment)
     if (interaction.isButton() && interaction.customId === 'btn_open_appoint_menu') {
       const isLeadership = interaction.member.permissions.has(PermissionsBitField.Flags.Administrator) ||
+                           (ROLE_IDS.ADMIN && interaction.member.roles.cache.has(ROLE_IDS.ADMIN)) ||
                            interaction.member.roles.cache.has(ROLE_IDS.PRESIDENT) ||
                            interaction.member.roles.cache.has(ROLE_IDS.VICE_PRESIDENT);
 
@@ -9860,6 +9877,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
         .setCustomId(`select_role_promotion_${member.id}`)
         .setPlaceholder('👑 เลือกตำแหน่งที่ต้องการมอบหมาย')
         .addOptions([
+          { label: '⚡ ผู้ดูแลระบบ (System Admin)', description: 'สิทธิ์ดูแลระบบสูงสุดและปรับเปลี่ยนในเว็บ', value: 'APPOINT_ADMIN', emoji: '⚡' },
           { label: '👑 ประธานสารวัตรนักเรียน', description: 'ผู้นำสูงสุดของฝ่ายสารวัตร', value: 'APPOINT_PRESIDENT', emoji: '👑' },
           { label: '🎖️ รองประธานสารวัตรนักเรียน', description: 'รองผู้นำฝ่ายสารวัตร', value: 'APPOINT_VICE_PRESIDENT', emoji: '🎖️' },
           { label: '⭐ หัวหน้าและรองหัวหน้าเวร (เลือกวัน)', description: 'แต่งตั้งหัวหน้าหรือรองหัวหน้าเวร (M, T, W, TH, F, S)', value: 'FLOW_SHIFT_LEADER', emoji: '⭐' },
@@ -9879,6 +9897,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
       const { data: member } = await supabase.from('members').select('*').eq('id', memberId).single();
 
       const isLeadership = interaction.member.permissions.has(PermissionsBitField.Flags.Administrator) ||
+                           (ROLE_IDS.ADMIN && interaction.member.roles.cache.has(ROLE_IDS.ADMIN)) ||
                            interaction.member.roles.cache.has(ROLE_IDS.PRESIDENT) ||
                            interaction.member.roles.cache.has(ROLE_IDS.VICE_PRESIDENT);
 
@@ -9894,6 +9913,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
         .setCustomId(`select_role_promotion_${member.id}`)
         .setPlaceholder('👑 เลือกตำแหน่งที่ต้องการมอบหมาย')
         .addOptions([
+          { label: '⚡ ผู้ดูแลระบบ (System Admin)', description: 'สิทธิ์ดูแลระบบสูงสุดและปรับเปลี่ยนในเว็บ', value: 'APPOINT_ADMIN', emoji: '⚡' },
           { label: '👑 ประธานสารวัตรนักเรียน', description: 'ผู้นำสูงสุดของฝ่ายสารวัตร', value: 'APPOINT_PRESIDENT', emoji: '👑' },
           { label: '🎖️ รองประธานสารวัตรนักเรียน', description: 'รองผู้นำฝ่ายสารวัตร', value: 'APPOINT_VICE_PRESIDENT', emoji: '🎖️' },
           { label: '⭐ หัวหน้าและรองหัวหน้าเวร (เลือกวัน)', description: 'แต่งตั้งหัวหน้าหรือรองหัวหน้าเวร (M, T, W, TH, F, S)', value: 'FLOW_SHIFT_LEADER', emoji: '⭐' },
@@ -9962,21 +9982,27 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
         ...Object.values(ROLE_IDS.DEPUTIES || {})
       ].filter(Boolean);
 
-      if (action === 'APPOINT_PRESIDENT') {
+      if (action === 'APPOINT_ADMIN') {
+        newRole = 'ADMIN';
+        roleTitle = '⚡ ผู้ดูแลระบบ (System Admin)';
+        addRoleId = ROLE_IDS.ADMIN;
+        removeRoleIds = [ROLE_IDS.PRESIDENT, ROLE_IDS.VICE_PRESIDENT, ...allHeadAndDeputyRoles].filter(Boolean);
+      } else if (action === 'APPOINT_PRESIDENT') {
         newRole = 'PRESIDENT';
         roleTitle = '👑 ประธานสารวัตรนักเรียน';
         addRoleId = ROLE_IDS.PRESIDENT;
-        removeRoleIds = [ROLE_IDS.VICE_PRESIDENT, ...allHeadAndDeputyRoles].filter(Boolean);
+        removeRoleIds = [ROLE_IDS.ADMIN, ROLE_IDS.VICE_PRESIDENT, ...allHeadAndDeputyRoles].filter(Boolean);
       } else if (action === 'APPOINT_VICE_PRESIDENT') {
         newRole = 'VICE_PRESIDENT';
         roleTitle = '🎖️ รองประธานสารวัตรนักเรียน';
         addRoleId = ROLE_IDS.VICE_PRESIDENT;
-        removeRoleIds = [ROLE_IDS.PRESIDENT, ...allHeadAndDeputyRoles].filter(Boolean);
+        removeRoleIds = [ROLE_IDS.ADMIN, ROLE_IDS.PRESIDENT, ...allHeadAndDeputyRoles].filter(Boolean);
       } else if (action === 'DEMOTE_MEMBER') {
         newRole = 'MEMBER';
         newShiftRole = 'MEMBER';
         roleTitle = '🛡️ สารวัตรนักเรียนทั่วไป';
         removeRoleIds = [
+          ROLE_IDS.ADMIN,
           ROLE_IDS.PRESIDENT,
           ROLE_IDS.VICE_PRESIDENT,
           ...allHeadAndDeputyRoles
@@ -10111,6 +10137,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
         .setCustomId(`select_role_promotion_${member.id}`)
         .setPlaceholder('👑 เลือกตำแหน่งที่ต้องการมอบหมาย')
         .addOptions([
+          { label: '⚡ ผู้ดูแลระบบ (System Admin)', description: 'สิทธิ์ดูแลระบบสูงสุดและปรับเปลี่ยนในเว็บ', value: 'APPOINT_ADMIN', emoji: '⚡' },
           { label: '👑 ประธานสารวัตรนักเรียน', description: 'ผู้นำสูงสุดของฝ่ายสารวัตร', value: 'APPOINT_PRESIDENT', emoji: '👑' },
           { label: '🎖️ รองประธานสารวัตรนักเรียน', description: 'รองผู้นำฝ่ายสารวัตร', value: 'APPOINT_VICE_PRESIDENT', emoji: '🎖️' },
           { label: '⭐ หัวหน้าและรองหัวหน้าเวร (เลือกวัน)', description: 'แต่งตั้งหัวหน้าหรือรองหัวหน้าเวร (M, T, W, TH, F, S)', value: 'FLOW_SHIFT_LEADER', emoji: '⭐' },
@@ -10214,6 +10241,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
     // 9. ระบบปลดหน้าที่ / ถอดยศ / ปลดพ้นสภาพสารวัตร (Demote & Dismiss System)
     if (interaction.isButton() && (interaction.customId === 'btn_open_demote_menu' || interaction.customId === 'btn_open_remove_member_menu')) {
       const isLeadership = interaction.member?.permissions.has(PermissionsBitField.Flags.Administrator) ||
+                           (ROLE_IDS.ADMIN && interaction.member?.roles.cache.has(ROLE_IDS.ADMIN)) ||
                            interaction.member?.roles.cache.has(ROLE_IDS.PRESIDENT) ||
                            interaction.member?.roles.cache.has(ROLE_IDS.VICE_PRESIDENT) ||
                            interaction.guild?.ownerId === interaction.user.id;
@@ -10249,7 +10277,8 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
         return;
       }
 
-      const curRoleText = member.role === 'PRESIDENT' ? '👑 ประธานสารวัตร' :
+      const curRoleText = member.role === 'ADMIN' ? '⚡ ผู้ดูแลระบบ (System Admin)' :
+                          member.role === 'PRESIDENT' ? '👑 ประธานสารวัตร' :
                           member.role === 'VICE_PRESIDENT' ? '🎖️ รองประธานสารวัตร' :
                           member.shift_role === 'SHIFT_HEAD' ? '👑 หัวหน้าเวร' :
                           member.shift_role === 'SHIFT_DEPUTY' ? '🎖️ รองหัวหน้าเวร' : 'ผู้นำ';
