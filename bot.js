@@ -296,6 +296,7 @@ process.on('uncaughtException', err => {
 
 const ROLE_IDS = {
   ADMIN: process.env.ROLE_ADMIN || '1567570796000000000',
+  TEACHER: process.env.ROLE_TEACHER || '1567570795000000000',
   VERIFIED: process.env.ROLE_VERIFIED || '1567570844472053943',
   UNVERIFIED: process.env.ROLE_UNVERIFIED || '1567570858937946152',
   PRESIDENT: process.env.ROLE_PRESIDENT || '1567570798242439320',
@@ -1104,6 +1105,7 @@ async function syncAllMemberRoles(guild) {
 
       const rolesToAdd = [ROLE_IDS.VERIFIED, ...getDutyRoles(m.duty_day)];
       if (m.role === 'ADMIN' && ROLE_IDS.ADMIN) rolesToAdd.push(ROLE_IDS.ADMIN);
+      if (m.role === 'TEACHER' && ROLE_IDS.TEACHER) rolesToAdd.push(ROLE_IDS.TEACHER);
       if (m.role === 'PRESIDENT' && ROLE_IDS.PRESIDENT) rolesToAdd.push(ROLE_IDS.PRESIDENT);
       if (m.role === 'VICE_PRESIDENT' && ROLE_IDS.VICE_PRESIDENT) rolesToAdd.push(ROLE_IDS.VICE_PRESIDENT);
       const baseDay = m.duty_day === 'TSS' ? 'Ts' : m.duty_day.replace(/S+$/, '');
@@ -1126,6 +1128,7 @@ async function syncAllMemberRoles(guild) {
         ...Object.values(ROLE_IDS.HEADS || {}),
         ...Object.values(ROLE_IDS.DEPUTIES || {}),
         ROLE_IDS.ADMIN,
+        ROLE_IDS.TEACHER,
         ROLE_IDS.PRESIDENT,
         ROLE_IDS.VICE_PRESIDENT
       ].filter(rid => rid && guild.roles.cache.has(rid));
@@ -1315,6 +1318,7 @@ async function ensureInspectorChannelAccess(guild, channel, { allowSend = false 
       if (rid && guild.roles?.cache?.has(rid)) inspectorRoleIds.add(rid);
     });
     if (ROLE_IDS.ADMIN && guild.roles?.cache?.has(ROLE_IDS.ADMIN)) inspectorRoleIds.add(ROLE_IDS.ADMIN);
+    if (ROLE_IDS.TEACHER && guild.roles?.cache?.has(ROLE_IDS.TEACHER)) inspectorRoleIds.add(ROLE_IDS.TEACHER);
     if (ROLE_IDS.PRESIDENT && guild.roles?.cache?.has(ROLE_IDS.PRESIDENT)) inspectorRoleIds.add(ROLE_IDS.PRESIDENT);
     if (ROLE_IDS.VICE_PRESIDENT && guild.roles?.cache?.has(ROLE_IDS.VICE_PRESIDENT)) inspectorRoleIds.add(ROLE_IDS.VICE_PRESIDENT);
 
@@ -5883,7 +5887,7 @@ client.on('interactionCreate', async (interaction) => {
       return;
     }
 
-    // 1. เริ่มต้นลงทะเบียนสารวัตรใหม่ (ข้ามขั้นตอนเลือกชื่อเดิม -> เปิดแบบฟอร์มกรอกข้อมูลทันที)
+    // 1. เริ่มต้นลงทะเบียนสารวัตรใหม่ (ให้เลือกระหว่าง [🎒 สารวัตรนักเรียน] และ [👨‍🏫 ครูที่ปรึกษา])
     if (interaction.isButton() && interaction.customId === 'btn_start_verify') {
       // ตรวจสอบว่าบัญชีนี้ได้รับการอนุมัติเป็นสารวัตรอยู่แล้วหรือไม่
       const { data: existingActive } = await supabase
@@ -5894,20 +5898,55 @@ client.on('interactionCreate', async (interaction) => {
         .maybeSingle();
 
       if (existingActive) {
-        const shiftLabel = getShiftLabel(existingActive.duty_day);
+        const isTeacher = existingActive.role === 'TEACHER';
+        const roleLabel = isTeacher ? '👨‍🏫 ครูที่ปรึกษา' :
+                          (existingActive.role === 'ADMIN' ? '⚡ ผู้ดูแลระบบ' :
+                          (existingActive.shift_role === 'SHIFT_HEAD' ? '👑 หัวหน้าเวร' :
+                          (existingActive.shift_role === 'SHIFT_DEPUTY' ? '🎖️ รองหัวหน้าเวร' : 'สารวัตรประจำเวร')));
+        const dutyText = isTeacher ? 'ครูที่ปรึกษางานสารวัตร (ทุกวัน/ทุกผลัด)' : getShiftLabel(existingActive.duty_day);
         await interaction.reply({
-          content: `✅ คุณได้รับการยืนยันตัวตนและอนุมัติเป็นสารวัตรนักเรียนแล้ว:\n` +
+          content: `✅ คุณได้รับการยืนยันตัวตนและอนุมัติในระบบแล้ว:\n` +
                    `• ชื่อ: ${existingActive.first_name} ${existingActive.last_name} (${existingActive.nickname})\n` +
-                   `• รหัสเวร: \`[${existingActive.duty_id || '-'}]\`\n` +
-                   `• เวร: ${shiftLabel}\n` +
-                   `• ตำแหน่ง: ${existingActive.shift_role === 'SHIFT_HEAD' ? 'หัวหน้าเวร' : (existingActive.shift_role === 'SHIFT_DEPUTY' ? 'รองหัวหน้าเวร' : 'สารวัตรประจำเวร')}\n\n` +
+                   `• ตำแหน่ง: ${roleLabel}\n` +
+                   `• สังกัด/เวร: ${dutyText}\n\n` +
                    `*(หากต้องการอัปเดตรูปถ่ายทำบัตร สามารถส่งรูปใหม่เข้ามาในช่องนี้ได้ตลอดเวลาครับ)*`,
           ephemeral: true
         });
         return;
       }
 
-      // ข้ามขั้นตอนการเลือกรายชื่อดั้งเดิมทั้งหมด -> เปิดแบบฟอร์มกรอกข้อมูลสมัครทันที
+      // 🌟 ขั้นตอนที่ 1: ให้เลือกระหว่าง [🎒 สารวัตรนักเรียน] หรือ [👨‍🏫 ครูที่ปรึกษา]
+      const chooseRoleEmbed = new EmbedBuilder()
+        .setTitle('🛡️ เลือกประเภทการลงทะเบียนสารวัตร')
+        .setDescription(
+          'ยินดีต้อนรับสู่ระบบบริหารงานสารวัตรนักเรียน โรงเรียนพระนารายณ์\n\n' +
+          'โปรดเลือกประเภทผู้ใช้งานของคุณ เพื่อเข้าสู่แบบฟอร์มลงทะเบียนที่เหมาะสม:\n\n' +
+          '• **[🎒 สารวัตรนักเรียน]** สำหรับนักเรียนที่ปฏิบัติหน้าที่สารวัตรประจำวัน\n' +
+          '• **[👨‍🏫 ครูที่ปรึกษา]** สำหรับคณะครูและอาจารย์ที่ปรึกษางานสารวัตรนักเรียน'
+        )
+        .setColor('#3498DB')
+        .setFooter({ text: 'ฝ่ายบริหารงานสารวัตรนักเรียน • โรงเรียนพระนารายณ์' });
+
+      const chooseRoleRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId('btn_reg_choose_student')
+          .setLabel('🎒 สารวัตรนักเรียน (นักเรียน)')
+          .setStyle(ButtonStyle.Primary),
+        new ButtonBuilder()
+          .setCustomId('btn_reg_choose_teacher')
+          .setLabel('👨‍🏫 ครูที่ปรึกษา (คุณครู)')
+          .setStyle(ButtonStyle.Success)
+      );
+
+      await interaction.reply({
+        embeds: [chooseRoleEmbed],
+        components: [chooseRoleRow],
+        ephemeral: true
+      });
+      return;
+    }
+
+    if (interaction.isButton() && interaction.customId === 'btn_reg_choose_student') {
       const modal = new ModalBuilder()
         .setCustomId('modal_new_member')
         .setTitle('📝 แบบฟอร์มลงทะเบียนสารวัตรใหม่');
@@ -5950,6 +5989,50 @@ client.on('interactionCreate', async (interaction) => {
         new ActionRowBuilder().addComponents(nicknameInput),
         new ActionRowBuilder().addComponents(classInput),
         new ActionRowBuilder().addComponents(noInput),
+        new ActionRowBuilder().addComponents(phoneInput)
+      );
+
+      await interaction.showModal(modal);
+      return;
+    }
+
+    if (interaction.isButton() && interaction.customId === 'btn_reg_choose_teacher') {
+      const modal = new ModalBuilder()
+        .setCustomId('modal_teacher_register')
+        .setTitle('👨‍🏫 แบบฟอร์มลงทะเบียนครูที่ปรึกษา');
+
+      const nameInput = new TextInputBuilder()
+        .setCustomId('input_teacher_full_name')
+        .setLabel('ชื่อจริง-นามสกุล (มี นาย/นาง/นางสาว/ครู ติดชื่อ)')
+        .setPlaceholder('เช่น นายสมศักดิ์ สุขใจ หรือ นางสาวพัชรี มีสุข')
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true);
+
+      const nicknameInput = new TextInputBuilder()
+        .setCustomId('input_teacher_nickname')
+        .setLabel('ชื่อเล่น หรือ ชื่อที่ให้เรียก')
+        .setPlaceholder('เช่น ครูหนึ่ง, ครูกบ, ครูบอย')
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true);
+
+      const deptInput = new TextInputBuilder()
+        .setCustomId('input_teacher_dept')
+        .setLabel('กลุ่มสาระการเรียนรู้ / กลุ่มงานที่สังกัด')
+        .setPlaceholder('เช่น ภาษาไทย, กิจการนักเรียน, วิทยาศาสตร์')
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true);
+
+      const phoneInput = new TextInputBuilder()
+        .setCustomId('input_teacher_phone')
+        .setLabel('เบอร์โทรศัพท์ติดต่อ')
+        .setPlaceholder('เช่น 0891234567')
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true);
+
+      modal.addComponents(
+        new ActionRowBuilder().addComponents(nameInput),
+        new ActionRowBuilder().addComponents(nicknameInput),
+        new ActionRowBuilder().addComponents(deptInput),
         new ActionRowBuilder().addComponents(phoneInput)
       );
 
@@ -6180,6 +6263,110 @@ client.on('interactionCreate', async (interaction) => {
       await showDutySelection(interaction, newMember.id, nickname, `${firstName} ${lastName}`);
     }
 
+    if (interaction.isModalSubmit() && interaction.customId === 'modal_teacher_register') {
+      await interaction.deferReply({ ephemeral: true });
+
+      const rawFullName = interaction.fields.getTextInputValue('input_teacher_full_name').trim();
+      const nickname = interaction.fields.getTextInputValue('input_teacher_nickname').trim();
+      const rawDept = interaction.fields.getTextInputValue('input_teacher_dept').trim();
+      const phone = interaction.fields.getTextInputValue('input_teacher_phone').trim();
+
+      const cleanedFullName = cleanFullName(rawFullName);
+      const nameParts = cleanedFullName.split(' ');
+      const firstName = nameParts[0] || cleanedFullName;
+      const lastName = nameParts.slice(1).join(' ') || '-';
+      const dept = `กลุ่มสาระฯ ${rawDept.replace('กลุ่มสาระฯ', '').replace('กลุ่มสาระ', '').trim()}`;
+
+      // ตรวจสอบสมาชิกเดิม
+      let existingMember = null;
+      try {
+        const { data: byDiscord } = await supabase
+          .from('members')
+          .select('id, status, role')
+          .eq('discord_id', interaction.user.id)
+          .maybeSingle();
+        if (byDiscord) existingMember = byDiscord;
+      } catch (e) {}
+
+      let teacherMember = null;
+      if (existingMember?.id) {
+        await supabase
+          .from('members')
+          .update({ discord_id: null })
+          .eq('discord_id', interaction.user.id)
+          .neq('id', existingMember.id);
+
+        const { data: updated, error: upErr } = await supabase
+          .from('members')
+          .update({
+            first_name: firstName,
+            last_name: lastName,
+            nickname: nickname,
+            grade_class: dept,
+            student_no: null,
+            phone_number: phone,
+            duty_day: 'ALL',
+            duty_id: null,
+            role: 'TEACHER',
+            shift_role: 'TEACHER',
+            discord_id: interaction.user.id,
+            status: existingMember.status === 'ACTIVE' ? 'ACTIVE' : 'PENDING_APPROVAL',
+            updated_at: new Date()
+          })
+          .eq('id', existingMember.id)
+          .select()
+          .single();
+        if (upErr) throw upErr;
+        teacherMember = updated;
+      } else {
+        await supabase
+          .from('members')
+          .update({ discord_id: null })
+          .eq('discord_id', interaction.user.id);
+
+        const { data: inserted, error: inErr } = await supabase
+          .from('members')
+          .insert({
+            first_name: firstName,
+            last_name: lastName,
+            nickname: nickname,
+            grade_class: dept,
+            student_no: null,
+            phone_number: phone,
+            duty_day: 'ALL',
+            duty_id: null,
+            role: 'TEACHER',
+            shift_role: 'TEACHER',
+            discord_id: interaction.user.id,
+            status: 'PENDING_APPROVAL'
+          })
+          .select()
+          .single();
+        if (inErr) throw inErr;
+        teacherMember = inserted;
+      }
+
+      // ส่งข้อความแจ้งให้ครูแนบรูปถ่ายหน้าตรงในช่องนี้
+      const teacherSuccessEmbed = new EmbedBuilder()
+        .setTitle('✅ บันทึกข้อมูลครูที่ปรึกษาเรียบร้อยแล้ว')
+        .setDescription(
+          `สวัสดีครับ อาจารย์ **${firstName} ${lastName} (${nickname})**\n` +
+          `• 🏫 **สังกัด:** ${dept}\n` +
+          `• 📞 **เบอร์ติดต่อ:** ${phone}\n` +
+          `• 🎖️ **ตำแหน่ง:** 👨‍🏫 ครูที่ปรึกษางานสารวัตรนักเรียน\n\n` +
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+          `📸 **ขั้นตอนสุดท้าย: แนบรูปถ่ายหน้าตรงเพื่อทำบัตรประจำตัว (3D Card)**\n` +
+          `โปรดส่งรูปถ่ายหน้าตรงในเครื่องแบบของคุณครู เข้ามาในห้องนี้ได้ทันที\n` +
+          `เมื่อส่งรูปแล้ว ระบบจะประมวลผลและส่งคำขออนุมัติไปยังคณะผู้บริหารโดยอัตโนมัติครับ\n` +
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━`
+        )
+        .setColor('#F1C40F')
+        .setFooter({ text: 'ระบบลงทะเบียนครูที่ปรึกษา • โรงเรียนพระนารายณ์' });
+
+      await interaction.editReply({ embeds: [teacherSuccessEmbed] });
+      return;
+    }
+
     if (interaction.isModalSubmit() && interaction.customId.startsWith('modal_fill_phone_')) {
       const memberId = interaction.customId.replace('modal_fill_phone_', '');
       const phone = interaction.fields.getTextInputValue('input_phone').trim();
@@ -6326,38 +6513,49 @@ client.on('interactionCreate', async (interaction) => {
  * 🛡️ สร้าง Rich Embed และแถบปุ่มสำหรับหน้าตรวจสอบข้อมูลสารวัตรและรูปถ่ายก่อนส่งขออนุมัติ
  */
 function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
+  const isTeacher = member.role === 'TEACHER';
   const isCropped = !!(member.photo_cropped_at);
   const isSpecial = member.duty_day && member.duty_day.endsWith('S');
   const weekday = member.duty_day ? (member.duty_day === 'TSS' ? 'Ts' : member.duty_day.replace(/S+$/, '') || member.duty_day) : 'M';
   const weekdayName = DAY_NAMES[weekday] || weekday;
-  const shiftLabel = getShiftLabel(member.duty_day);
+  const shiftLabel = isTeacher ? '👨‍🏫 ครูที่ปรึกษา (ทุกวัน/ทุกผลัด)' : getShiftLabel(member.duty_day);
+
+  const fields = [
+    { name: '👤 ชื่อ-นามสกุล', value: `\`${member.first_name} ${member.last_name}\``, inline: true },
+    { name: '🏷️ ชื่อเล่น', value: `\`${member.nickname || '-'}\``, inline: true }
+  ];
+
+  if (isTeacher) {
+    fields.push({ name: '🏫 กลุ่มสาระ/สังกัด', value: `\`${member.grade_class || 'กลุ่มสาระการเรียนรู้'}\``, inline: true });
+    fields.push({ name: '📞 เบอร์โทรศัพท์', value: `\`${member.phone_number || '-'}\``, inline: true });
+    fields.push({ name: '🎖️ ตำแหน่ง / หน้าที่', value: '**👨‍🏫 ครูที่ปรึกษางานสารวัตร**', inline: true });
+  } else {
+    fields.push({ name: '🏫 ชั้น / เลขที่', value: `ม.\`${member.grade_class || '-'}\` เลขที่ \`#${member.student_no || '-'}\``, inline: true });
+    fields.push({ name: '📞 เบอร์โทรศัพท์', value: `\`${member.phone_number || '-'}\``, inline: true });
+    fields.push({ name: '📅 วันปฏิบัติหน้าที่', value: `วัน${weekdayName} (\`${weekday}\`)`, inline: true });
+    fields.push({ name: '🏷️ ผลัดเวรสุทธิ', value: `**${shiftLabel}** ${isSpecial ? '⭐' : ''}`, inline: true });
+  }
+
+  fields.push({
+    name: '📸 สถานะรูปถ่าย',
+    value: isCropped
+      ? '✅ **ปรับแต่ง/ครอปรูปขนาด 1 นิ้ว เรียบร้อยแล้ว** (มาตรฐานรูปหน้าปกเอกสาร พร้อมจัดทำบัตรดิจิทัล 3D)'
+      : '⚠️ **รูปถ่ายต้นฉบับ (ยังไม่ได้ครอป 1 นิ้ว)** — แนะนำให้กดปุ่มครอปรูปบนเว็บเพื่อความสวยงามเหมือนหน้าปกเอกสาร',
+    inline: false
+  });
 
   const embed = new EmbedBuilder()
-    .setTitle('🛡️ ตรวจสอบข้อมูลการลงทะเบียนสารวัตร [ก่อนส่งขออนุมัติ]')
+    .setTitle(isTeacher ? '👨‍🏫 ตรวจสอบข้อมูลการลงทะเบียนครูที่ปรึกษา [ก่อนส่งขออนุมัติ]' : '🛡️ ตรวจสอบข้อมูลการลงทะเบียนสารวัตร [ก่อนส่งขออนุมัติ]')
     .setDescription(
-      `สวัสดีครับคุณ **${member.first_name} ${member.last_name} (${member.nickname})**\n` +
+      `สวัสดีครับ ${isTeacher ? 'อาจารย์' : 'คุณ'} **${member.first_name} ${member.last_name} (${member.nickname})**\n` +
       `โปรดตรวจสอบข้อมูลส่วนตัวและรูปถ่ายทำบัตรของคุณด้านล่างให้ถูกต้องครบถ้วน:\n\n` +
       `• **หากข้อมูลและรูปถูกต้องแล้ว:** กด **"✅ ยืนยันข้อมูล & ส่งขออนุมัติ"**\n` +
       `• **หากเพิ่งตัดต่อ/ครอปรูปบนเว็บมา:** กด **"🔄 รีเฟรชรูปภาพ"** เพื่อดึงรูปใหม่ทันที\n` +
       `• **หากต้องการปรับตำแหน่งรูป:** กด **"🔲 ปรับแต่ง/ครอปรูปบนเว็บ"** (ขนาด 1 นิ้ว)`
     )
-    .addFields(
-      { name: '👤 ชื่อ-นามสกุล', value: `\`${member.first_name} ${member.last_name}\``, inline: true },
-      { name: '🏷️ ชื่อเล่น', value: `\`${member.nickname || '-'}\``, inline: true },
-      { name: '🏫 ชั้น / เลขที่', value: `ม.\`${member.grade_class || '-'}\` เลขที่ \`#${member.student_no || '-'}\``, inline: true },
-      { name: '📞 เบอร์โทรศัพท์', value: `\`${member.phone_number || '-'}\``, inline: true },
-      { name: '📅 วันปฏิบัติหน้าที่', value: `วัน${weekdayName} (\`${weekday}\`)`, inline: true },
-      { name: '🏷️ ผลัดเวรสุทธิ', value: `**${shiftLabel}** ${isSpecial ? '⭐' : ''}`, inline: true },
-      {
-        name: '📸 สถานะรูปถ่าย',
-        value: isCropped
-          ? '✅ **ปรับแต่ง/ครอปรูปขนาด 1 นิ้ว เรียบร้อยแล้ว** (มาตรฐานรูปหน้าปกเอกสาร พร้อมจัดทำบัตรดิจิทัล 3D)'
-          : '⚠️ **รูปถ่ายต้นฉบับ (ยังไม่ได้ครอป 1 นิ้ว)** — แนะนำให้กดปุ่มครอปรูปบนเว็บเพื่อความสวยงามเหมือนหน้าปกเอกสาร',
-        inline: false
-      }
-    )
+    .addFields(fields)
     .setImage(photoUrl)
-    .setColor(isCropped ? '#2ECC71' : '#3498DB')
+    .setColor(isTeacher ? '#F1C40F' : (isCropped ? '#2ECC71' : '#3498DB'))
     .setFooter({ text: 'ระบบลงทะเบียนสารวัตร • โรงเรียนพระนารายณ์ (ข้อความนี้เห็นเฉพาะคุณ)' })
     .setTimestamp();
 
@@ -6771,28 +6969,44 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
       }
 
       if (approvalChannel) {
+        const isTeacher = member.role === 'TEACHER' || member.shift_role === 'TEACHER';
         const isSpecial = member.duty_day && member.duty_day.endsWith('S');
         const weekday = member.duty_day ? (member.duty_day === 'TSS' ? 'Ts' : member.duty_day.replace(/S+$/, '') || member.duty_day) : 'M';
         const weekdayName = DAY_NAMES[weekday] || weekday;
 
         const metaTag = (promptChanId && promptMsgId) ? ` • [msg:${promptChanId}:${promptMsgId}]` : '';
 
-        const approvalEmbed = new EmbedBuilder()
-          .setTitle('📋 คำขอลงทะเบียนสารวัตรใหม่ [รอการตรวจสอบ]')
-          .setDescription(
-            `มีสารวัตรนักเรียนทำรายการลงทะเบียนและส่งรูปถ่ายเข้ามาใหม่ โปรดตรวจสอบและดำเนินการ\n\n` +
-            `👤 **ชื่อ-สกุล:** ${member.first_name} ${member.last_name} (**${member.nickname}**)\n` +
-            `🏫 **ชั้นเรียน:** ม.${member.grade_class} (เลขที่ ${member.student_no})\n` +
-            `📞 **เบอร์โทรศัพท์:** \`${member.phone_number || '-'}\`\n` +
-            `📅 **เวรประจำวัน:** วัน${weekdayName} (\`${weekday}\`)\n` +
-            `⭐ **ลักษณะเวร:** ${isSpecial ? `⭐ **เวรพิเศษ (ทุกวัน)** [ผลัด \`${member.duty_day}\`]` : `👤 เวรเฉพาะวัน [ผลัด \`${member.duty_day}\`]`}\n` +
-            `🏷️ **ผลัดเวรสุทธิ:** **${shiftLabel}**\n` +
-            `💬 **บัญชี Discord:** <@${interaction.user.id}> (\`${interaction.user.tag}\`)`
-          )
-          .setImage(photoUrl)
-          .setColor(isSpecial ? '#9B59B6' : '#F39C12')
-          .setFooter({ text: `ระบบลงทะเบียนสารวัตร • โรงเรียนพระนารายณ์${metaTag}` })
-          .setTimestamp();
+        const approvalEmbed = isTeacher
+          ? new EmbedBuilder()
+              .setTitle('👨‍🏫 คำขอลงทะเบียนครูที่ปรึกษา [รอการตรวจสอบ]')
+              .setDescription(
+                `มีคุณครูทำรายการลงทะเบียนครูที่ปรึกษาฝ่ายสารวัตรเข้ามาใหม่ โปรดตรวจสอบและดำเนินการอนุมัติ\n\n` +
+                `👤 **ชื่อ-สกุล:** ${member.first_name} ${member.last_name} (**ครู${member.nickname}**)\n` +
+                `🏢 **กลุ่มสาระฯ / ฝ่าย:** ${member.grade_class || 'ครูที่ปรึกษา'}\n` +
+                `📞 **เบอร์โทรศัพท์:** \`${member.phone_number || '-'}\`\n` +
+                `🎖️ **บทบาท:** 👨‍🏫 ครูที่ปรึกษาฝ่ายสารวัตร (Teacher Advisor)\n` +
+                `💬 **บัญชี Discord:** <@${interaction.user.id}> (\`${interaction.user.tag}\`)`
+              )
+              .setImage(photoUrl)
+              .setColor('#F1C40F')
+              .setFooter({ text: `ระบบลงทะเบียนครูที่ปรึกษา • โรงเรียนพระนารายณ์${metaTag}` })
+              .setTimestamp()
+          : new EmbedBuilder()
+              .setTitle('📋 คำขอลงทะเบียนสารวัตรใหม่ [รอการตรวจสอบ]')
+              .setDescription(
+                `มีสารวัตรนักเรียนทำรายการลงทะเบียนและส่งรูปถ่ายเข้ามาใหม่ โปรดตรวจสอบและดำเนินการ\n\n` +
+                `👤 **ชื่อ-สกุล:** ${member.first_name} ${member.last_name} (**${member.nickname}**)\n` +
+                `🏫 **ชั้นเรียน:** ม.${member.grade_class} (เลขที่ ${member.student_no})\n` +
+                `📞 **เบอร์โทรศัพท์:** \`${member.phone_number || '-'}\`\n` +
+                `📅 **เวรประจำวัน:** วัน${weekdayName} (\`${weekday}\`)\n` +
+                `⭐ **ลักษณะเวร:** ${isSpecial ? `⭐ **เวรพิเศษ (ทุกวัน)** [ผลัด \`${member.duty_day}\`]` : `👤 เวรเฉพาะวัน [ผลัด \`${member.duty_day}\`]`}\n` +
+                `🏷️ **ผลัดเวรสุทธิ:** **${shiftLabel}**\n` +
+                `💬 **บัญชี Discord:** <@${interaction.user.id}> (\`${interaction.user.tag}\`)`
+              )
+              .setImage(photoUrl)
+              .setColor(isSpecial ? '#9B59B6' : '#F39C12')
+              .setFooter({ text: `ระบบลงทะเบียนสารวัตร • โรงเรียนพระนารายณ์${metaTag}` })
+              .setTimestamp();
 
         const actionRow = new ActionRowBuilder().addComponents(
           new ButtonBuilder()
@@ -6816,6 +7030,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
     if (interaction.isButton() && (interaction.customId.startsWith('btn_approve_member_') || interaction.customId.startsWith('btn_reject_member_'))) {
       const isLeader = interaction.member.permissions.has(PermissionsBitField.Flags.Administrator) ||
                        (ROLE_IDS.ADMIN && interaction.member.roles.cache.has(ROLE_IDS.ADMIN)) ||
+                       (ROLE_IDS.TEACHER && interaction.member.roles.cache.has(ROLE_IDS.TEACHER)) ||
                        interaction.member.roles.cache.has(ROLE_IDS.PRESIDENT) ||
                        interaction.member.roles.cache.has(ROLE_IDS.VICE_PRESIDENT);
 
@@ -6869,8 +7084,9 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
           }
         }
 
-        const effectiveDutyDay = dutyDay || 'M';
-        const dutyId = await getNextAvailableDutyId(supabase, effectiveDutyDay);
+        const isTeacher = member.role === 'TEACHER';
+        const effectiveDutyDay = isTeacher ? 'ALL' : (dutyDay || 'M');
+        const dutyId = isTeacher ? null : await getNextAvailableDutyId(supabase, effectiveDutyDay);
 
         await supabase
           .from('members')
@@ -6895,14 +7111,19 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
             const guildMember = await interaction.guild.members.fetch(member.discord_id).catch(() => null);
             if (guildMember && typeof guildMember.roles?.add === 'function') {
               if (typeof guildMember.setNickname === 'function') {
-                const newNickname = `[${dutyId}] ${member.nickname} (${member.first_name})`;
+                const newNickname = isTeacher
+                  ? `[ครูที่ปรึกษา] ${member.nickname} (${member.first_name})`
+                  : `[${dutyId}] ${member.nickname} (${member.first_name})`;
                 await guildMember.setNickname(newNickname.slice(0, 32)).catch((err) => {
                   console.warn('Cannot set nickname (likely Server Owner):', err.message);
                 });
               }
 
-              const rolesToAdd = [ROLE_IDS.VERIFIED, ...getDutyRoles(member.duty_day)];
+              const rolesToAdd = isTeacher
+                ? [ROLE_IDS.VERIFIED, ROLE_IDS.TEACHER].filter(Boolean)
+                : [ROLE_IDS.VERIFIED, ...getDutyRoles(member.duty_day)];
               if (member.role === 'ADMIN' && ROLE_IDS.ADMIN) rolesToAdd.push(ROLE_IDS.ADMIN);
+              if (member.role === 'TEACHER' && ROLE_IDS.TEACHER) rolesToAdd.push(ROLE_IDS.TEACHER);
               if (member.role === 'PRESIDENT' && ROLE_IDS.PRESIDENT) rolesToAdd.push(ROLE_IDS.PRESIDENT);
               if (member.role === 'VICE_PRESIDENT' && ROLE_IDS.VICE_PRESIDENT) rolesToAdd.push(ROLE_IDS.VICE_PRESIDENT);
               
@@ -9878,6 +10099,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
         .setPlaceholder('👑 เลือกตำแหน่งที่ต้องการมอบหมาย')
         .addOptions([
           { label: '⚡ ผู้ดูแลระบบ (System Admin)', description: 'สิทธิ์ดูแลระบบสูงสุดและปรับเปลี่ยนในเว็บ', value: 'APPOINT_ADMIN', emoji: '⚡' },
+          { label: '👨‍🏫 ครูที่ปรึกษา (Teacher Advisor)', description: 'ครูที่ปรึกษาฝ่ายสารวัตร สิทธิ์ดูข้อมูล/อนุมัติ', value: 'APPOINT_TEACHER', emoji: '👨‍🏫' },
           { label: '👑 ประธานสารวัตรนักเรียน', description: 'ผู้นำสูงสุดของฝ่ายสารวัตร', value: 'APPOINT_PRESIDENT', emoji: '👑' },
           { label: '🎖️ รองประธานสารวัตรนักเรียน', description: 'รองผู้นำฝ่ายสารวัตร', value: 'APPOINT_VICE_PRESIDENT', emoji: '🎖️' },
           { label: '⭐ หัวหน้าและรองหัวหน้าเวร (เลือกวัน)', description: 'แต่งตั้งหัวหน้าหรือรองหัวหน้าเวร (M, T, W, TH, F, S)', value: 'FLOW_SHIFT_LEADER', emoji: '⭐' },
@@ -9898,6 +10120,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
 
       const isLeadership = interaction.member.permissions.has(PermissionsBitField.Flags.Administrator) ||
                            (ROLE_IDS.ADMIN && interaction.member.roles.cache.has(ROLE_IDS.ADMIN)) ||
+                           (ROLE_IDS.TEACHER && interaction.member.roles.cache.has(ROLE_IDS.TEACHER)) ||
                            interaction.member.roles.cache.has(ROLE_IDS.PRESIDENT) ||
                            interaction.member.roles.cache.has(ROLE_IDS.VICE_PRESIDENT);
 
@@ -9914,6 +10137,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
         .setPlaceholder('👑 เลือกตำแหน่งที่ต้องการมอบหมาย')
         .addOptions([
           { label: '⚡ ผู้ดูแลระบบ (System Admin)', description: 'สิทธิ์ดูแลระบบสูงสุดและปรับเปลี่ยนในเว็บ', value: 'APPOINT_ADMIN', emoji: '⚡' },
+          { label: '👨‍🏫 ครูที่ปรึกษา (Teacher Advisor)', description: 'ครูที่ปรึกษาฝ่ายสารวัตร สิทธิ์ดูข้อมูล/อนุมัติ', value: 'APPOINT_TEACHER', emoji: '👨‍🏫' },
           { label: '👑 ประธานสารวัตรนักเรียน', description: 'ผู้นำสูงสุดของฝ่ายสารวัตร', value: 'APPOINT_PRESIDENT', emoji: '👑' },
           { label: '🎖️ รองประธานสารวัตรนักเรียน', description: 'รองผู้นำฝ่ายสารวัตร', value: 'APPOINT_VICE_PRESIDENT', emoji: '🎖️' },
           { label: '⭐ หัวหน้าและรองหัวหน้าเวร (เลือกวัน)', description: 'แต่งตั้งหัวหน้าหรือรองหัวหน้าเวร (M, T, W, TH, F, S)', value: 'FLOW_SHIFT_LEADER', emoji: '⭐' },
@@ -9986,23 +10210,30 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
         newRole = 'ADMIN';
         roleTitle = '⚡ ผู้ดูแลระบบ (System Admin)';
         addRoleId = ROLE_IDS.ADMIN;
-        removeRoleIds = [ROLE_IDS.PRESIDENT, ROLE_IDS.VICE_PRESIDENT, ...allHeadAndDeputyRoles].filter(Boolean);
+        removeRoleIds = [ROLE_IDS.TEACHER, ROLE_IDS.PRESIDENT, ROLE_IDS.VICE_PRESIDENT, ...allHeadAndDeputyRoles].filter(Boolean);
+      } else if (action === 'APPOINT_TEACHER') {
+        newRole = 'TEACHER';
+        newShiftRole = 'TEACHER';
+        roleTitle = '👨‍🏫 ครูที่ปรึกษา (Teacher Advisor)';
+        addRoleId = ROLE_IDS.TEACHER;
+        removeRoleIds = [ROLE_IDS.ADMIN, ROLE_IDS.PRESIDENT, ROLE_IDS.VICE_PRESIDENT, ...allHeadAndDeputyRoles].filter(Boolean);
       } else if (action === 'APPOINT_PRESIDENT') {
         newRole = 'PRESIDENT';
         roleTitle = '👑 ประธานสารวัตรนักเรียน';
         addRoleId = ROLE_IDS.PRESIDENT;
-        removeRoleIds = [ROLE_IDS.ADMIN, ROLE_IDS.VICE_PRESIDENT, ...allHeadAndDeputyRoles].filter(Boolean);
+        removeRoleIds = [ROLE_IDS.ADMIN, ROLE_IDS.TEACHER, ROLE_IDS.VICE_PRESIDENT, ...allHeadAndDeputyRoles].filter(Boolean);
       } else if (action === 'APPOINT_VICE_PRESIDENT') {
         newRole = 'VICE_PRESIDENT';
         roleTitle = '🎖️ รองประธานสารวัตรนักเรียน';
         addRoleId = ROLE_IDS.VICE_PRESIDENT;
-        removeRoleIds = [ROLE_IDS.ADMIN, ROLE_IDS.PRESIDENT, ...allHeadAndDeputyRoles].filter(Boolean);
+        removeRoleIds = [ROLE_IDS.ADMIN, ROLE_IDS.TEACHER, ROLE_IDS.PRESIDENT, ...allHeadAndDeputyRoles].filter(Boolean);
       } else if (action === 'DEMOTE_MEMBER') {
         newRole = 'MEMBER';
         newShiftRole = 'MEMBER';
         roleTitle = '🛡️ สารวัตรนักเรียนทั่วไป';
         removeRoleIds = [
           ROLE_IDS.ADMIN,
+          ROLE_IDS.TEACHER,
           ROLE_IDS.PRESIDENT,
           ROLE_IDS.VICE_PRESIDENT,
           ...allHeadAndDeputyRoles
@@ -10022,6 +10253,10 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
         try {
           const guildMember = await interaction.guild.members.fetch(member.discord_id).catch(() => null);
           if (guildMember) {
+            if (action === 'APPOINT_TEACHER') {
+              const teacherNick = `[ครูที่ปรึกษา] ${member.nickname} (${member.first_name})`.substring(0, 32);
+              await guildMember.setNickname(teacherNick).catch(() => {});
+            }
             if (addRoleId) await guildMember.roles.add(addRoleId).catch(() => {});
             for (const rid of removeRoleIds.filter(Boolean)) {
               await guildMember.roles.remove(rid).catch(() => {});
@@ -10138,6 +10373,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
         .setPlaceholder('👑 เลือกตำแหน่งที่ต้องการมอบหมาย')
         .addOptions([
           { label: '⚡ ผู้ดูแลระบบ (System Admin)', description: 'สิทธิ์ดูแลระบบสูงสุดและปรับเปลี่ยนในเว็บ', value: 'APPOINT_ADMIN', emoji: '⚡' },
+          { label: '👨‍🏫 ครูที่ปรึกษา (Teacher Advisor)', description: 'ครูที่ปรึกษาฝ่ายสารวัตร สิทธิ์ดูข้อมูล/อนุมัติ', value: 'APPOINT_TEACHER', emoji: '👨‍🏫' },
           { label: '👑 ประธานสารวัตรนักเรียน', description: 'ผู้นำสูงสุดของฝ่ายสารวัตร', value: 'APPOINT_PRESIDENT', emoji: '👑' },
           { label: '🎖️ รองประธานสารวัตรนักเรียน', description: 'รองผู้นำฝ่ายสารวัตร', value: 'APPOINT_VICE_PRESIDENT', emoji: '🎖️' },
           { label: '⭐ หัวหน้าและรองหัวหน้าเวร (เลือกวัน)', description: 'แต่งตั้งหัวหน้าหรือรองหัวหน้าเวร (M, T, W, TH, F, S)', value: 'FLOW_SHIFT_LEADER', emoji: '⭐' },
