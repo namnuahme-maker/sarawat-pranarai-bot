@@ -364,15 +364,7 @@ async function getLeadershipRoleIdsForMember(memberId) {
 
 function getShiftLeader(members, assignments, shiftCode, position) {
   const memberId = (assignments || []).find(a => a.shift_code === shiftCode && a.position === position)?.member_id;
-  const fromAssignment = (members || []).find(m => m.id === memberId);
-  if (fromAssignment) return fromAssignment;
-  if (position === 'HEAD') {
-    return (members || []).find(m => m.shift_role === 'SHIFT_HEAD' || m.role === 'SHIFT_HEAD' || !!m.is_head) || null;
-  }
-  if (position === 'DEPUTY') {
-    return (members || []).find(m => m.shift_role === 'SHIFT_DEPUTY' || m.role === 'SHIFT_DEPUTY' || !!m.is_deputy) || null;
-  }
-  return null;
+  return (members || []).find(m => m.id === memberId) || null;
 }
 
 function memberBelongsToLeadershipShift(dutyDay, shiftCode) {
@@ -1182,20 +1174,7 @@ async function syncAllMemberRoles(guild) {
       if (m.role === 'VICE_PRESIDENT' && ROLE_IDS.VICE_PRESIDENT) rolesToAdd.push(ROLE_IDS.VICE_PRESIDENT);
 
       const assignedLeadership = leadershipRolesByMember.get(m.id);
-      if (assignedLeadership && assignedLeadership.length > 0) {
-        rolesToAdd.push(...assignedLeadership);
-      } else {
-        // Fallback to legacy shift_role
-        const baseDay = m.duty_day === 'TSS' ? 'Ts' : (m.duty_day || '').replace(/S+$/, '');
-        if (m.shift_role === 'SHIFT_HEAD' || m.role === 'SHIFT_HEAD' || !!m.is_head) {
-          if (ROLE_IDS.HEADS[baseDay]) rolesToAdd.push(ROLE_IDS.HEADS[baseDay]);
-          if ((m.duty_day || '').endsWith('S') && ROLE_IDS.HEADS.S) rolesToAdd.push(ROLE_IDS.HEADS.S);
-        }
-        if (m.shift_role === 'SHIFT_DEPUTY' || m.role === 'SHIFT_DEPUTY' || !!m.is_deputy) {
-          if (ROLE_IDS.DEPUTIES[baseDay]) rolesToAdd.push(ROLE_IDS.DEPUTIES[baseDay]);
-          if ((m.duty_day || '').endsWith('S') && ROLE_IDS.DEPUTIES.S) rolesToAdd.push(ROLE_IDS.DEPUTIES.S);
-        }
-      }
+      if (assignedLeadership?.length) rolesToAdd.push(...assignedLeadership);
 
       const validRoles = rolesToAdd.filter(rid => rid && guild.roles.cache.has(rid));
       if (validRoles.length > 0) {
@@ -1739,8 +1718,8 @@ async function broadcastConsolidatedShiftLeaveCard(guild, dutyDay, newLeave = nu
 
   const baseDay = dutyDay === 'S' ? 'S' : (dutyDay === 'TSS' ? 'Ts' : (dutyDay.replace(/S+$/, '') || dutyDay));
   const matchingCodes = baseDay === 'S'
-    ? ['S', 'MS', 'TS', 'WS', 'TSS', 'FS']
-    : [baseDay, baseDay === 'Ts' ? 'TSS' : `${baseDay}S`, 'S'];
+    ? ['S', 'MS', 'TS', 'WS', 'TSS', 'TsS', 'FS']
+    : [baseDay, baseDay === 'Ts' ? 'TSS' : `${baseDay}S`, ...(baseDay === 'Ts' ? ['TsS'] : []), 'S'];
 
   // 1. ดึงสมาชิกทั้งหมดที่สังกัดเวรนี้
   const { data: shiftMembers = [] } = await supabase
@@ -1870,13 +1849,13 @@ async function broadcastConsolidatedShiftLeaveCard(guild, dutyDay, newLeave = nu
   }
 
   // ส่งเข้า DM ของหัวหน้าเวรและรองหัวหน้าเวร (ถ้ามีแต่งตั้งไว้)
-  const { data: heads = [] } = await supabase
-    .from('members')
-    .select('*')
-    .in('duty_day', matchingCodes)
-    .in('shift_role', ['SHIFT_HEAD', 'SHIFT_DEPUTY'])
-    .not('discord_id', 'is', null)
-    .eq('status', 'ACTIVE');
+  const targetLeadershipShifts = baseDay === 'S' ? ['S'] : [baseDay, 'S'];
+  const { data: headAssignments = [] } = await supabase
+    .from('shift_leadership').select('member_id').in('shift_code', targetLeadershipShifts);
+  const headIds = [...new Set(headAssignments.map(a => a.member_id).filter(Boolean))];
+  const { data: heads = [] } = headIds.length ? await supabase
+    .from('members').select('*').in('id', headIds).not('discord_id', 'is', null).eq('status', 'ACTIVE')
+    : { data: [] };
 
   let headDmCount = 0;
   for (const h of heads) {
@@ -4827,10 +4806,11 @@ client.on('interactionCreate', async (interaction) => {
           return;
         }
 
+        const { data: memberLeadership = [] } = await supabase.from('shift_leadership').select('shift_code, position').eq('member_id', member.id);
+        const shiftRoleTitle = memberLeadership.map(a => `${a.position === 'HEAD' ? 'หัวหน้าเวร' : 'รองหัวหน้าเวร'} (${a.shift_code})`).join(' • ');
         const roleTitle = member.role === 'PRESIDENT' ? '👑 ประธานสารวัตร' :
                           member.role === 'VICE_PRESIDENT' ? '🎖️ รองประธานสารวัตร' :
-                          member.shift_role === 'SHIFT_HEAD' ? '👑 หัวหน้าเวร' :
-                          member.shift_role === 'SHIFT_DEPUTY' ? '🎖️ รองหัวหน้าเวร' :
+                          shiftRoleTitle ||
                           '🛡️ สารวัตรนักเรียนทั่วไป';
 
         const cardUrl = `${getBaseUrl()}/card?id=${member.id}`;
@@ -5991,10 +5971,12 @@ client.on('interactionCreate', async (interaction) => {
 
       if (existingActive) {
         const isTeacher = existingActive.role === 'TEACHER';
+        const { data: existingLeadership = [] } = await supabase.from('shift_leadership').select('shift_code, position').eq('member_id', existingActive.id);
+        const shiftRoleLabel = existingLeadership.map(a => `${a.position === 'HEAD' ? 'หัวหน้าเวร' : 'รองหัวหน้าเวร'} (${a.shift_code})`).join(' • ');
         const roleLabel = isTeacher ? '👨‍🏫 ครูที่ปรึกษา' :
                           (existingActive.role === 'ADMIN' ? '⚡ ผู้ดูแลระบบ' :
-                          (existingActive.shift_role === 'SHIFT_HEAD' ? '👑 หัวหน้าเวร' :
-                          (existingActive.shift_role === 'SHIFT_DEPUTY' ? '🎖️ รองหัวหน้าเวร' : 'สารวัตรประจำเวร')));
+                          (existingActive.role === 'PRESIDENT' ? '👑 ประธานสารวัตร' :
+                          (existingActive.role === 'VICE_PRESIDENT' ? '🎖️ รองประธานสารวัตร' : (shiftRoleLabel || 'สารวัตรประจำเวร'))));
         const dutyText = isTeacher ? 'ครูที่ปรึกษางานสารวัตร (ทุกวัน/ทุกผลัด)' : getShiftLabel(existingActive.duty_day);
         await interaction.reply({
           content: `✅ คุณได้รับการยืนยันตัวตนและอนุมัติในระบบแล้ว:\n` +
@@ -7666,8 +7648,8 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
       // Single Day
       // Single Day: ดึงทั้งเวรปกติ และสารวัตรเวรพิเศษที่สังกัดวันนี้ (เช่น M และ MS)
       const targetDays = selectedDay === 'S'
-        ? ['S', 'MS', 'TS', 'WS', 'TSS', 'FS']
-        : [selectedDay, selectedDay === 'Ts' ? 'TSS' : `${selectedDay}S`];
+        ? ['S', 'MS', 'TS', 'WS', 'TSS', 'TsS', 'FS']
+        : [selectedDay, selectedDay === 'Ts' ? 'TSS' : `${selectedDay}S`, ...(selectedDay === 'Ts' ? ['TsS'] : [])];
 
       const { data: members, error } = await supabase
         .from('members')
@@ -9773,15 +9755,15 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
       // ค้นหาหัวหน้าเวรและรองหัวหน้าเวรประจำวัน
       const baseDay = member.duty_day === 'S' ? 'S' : (member.duty_day === 'TSS' ? 'Ts' : (member.duty_day.replace(/S+$/, '') || member.duty_day));
       const targetDays = baseDay === 'S'
-        ? ['S', 'MS', 'TS', 'WS', 'TSS', 'FS']
-        : [member.duty_day, baseDay].filter(Boolean);
-      const { data: heads } = await supabase
-        .from('members')
-        .select('*')
-        .in('duty_day', targetDays)
-        .in('shift_role', ['SHIFT_HEAD', 'SHIFT_DEPUTY'])
-        .not('discord_id', 'is', null)
-        .eq('status', 'ACTIVE');
+        ? ['S', 'MS', 'TS', 'WS', 'TSS', 'TsS', 'FS']
+        : [member.duty_day, baseDay, ...(baseDay === 'Ts' ? ['TsS'] : [])].filter(Boolean);
+      const targetLeadershipShifts = baseDay === 'S' ? ['S'] : [baseDay, 'S'];
+      const { data: headAssignments = [] } = await supabase
+        .from('shift_leadership').select('member_id').in('shift_code', targetLeadershipShifts);
+      const headIds = [...new Set(headAssignments.map(a => a.member_id).filter(Boolean))];
+      const { data: heads = [] } = headIds.length ? await supabase
+        .from('members').select('*').in('id', headIds).not('discord_id', 'is', null).eq('status', 'ACTIVE')
+        : { data: [] };
 
       const dmEmbed = new EmbedBuilder()
         .setTitle('🚨 [แจ้งเตือนการลาเวรด่วน] มีสมาชิกขอลาเวรวันนี้')
@@ -10230,13 +10212,18 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
         return;
       }
 
+      const { data: leadershipAssignments = [] } = await supabase
+        .from('shift_leadership').select('member_id, shift_code, position');
+
       const memberSelect = new StringSelectMenuBuilder()
         .setCustomId('select_appoint_target_member')
         .setPlaceholder('🔍 เลือกสารวัตรที่ต้องการแต่งตั้งตำแหน่ง');
 
       activeMembers.slice(0, 25).forEach(m => {
         const dayText = getDayName(m.duty_day);
-        const curRole = m.shift_role === 'SHIFT_HEAD' ? '👑 หัวหน้าเวร' : (m.shift_role === 'SHIFT_DEPUTY' ? '🎖️ รอง' : (m.role === 'PRESIDENT' ? '👑 ประธาน' : 'สมาชิก'));
+        const shiftPositions = leadershipAssignments.filter(a => a.member_id === m.id)
+          .map(a => `${a.position === 'HEAD' ? 'หัวหน้า' : 'รอง'}(${a.shift_code})`).join(', ');
+        const curRole = m.role === 'PRESIDENT' ? '👑 ประธาน' : (shiftPositions || 'สมาชิก');
         memberSelect.addOptions({
           label: `[${m.duty_id || '-'}] ${m.nickname} (${m.first_name} ${m.last_name})`,
           description: `${dayText} | ปัจจุบัน: ${curRole}`,
@@ -10264,7 +10251,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
           { label: '👨‍🏫 ครูที่ปรึกษา (Teacher Advisor)', description: 'ครูที่ปรึกษาฝ่ายสารวัตร สิทธิ์ดูข้อมูล/อนุมัติ', value: 'APPOINT_TEACHER', emoji: '👨‍🏫' },
           { label: '👑 ประธานสารวัตรนักเรียน', description: 'ผู้นำสูงสุดของฝ่ายสารวัตร', value: 'APPOINT_PRESIDENT', emoji: '👑' },
           { label: '🎖️ รองประธานสารวัตรนักเรียน', description: 'รองผู้นำฝ่ายสารวัตร', value: 'APPOINT_VICE_PRESIDENT', emoji: '🎖️' },
-          { label: '⭐ หัวหน้าและรองหัวหน้าเวร (เลือกวัน)', description: 'แต่งตั้งหัวหน้าหรือรองหัวหน้าเวร (M, T, W, TH, F, S)', value: 'FLOW_SHIFT_LEADER', emoji: '⭐' },
+          { label: '⭐ หัวหน้าและรองหัวหน้าเวร (เลือกผลัด)', description: 'แต่งตั้งแยกตามผลัด M, T, W, Ts, F หรือเวรพิเศษ S', value: 'FLOW_SHIFT_LEADER', emoji: '⭐' },
           { label: '🛡️ สารวัตรนักเรียนทั่วไป', description: 'ปลดยศผู้นำกลับเป็นสมาชิกปกติ', value: 'DEMOTE_MEMBER', emoji: '🛡️' }
         ]);
 
@@ -10302,7 +10289,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
           { label: '👨‍🏫 ครูที่ปรึกษา (Teacher Advisor)', description: 'ครูที่ปรึกษาฝ่ายสารวัตร สิทธิ์ดูข้อมูล/อนุมัติ', value: 'APPOINT_TEACHER', emoji: '👨‍🏫' },
           { label: '👑 ประธานสารวัตรนักเรียน', description: 'ผู้นำสูงสุดของฝ่ายสารวัตร', value: 'APPOINT_PRESIDENT', emoji: '👑' },
           { label: '🎖️ รองประธานสารวัตรนักเรียน', description: 'รองผู้นำฝ่ายสารวัตร', value: 'APPOINT_VICE_PRESIDENT', emoji: '🎖️' },
-          { label: '⭐ หัวหน้าและรองหัวหน้าเวร (เลือกวัน)', description: 'แต่งตั้งหัวหน้าหรือรองหัวหน้าเวร (M, T, W, TH, F, S)', value: 'FLOW_SHIFT_LEADER', emoji: '⭐' },
+          { label: '⭐ หัวหน้าและรองหัวหน้าเวร (เลือกผลัด)', description: 'แต่งตั้งแยกตามผลัด M, T, W, Ts, F หรือเวรพิเศษ S', value: 'FLOW_SHIFT_LEADER', emoji: '⭐' },
           { label: '🛡️ สารวัตรนักเรียนทั่วไป', description: 'ปลดยศผู้นำกลับเป็นสมาชิกปกติ', value: 'DEMOTE_MEMBER', emoji: '🛡️' }
         ]);
 
@@ -10326,7 +10313,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
         return;
       }
 
-      // ขั้นที่ 2 ของโฟลว์หัวหน้าและรองหัวหน้า: แสดงเมนูให้เลือกวัน (M, T, W, TH, F, S)
+      // ขั้นที่ 2 ของโฟลว์หัวหน้าและรองหัวหน้า: แสดงเมนูให้เลือกผลัด (M, T, W, Ts, F, S)
       if (action === 'FLOW_SHIFT_LEADER') {
         const dayMenu = new StringSelectMenuBuilder()
           .setCustomId(`select_shift_day_appoint_${member.id}`)
@@ -10335,7 +10322,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
             { label: '🟡 เวรวันจันทร์ (Monday - M)', value: 'M', description: 'แต่งตั้งหัวหน้า/รอง ประจำวันจันทร์', emoji: '🟡' },
             { label: '🌸 เวรวันอังคาร (Tuesday - T)', value: 'T', description: 'แต่งตั้งหัวหน้า/รอง ประจำวันอังคาร', emoji: '🌸' },
             { label: '🟢 เวรวันพุธ (Wednesday - W)', value: 'W', description: 'แต่งตั้งหัวหน้า/รอง ประจำวันพุธ', emoji: '🟢' },
-            { label: '🟠 เวรวันพฤหัสบดี (Thursday - TH/Ts)', value: 'Ts', description: 'แต่งตั้งหัวหน้า/รอง ประจำวันพฤหัสบดี', emoji: '🟠' },
+            { label: '🟠 เวรวันพฤหัสบดี (Ts)', value: 'Ts', description: 'แต่งตั้งหัวหน้า/รอง ประจำวันพฤหัสบดี', emoji: '🟠' },
             { label: '🔵 เวรวันศุกร์ (Friday - F)', value: 'F', description: 'แต่งตั้งหัวหน้า/รอง ประจำวันศุกร์', emoji: '🔵' },
             { label: '🟣 เวรพิเศษ (Special Duty - S)', value: 'S', description: 'แต่งตั้งหัวหน้า/รอง ประจำเวรพิเศษทุกวัน', emoji: '🟣' }
           ]);
@@ -10351,7 +10338,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
         await interaction.editReply({
           content: `👑 **แต่งตั้งหัวหน้าและรองหัวหน้าเวร:**\n` +
                    `👤 สารวัตร: **[${member.duty_id || '-'}] ${member.nickname} (${member.first_name} ${member.last_name})**\n` +
-                   `👉 ขั้นที่ 1: โปรดเลือกวันปฏิบัติหน้าที่ (M, T, W, TH, F, S) ด้านล่าง:`,
+                   `👉 ขั้นที่ 1: เลือกผลัดที่จะแต่งตั้ง (M, T, W, Ts, F หรือเวรพิเศษ S):`,
           components: [rowMenu, rowBack]
         });
         return;
@@ -10509,7 +10496,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
           { label: '🟡 เวรวันจันทร์ (Monday - M)', value: 'M', description: 'แต่งตั้งหัวหน้า/รอง ประจำวันจันทร์', emoji: '🟡' },
           { label: '🌸 เวรวันอังคาร (Tuesday - T)', value: 'T', description: 'แต่งตั้งหัวหน้า/รอง ประจำวันอังคาร', emoji: '🌸' },
           { label: '🟢 เวรวันพุธ (Wednesday - W)', value: 'W', description: 'แต่งตั้งหัวหน้า/รอง ประจำวันพุธ', emoji: '🟢' },
-          { label: '🟠 เวรวันพฤหัสบดี (Thursday - TH/Ts)', value: 'Ts', description: 'แต่งตั้งหัวหน้า/รอง ประจำวันพฤหัสบดี', emoji: '🟠' },
+          { label: '🟠 เวรวันพฤหัสบดี (Ts)', value: 'Ts', description: 'แต่งตั้งหัวหน้า/รอง ประจำวันพฤหัสบดี', emoji: '🟠' },
           { label: '🔵 เวรวันศุกร์ (Friday - F)', value: 'F', description: 'แต่งตั้งหัวหน้า/รอง ประจำวันศุกร์', emoji: '🔵' },
           { label: '🟣 เวรพิเศษ (Special Duty - S)', value: 'S', description: 'แต่งตั้งหัวหน้า/รอง ประจำเวรพิเศษทุกวัน', emoji: '🟣' }
         ]);
@@ -10525,7 +10512,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
       await interaction.editReply({
         content: `👑 **แต่งตั้งหัวหน้าและรองหัวหน้าเวร:**\n` +
                  `👤 สารวัตร: **[${member.duty_id || '-'}] ${member.nickname} (${member.first_name} ${member.last_name})**\n` +
-                 `👉 ขั้นที่ 1: โปรดเลือกวันปฏิบัติหน้าที่ (M, T, W, TH, F, S) ด้านล่าง:`,
+                 `👉 ขั้นที่ 1: เลือกผลัดที่จะแต่งตั้ง (M, T, W, Ts หรือเวรพิเศษ S):`,
         components: [rowMenu, rowBack]
       });
       return;
@@ -10545,7 +10532,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
           { label: '👨‍🏫 ครูที่ปรึกษา (Teacher Advisor)', description: 'ครูที่ปรึกษาฝ่ายสารวัตร สิทธิ์ดูข้อมูล/อนุมัติ', value: 'APPOINT_TEACHER', emoji: '👨‍🏫' },
           { label: '👑 ประธานสารวัตรนักเรียน', description: 'ผู้นำสูงสุดของฝ่ายสารวัตร', value: 'APPOINT_PRESIDENT', emoji: '👑' },
           { label: '🎖️ รองประธานสารวัตรนักเรียน', description: 'รองผู้นำฝ่ายสารวัตร', value: 'APPOINT_VICE_PRESIDENT', emoji: '🎖️' },
-          { label: '⭐ หัวหน้าและรองหัวหน้าเวร (เลือกวัน)', description: 'แต่งตั้งหัวหน้าหรือรองหัวหน้าเวร (M, T, W, TH, F, S)', value: 'FLOW_SHIFT_LEADER', emoji: '⭐' },
+          { label: '⭐ หัวหน้าและรองหัวหน้าเวร (เลือกผลัด)', description: 'แต่งตั้งแยกตามผลัด M, T, W, Ts, F หรือเวรพิเศษ S', value: 'FLOW_SHIFT_LEADER', emoji: '⭐' },
           { label: '🛡️ สารวัตรนักเรียนทั่วไป', description: 'ปลดยศผู้นำกลับเป็นสมาชิกปกติ', value: 'DEMOTE_MEMBER', emoji: '🛡️' }
         ]);
 
