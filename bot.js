@@ -1906,12 +1906,32 @@ async function broadcastConsolidatedShiftLeaveCard(guild, dutyDay, newLeave = nu
 
   // ส่งเข้า DM ของหัวหน้าเวรและรองหัวหน้าเวร (ถ้ามีแต่งตั้งไว้)
   const targetLeadershipShifts = baseDay === 'S' ? ['S'] : [baseDay, 'S'];
-  const { data: headAssignments = [] } = await supabase
-    .from('shift_leadership').select('member_id').in('shift_code', expandShiftCodeAliases(targetLeadershipShifts));
-  const headIds = [...new Set(headAssignments.map(a => a.member_id).filter(Boolean))];
-  const { data: heads = [] } = headIds.length ? await supabase
-    .from('members').select('*').in('id', headIds).not('discord_id', 'is', null).eq('status', 'ACTIVE')
-    : { data: [] };
+  let headAssignments = [];
+  try {
+    const { data: lAssignments, error: lErr } = await supabase
+      .from('shift_leadership').select('member_id').in('shift_code', expandShiftCodeAliases(targetLeadershipShifts));
+    if (!lErr && Array.isArray(lAssignments)) headAssignments = lAssignments;
+  } catch (e) {}
+
+  const headIds = [...new Set((headAssignments || []).map(a => a.member_id).filter(Boolean))];
+  let heads = [];
+  if (headIds.length) {
+    const { data: hList } = await supabase
+      .from('members').select('*').in('id', headIds).not('discord_id', 'is', null).eq('status', 'ACTIVE');
+    if (Array.isArray(hList)) heads = hList;
+  }
+  if (!heads.length) {
+    try {
+      const { data: legacyHeads } = await supabase
+        .from('members')
+        .select('*')
+        .in('duty_day', expandDutyDayAliases(targetLeadershipShifts))
+        .in('shift_role', ['SHIFT_HEAD', 'SHIFT_DEPUTY'])
+        .not('discord_id', 'is', null)
+        .eq('status', 'ACTIVE');
+      if (Array.isArray(legacyHeads)) heads = legacyHeads;
+    } catch (e) {}
+  }
 
   let headDmCount = 0;
   for (const h of heads) {
@@ -6201,7 +6221,7 @@ client.on('interactionCreate', async (interaction) => {
 
       const nameInput = new TextInputBuilder()
         .setCustomId('input_teacher_full_name')
-        .setLabel('ชื่อจริง-นามสกุล (มี นาย/นาง/นางสาว/ครู ติดชื่อ)')
+        .setLabel('ชื่อจริง-นามสกุล (ระบุคำนำหน้าชื่อ)')
         .setPlaceholder('เช่น นายสมศักดิ์ สุขใจ หรือ นางสาวพัชรี มีสุข')
         .setStyle(TextInputStyle.Short)
         .setRequired(true);
