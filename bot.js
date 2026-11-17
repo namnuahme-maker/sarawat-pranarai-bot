@@ -6176,7 +6176,8 @@ client.on('interactionCreate', async (interaction) => {
             const dutyText = m.duty_day ? `[เวร ${getShiftLabel(m.duty_day) || m.duty_day}]` : '';
             const desc = `${classText} ${noText} ${dutyText}`.trim().slice(0, 100) || 'สารวัตรนักเรียน';
             const fullName = `${m.first_name} ${m.last_name}`.trim();
-            const label = `${fullName} (${m.nickname || '-'})`.slice(0, 100);
+            const nickPart = (m.nickname && m.nickname !== '-') ? ` (${m.nickname})` : '';
+            const label = `${fullName}${nickPart}`.slice(0, 100);
             return {
               label,
               value: m.id,
@@ -6314,14 +6315,25 @@ client.on('interactionCreate', async (interaction) => {
       const { data: member } = await supabase.from('members').select('*').eq('id', selectedValue).single();
 
       // ตรวจสอบข้อมูลส่วนตัวที่ยังขาด (กรณีเพิ่มจากเว็บโดยเว้นว่างไว้)
+      const missingNick = !member.nickname || member.nickname === '-';
       const missingPhone = !member.phone_number || member.phone_number === '-';
       const missingClass = !member.grade_class || member.grade_class === '-';
       const missingNo = !member.student_no || member.student_no === 0;
 
-      if (missingPhone || missingClass || missingNo) {
+      if (missingNick || missingPhone || missingClass || missingNo) {
         const completeModal = new ModalBuilder()
           .setCustomId(`modal_complete_member_${member.id}`)
           .setTitle('📝 ระบุข้อมูลเพิ่มเติมเพื่อยืนยัน');
+
+        if (missingNick) {
+          const nickInput = new TextInputBuilder()
+            .setCustomId('input_nickname')
+            .setLabel('ชื่อเล่น (เช่น น้ำเหนือ, ปัน, นน)')
+            .setPlaceholder('เช่น น้ำเหนือ, ปัน, นน')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true);
+          completeModal.addComponents(new ActionRowBuilder().addComponents(nickInput));
+        }
 
         if (missingPhone) {
           const phoneInput = new TextInputBuilder()
@@ -6623,6 +6635,11 @@ client.on('interactionCreate', async (interaction) => {
     if (interaction.isModalSubmit() && interaction.customId.startsWith('modal_complete_member_')) {
       const memberId = interaction.customId.replace('modal_complete_member_', '');
       const updates = {};
+
+      try {
+        const nickname = interaction.fields.getTextInputValue('input_nickname')?.trim();
+        if (nickname) updates.nickname = nickname;
+      } catch (e) {}
 
       try {
         const phone = interaction.fields.getTextInputValue('input_phone')?.trim();
