@@ -48,6 +48,54 @@ const { initLogger, logError, logWarn } = require('./services/logger');
 
 const PORT = process.env.PORT || 10000;
 
+// Keep legacy Thursday records readable during the split web/bot rollout.
+// New writes and all displayed values use Th / ThS.
+function canonicalDutyDay(value) {
+  const code = String(value || '').trim();
+  if (code === 'Ts') return 'Th';
+  if (code === 'TSS' || code === 'TsS') return 'ThS';
+  return code;
+}
+
+function baseDutyDay(value) {
+  const code = canonicalDutyDay(value);
+  if (code === 'S') return 'S';
+  return code.endsWith('S') ? code.replace(/S+$/, '') : code;
+}
+
+function expandDutyDayAliases(values) {
+  return [...new Set(values.flatMap(value => {
+    const code = canonicalDutyDay(value);
+    if (code === 'Th') return ['Th', 'Ts'];
+    if (code === 'ThS') return ['ThS', 'TSS', 'TsS'];
+    return [code];
+  }))];
+}
+
+function canonicalShiftCode(value) {
+  return canonicalDutyDay(value);
+}
+
+function canonicalDutyId(value) {
+  const id = String(value || '').trim();
+  let match = id.match(/^TSS(\d*)$/i) || id.match(/^TsS(\d*)$/);
+  if (match) return `ThS${match[1]}`;
+  match = id.match(/^Ts(\d*)$/);
+  if (match) return `Th${match[1]}`;
+  match = id.match(/^THS(\d*)$/i);
+  if (match) return `ThS${match[1]}`;
+  match = id.match(/^TH(\d*)$/i);
+  if (match) return `Th${match[1]}`;
+  return id.toUpperCase();
+}
+
+function expandShiftCodeAliases(values) {
+  return [...new Set(values.flatMap(value => {
+    const code = canonicalShiftCode(value);
+    return code === 'Th' ? ['Th', 'Ts'] : [code];
+  }))];
+}
+
 const SETTINGS_FILE = path.join(__dirname, 'settings.json');
 
 /**
@@ -354,8 +402,8 @@ async function getLeadershipRoleIdsForMember(memberId) {
       .eq('member_id', memberId);
     if (error) throw error;
     return (data || []).map(a => a.position === 'HEAD'
-      ? ROLE_IDS.HEADS[a.shift_code]
-      : ROLE_IDS.DEPUTIES[a.shift_code]).filter(Boolean);
+      ? ROLE_IDS.HEADS[canonicalShiftCode(a.shift_code)]
+      : ROLE_IDS.DEPUTIES[canonicalShiftCode(a.shift_code)]).filter(Boolean);
   } catch (e) {
     console.error('[LEADERSHIP] Failed to load assignments:', e.message);
     return [];
@@ -363,14 +411,14 @@ async function getLeadershipRoleIdsForMember(memberId) {
 }
 
 function getShiftLeader(members, assignments, shiftCode, position) {
-  const memberId = (assignments || []).find(a => a.shift_code === shiftCode && a.position === position)?.member_id;
+  const memberId = (assignments || []).find(a => canonicalShiftCode(a.shift_code) === shiftCode && a.position === position)?.member_id;
   return (members || []).find(m => m.id === memberId) || null;
 }
 
 function memberBelongsToLeadershipShift(dutyDay, shiftCode) {
-  const code = String(dutyDay || '').trim();
+  const code = canonicalDutyDay(dutyDay);
   if (shiftCode === 'S') return code === 'S' || /S$/.test(code);
-  if (shiftCode === 'Th') return ['Th', 'ThS', 'ThS'].includes(code);
+  if (shiftCode === 'Th') return ['Th', 'ThS'].includes(code);
   const specialVariants = { M: 'MS', T: 'TS', W: 'WS', F: 'FS' };
   return code === shiftCode || code === specialVariants[shiftCode];
 }
@@ -391,9 +439,10 @@ const DAY_NAMES = {
 
 function getDayName(code) {
   if (!code) return 'ไม่ระบุ';
+  code = canonicalDutyDay(code);
   if (code === 'S') return 'เวรพิเศษ (ทุกวัน)';
-  if (code.endsWith('S') && code !== 'S') {
-    const base = code === 'ThS' ? 'Th' : code.replace(/S+$/, '');
+  if (code.endsWith('S')) {
+    const base = baseDutyDay(code);
     const baseName = DAY_NAMES[base] || base;
     return `เวร${baseName} (พิเศษ)`;
   }
@@ -402,9 +451,10 @@ function getDayName(code) {
 
 function getShiftLabel(code) {
   if (!code) return 'ไม่ระบุ';
+  code = canonicalDutyDay(code);
   if (code === 'S') return 'พิเศษ ทุกวัน (S)';
-  if (code.endsWith('S') && code !== 'S') {
-    const base = code === 'ThS' ? 'Th' : code.replace(/S+$/, '');
+  if (code.endsWith('S')) {
+    const base = baseDutyDay(code);
     const baseName = DAY_NAMES[base] || base;
     return `${baseName} + เวรพิเศษทุกวัน (${code})`;
   }
@@ -416,7 +466,7 @@ function getShiftLabel(code) {
  */
 function buildPrivateReviewCard(member) {
   const isSpecial = member.duty_day && member.duty_day.endsWith('S');
-  const weekday = member.duty_day ? (member.duty_day === 'ThS' ? 'Th' : member.duty_day.replace(/S+$/, '') || member.duty_day) : 'M';
+  const weekday = member.duty_day ? baseDutyDay(member.duty_day) : 'M';
   const weekdayName = DAY_NAMES[weekday] || weekday;
   const shiftLabel = getShiftLabel(member.duty_day);
 
@@ -643,9 +693,10 @@ function buildRegistrationEditModal(member) {
 
 function getDutyRoles(dutyDay) {
   if (!dutyDay) return [];
+  dutyDay = canonicalDutyDay(dutyDay);
   const roles = [];
   if (dutyDay.endsWith('S') && dutyDay !== 'S') {
-    const baseDay = dutyDay === 'ThS' ? 'Th' : dutyDay.replace(/S+$/, '');
+    const baseDay = baseDutyDay(dutyDay);
     if (ROLE_IDS.DAYS[baseDay]) roles.push(ROLE_IDS.DAYS[baseDay]);
     if (ROLE_IDS.DAYS['S']) roles.push(ROLE_IDS.DAYS['S']);
   } else if (dutyDay === 'S') {
@@ -657,6 +708,8 @@ function getDutyRoles(dutyDay) {
 }
 
 function resolveDutyDayForAppoint(currentDutyDay, targetShift) {
+  currentDutyDay = canonicalDutyDay(currentDutyDay);
+  targetShift = canonicalShiftCode(targetShift);
   if (!targetShift) return currentDutyDay;
   const isSpecialTarget = targetShift === 'S';
   const hasSpecial = currentDutyDay && (currentDutyDay.endsWith('S') || currentDutyDay === 'S');
@@ -1150,8 +1203,8 @@ async function syncAllMemberRoles(guild) {
   const leadershipRolesByMember = new Map();
   for (const assignment of leadershipAssignments || []) {
     const roleId = assignment.position === 'HEAD'
-      ? ROLE_IDS.HEADS[assignment.shift_code]
-      : ROLE_IDS.DEPUTIES[assignment.shift_code];
+      ? ROLE_IDS.HEADS[canonicalShiftCode(assignment.shift_code)]
+      : ROLE_IDS.DEPUTIES[canonicalShiftCode(assignment.shift_code)];
     if (!roleId) continue;
     leadershipRolesByMember.set(assignment.member_id, [
       ...(leadershipRolesByMember.get(assignment.member_id) || []), roleId
@@ -1716,9 +1769,9 @@ async function sendBotActionLog(guild, {
 async function broadcastConsolidatedShiftLeaveCard(guild, dutyDay, newLeave = null, actor = null) {
   if (!guild || !dutyDay) return { success: false, reason: 'Missing guild or dutyDay' };
 
-  const baseDay = dutyDay === 'S' ? 'S' : (dutyDay === 'ThS' ? 'Th' : (dutyDay.replace(/S+$/, '') || dutyDay));
+  const baseDay = baseDutyDay(dutyDay);
   const matchingCodes = baseDay === 'S'
-    ? ['S', 'MS', 'TS', 'WS', 'ThS', 'ThS', 'FS']
+    ? ['S', 'MS', 'TS', 'WS', 'ThS', 'FS']
     : [baseDay, baseDay === 'Th' ? 'ThS' : `${baseDay}S`, ...(baseDay === 'Th' ? ['ThS'] : []), 'S'];
 
   // 1. ดึงสมาชิกทั้งหมดที่สังกัดเวรนี้
@@ -1726,7 +1779,7 @@ async function broadcastConsolidatedShiftLeaveCard(guild, dutyDay, newLeave = nu
     .from('members')
     .select('*')
     .eq('status', 'ACTIVE')
-    .in('duty_day', matchingCodes)
+    .in('duty_day', expandDutyDayAliases(matchingCodes))
     .order('duty_id', { ascending: true });
 
   // 2. ดึงรายการลาของเวรนี้ที่สร้างในวันนี้ (UTC+7 Thailand)
@@ -1742,7 +1795,7 @@ async function broadcastConsolidatedShiftLeaveCard(guild, dutyDay, newLeave = nu
   const { data: rawLeaves = [] } = await supabase
     .from('leave_requests')
     .select('*, members(*)')
-    .in('duty_day', matchingCodes)
+    .in('duty_day', expandDutyDayAliases(matchingCodes))
     .gte('created_at', thaiMidnight.toISOString())
     .order('created_at', { ascending: false });
 
@@ -1832,7 +1885,10 @@ async function broadcastConsolidatedShiftLeaveCard(guild, dutyDay, newLeave = nu
   };
   const targetChannelKeyword = dayChannelNameMap[baseDay] || `เวร${DAY_NAMES[baseDay]}`;
   const allChans = guild.channels?.cache?.values ? Array.from(guild.channels.cache.values()) : [];
-  const dayChannel = allChans.find(c => c && typeof c.isTextBased === 'function' && c.isTextBased() && (c.name || '').includes(targetChannelKeyword));
+  const dayChannel = allChans.find(c => c && typeof c.isTextBased === 'function' && c.isTextBased() && (
+    (c.name || '').includes(targetChannelKeyword) ||
+    (baseDay === 'Th' && (c.name || '').includes('เวรวันพฤหัสบดี'))
+  ));
 
   if (dayChannel) {
     try {
@@ -1851,7 +1907,7 @@ async function broadcastConsolidatedShiftLeaveCard(guild, dutyDay, newLeave = nu
   // ส่งเข้า DM ของหัวหน้าเวรและรองหัวหน้าเวร (ถ้ามีแต่งตั้งไว้)
   const targetLeadershipShifts = baseDay === 'S' ? ['S'] : [baseDay, 'S'];
   const { data: headAssignments = [] } = await supabase
-    .from('shift_leadership').select('member_id').in('shift_code', targetLeadershipShifts);
+    .from('shift_leadership').select('member_id').in('shift_code', expandShiftCodeAliases(targetLeadershipShifts));
   const headIds = [...new Set(headAssignments.map(a => a.member_id).filter(Boolean))];
   const { data: heads = [] } = headIds.length ? await supabase
     .from('members').select('*').in('id', headIds).not('discord_id', 'is', null).eq('status', 'ACTIVE')
@@ -1912,7 +1968,7 @@ async function sendDailyDutyReminders(guild, options = { dryRun: false, forceDay
     .from('members')
     .select('*')
     .eq('status', 'ACTIVE')
-    .in('duty_day', targetCodes)
+    .in('duty_day', expandDutyDayAliases(targetCodes))
     .not('discord_id', 'is', null);
 
   if (error) throw error;
@@ -1938,7 +1994,7 @@ async function sendDailyDutyReminders(guild, options = { dryRun: false, forceDay
   const remindedList = [];
 
   for (const m of members) {
-    const baseDay = m.duty_day === 'ThS' ? 'Th' : m.duty_day.replace(/S+$/, '');
+    const baseDay = baseDutyDay(m.duty_day);
     const shiftLabel = getShiftLabel(m.duty_day);
 
     const embed = new EmbedBuilder()
@@ -2122,7 +2178,7 @@ async function runSystemDiagnostics(guild) {
       .from('members')
       .select('*', { count: 'exact', head: true })
       .eq('status', 'ACTIVE')
-      .in('duty_day', todayCodes.length > 0 ? todayCodes : ['M']);
+    .in('duty_day', expandDutyDayAliases(todayCodes.length > 0 ? todayCodes : ['M']));
     report.checks.push({
       category: '🔔 ระบบแจ้งเตือนเวรประจำวัน (Duty Reminder)',
       pass: true,
@@ -2700,7 +2756,7 @@ async function handleOpenDemoteMenu(interaction, targetUser = null) {
   members.slice(0, 25).forEach(m => {
     const dayText = getDayName(m.duty_day);
     const shiftPositions = leadershipAssignments.filter(a => a.member_id === m.id)
-      .map(a => `${a.position === 'HEAD' ? 'หัวหน้า' : 'รอง'}(${a.shift_code})`).join(', ');
+      .map(a => `${a.position === 'HEAD' ? 'หัวหน้า' : 'รอง'}(${canonicalShiftCode(a.shift_code)})`).join(', ');
     const curRole = m.role === 'PRESIDENT' ? '👑 ประธาน' :
                     m.role === 'VICE_PRESIDENT' ? '🎖️ รองประธาน' :
                     shiftPositions || 'สารวัตรทั่วไป';
@@ -2743,7 +2799,7 @@ async function renderDemoteLevelSelection(interaction, member) {
   const dayText = getDayName(member.duty_day);
   const { data: leadershipAssignments = [] } = await supabase
     .from('shift_leadership').select('shift_code, position').eq('member_id', member.id);
-  const shiftPositions = leadershipAssignments.map(a => `${a.position === 'HEAD' ? 'หัวหน้าเวร' : 'รองหัวหน้าเวร'} (${a.shift_code})`);
+  const shiftPositions = leadershipAssignments.map(a => `${a.position === 'HEAD' ? 'หัวหน้าเวร' : 'รองหัวหน้าเวร'} (${canonicalShiftCode(a.shift_code)})`);
   const isLeader = member.role === 'PRESIDENT' ||
                    member.role === 'VICE_PRESIDENT' ||
                    leadershipAssignments.length > 0;
@@ -3545,7 +3601,7 @@ client.on('messageCreate', async (message) => {
 
       // 8. แสดงการ์ดพรีวิวรูปภาพ พร้อม 2 ปุ่ม (ครอบรูป 1 นิ้ว / เปลี่ยนรูปใหม่)
       const isSpecial = member.duty_day && member.duty_day.endsWith('S');
-      const weekday = member.duty_day ? (member.duty_day === 'ThS' ? 'Th' : member.duty_day.replace(/S+$/, '') || member.duty_day) : 'M';
+      const weekday = member.duty_day ? baseDutyDay(member.duty_day) : 'M';
       const weekdayName = DAY_NAMES[weekday] || weekday;
       const shiftLabel = getShiftLabel(member.duty_day);
 
@@ -3812,7 +3868,7 @@ client.on('messageCreate', async (message) => {
 
           // สร้าง Rich Embed พรีวิวรูปถ่าย พร้อมจัดหมวดหมู่ข้อมูลที่เข้าใจง่าย และแสดง 2 ปุ่มทันที (ครอบรูป / เปลี่ยนรูป)
           const isSpecial = member.duty_day && member.duty_day.endsWith('S');
-          const weekday = member.duty_day ? (member.duty_day === 'ThS' ? 'Th' : member.duty_day.replace(/S+$/, '') || member.duty_day) : 'M';
+          const weekday = member.duty_day ? baseDutyDay(member.duty_day) : 'M';
           const weekdayName = DAY_NAMES[weekday] || weekday;
           const shiftLabel = getShiftLabel(member.duty_day);
 
@@ -4687,7 +4743,7 @@ client.on('interactionCreate', async (interaction) => {
             day: 'numeric',
             timeZone: 'Asia/Bangkok'
           });
-          const baseDay = sampleMember.duty_day === 'ThS' ? 'Th' : sampleMember.duty_day.replace(/S+$/, '');
+          const baseDay = baseDutyDay(sampleMember.duty_day);
           const shiftLabel = getShiftLabel(sampleMember.duty_day);
 
           const sampleEmbed = new EmbedBuilder()
@@ -4807,7 +4863,7 @@ client.on('interactionCreate', async (interaction) => {
         }
 
         const { data: memberLeadership = [] } = await supabase.from('shift_leadership').select('shift_code, position').eq('member_id', member.id);
-        const shiftRoleTitle = memberLeadership.map(a => `${a.position === 'HEAD' ? 'หัวหน้าเวร' : 'รองหัวหน้าเวร'} (${a.shift_code})`).join(' • ');
+        const shiftRoleTitle = memberLeadership.map(a => `${a.position === 'HEAD' ? 'หัวหน้าเวร' : 'รองหัวหน้าเวร'} (${canonicalShiftCode(a.shift_code)})`).join(' • ');
         const roleTitle = member.role === 'PRESIDENT' ? '👑 ประธานสารวัตร' :
                           member.role === 'VICE_PRESIDENT' ? '🎖️ รองประธานสารวัตร' :
                           shiftRoleTitle ||
@@ -5972,7 +6028,7 @@ client.on('interactionCreate', async (interaction) => {
       if (existingActive) {
         const isTeacher = existingActive.role === 'TEACHER';
         const { data: existingLeadership = [] } = await supabase.from('shift_leadership').select('shift_code, position').eq('member_id', existingActive.id);
-        const shiftRoleLabel = existingLeadership.map(a => `${a.position === 'HEAD' ? 'หัวหน้าเวร' : 'รองหัวหน้าเวร'} (${a.shift_code})`).join(' • ');
+        const shiftRoleLabel = existingLeadership.map(a => `${a.position === 'HEAD' ? 'หัวหน้าเวร' : 'รองหัวหน้าเวร'} (${canonicalShiftCode(a.shift_code)})`).join(' • ');
         const roleLabel = isTeacher ? '👨‍🏫 ครูที่ปรึกษา' :
                           (existingActive.role === 'ADMIN' ? '⚡ ผู้ดูแลระบบ' :
                           (existingActive.role === 'PRESIDENT' ? '👑 ประธานสารวัตร' :
@@ -6658,7 +6714,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
   const isTeacher = member.role === 'TEACHER';
   const isCropped = !!(member.photo_cropped_at);
   const isSpecial = member.duty_day && member.duty_day.endsWith('S');
-  const weekday = member.duty_day ? (member.duty_day === 'ThS' ? 'Th' : member.duty_day.replace(/S+$/, '') || member.duty_day) : 'M';
+  const weekday = member.duty_day ? baseDutyDay(member.duty_day) : 'M';
   const weekdayName = DAY_NAMES[weekday] || weekday;
   const shiftLabel = isTeacher ? '👨‍🏫 ครูที่ปรึกษา (ทุกวัน/ทุกผลัด)' : getShiftLabel(member.duty_day);
 
@@ -7071,7 +7127,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
 
       const shiftLabel = getShiftLabel(member.duty_day);
       const isSpecial = member.duty_day && member.duty_day.endsWith('S');
-      const weekday = member.duty_day ? (member.duty_day === 'ThS' ? 'Th' : member.duty_day.replace(/S+$/, '') || member.duty_day) : 'M';
+      const weekday = member.duty_day ? baseDutyDay(member.duty_day) : 'M';
       const weekdayName = DAY_NAMES[weekday] || weekday;
 
       const doneEmbed = new EmbedBuilder()
@@ -7113,7 +7169,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
       if (approvalChannel) {
         const isTeacher = member.role === 'TEACHER' || member.shift_role === 'TEACHER';
         const isSpecial = member.duty_day && member.duty_day.endsWith('S');
-        const weekday = member.duty_day ? (member.duty_day === 'ThS' ? 'Th' : member.duty_day.replace(/S+$/, '') || member.duty_day) : 'M';
+        const weekday = member.duty_day ? baseDutyDay(member.duty_day) : 'M';
         const weekdayName = DAY_NAMES[weekday] || weekday;
 
         const metaTag = (promptChanId && promptMsgId) ? ` • [msg:${promptChanId}:${promptMsgId}]` : '';
@@ -7205,7 +7261,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
             if (shiftText.includes('(MS)') || (shiftText.includes('จันทร์') && shiftText.includes('พิเศษ'))) dutyDay = 'MS';
             else if (shiftText.includes('(TS)') || (shiftText.includes('อังคาร') && shiftText.includes('พิเศษ'))) dutyDay = 'TS';
             else if (shiftText.includes('(WS)') || (shiftText.includes('พุธ') && shiftText.includes('พิเศษ'))) dutyDay = 'WS';
-            else if (shiftText.includes('(ThS)') || shiftText.includes('(ThS)') || (shiftText.includes('พฤหัส') && shiftText.includes('พิเศษ'))) dutyDay = 'ThS';
+            else if (shiftText.includes('(ThS)') || shiftText.includes('(TSS)') || shiftText.includes('(TsS)') || (shiftText.includes('พฤหัส') && shiftText.includes('พิเศษ'))) dutyDay = 'ThS';
             else if (shiftText.includes('(FS)') || (shiftText.includes('ศุกร์') && shiftText.includes('พิเศษ'))) dutyDay = 'FS';
             else if (shiftText.includes('(M)') || shiftText.includes('จันทร์')) dutyDay = 'M';
             else if (shiftText.includes('(T)') || shiftText.includes('อังคาร')) dutyDay = 'T';
@@ -7583,7 +7639,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
 
     if (interaction.isStringSelectMenu() && interaction.customId === 'select_attendance_sheet_day') {
       await interaction.deferUpdate();
-      const selectedDay = interaction.values[0];
+      const selectedDay = canonicalShiftCode(interaction.values[0]);
 
       if (selectedDay === 'ALL') {
         const { data: members, error } = await supabase
@@ -7654,7 +7710,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
       const { data: members, error } = await supabase
         .from('members')
         .select('*')
-        .in('duty_day', targetDays)
+        .in('duty_day', expandDutyDayAliases(targetDays))
         .eq('status', 'ACTIVE')
         .order('duty_id', { ascending: true });
 
@@ -7867,7 +7923,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
         substitute: substitute
       }, `👮 [${member.duty_id || 'สารวัตร'}] คุณ${member.nickname}`);
 
-      const baseDay = member.duty_day === 'S' ? 'S' : (member.duty_day === 'ThS' ? 'Th' : (member.duty_day.replace(/S+$/, '') || member.duty_day));
+      const baseDay = baseDutyDay(member.duty_day);
       await interaction.editReply({
         content: `# ✅ ส่งคำขอลาเวรเรียบร้อยแล้ว\n` +
                  `- **ผู้ขอลา:** [${member.duty_id || 'สารวัตร'}] คุณ${member.nickname} (${member.first_name})\n` +
@@ -8627,7 +8683,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
 
       const shiftLabel = getShiftLabel(member.duty_day);
       const isSpecial = member.duty_day && member.duty_day.endsWith('S');
-      const weekday = member.duty_day ? (member.duty_day === 'ThS' ? 'Th' : member.duty_day.replace(/S+$/, '') || member.duty_day) : 'M';
+      const weekday = member.duty_day ? baseDutyDay(member.duty_day) : 'M';
       const weekdayName = DAY_NAMES[weekday] || weekday;
 
       const profileEmbed = new EmbedBuilder()
@@ -9753,13 +9809,13 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
       });
 
       // ค้นหาหัวหน้าเวรและรองหัวหน้าเวรประจำวัน
-      const baseDay = member.duty_day === 'S' ? 'S' : (member.duty_day === 'ThS' ? 'Th' : (member.duty_day.replace(/S+$/, '') || member.duty_day));
+      const baseDay = baseDutyDay(member.duty_day);
       const targetDays = baseDay === 'S'
-        ? ['S', 'MS', 'TS', 'WS', 'ThS', 'ThS', 'FS']
+        ? ['S', 'MS', 'TS', 'WS', 'ThS', 'FS']
         : [member.duty_day, baseDay, ...(baseDay === 'Th' ? ['ThS'] : [])].filter(Boolean);
       const targetLeadershipShifts = baseDay === 'S' ? ['S'] : [baseDay, 'S'];
       const { data: headAssignments = [] } = await supabase
-        .from('shift_leadership').select('member_id').in('shift_code', targetLeadershipShifts);
+        .from('shift_leadership').select('member_id').in('shift_code', expandShiftCodeAliases(targetLeadershipShifts));
       const headIds = [...new Set(headAssignments.map(a => a.member_id).filter(Boolean))];
       const { data: heads = [] } = headIds.length ? await supabase
         .from('members').select('*').in('id', headIds).not('discord_id', 'is', null).eq('status', 'ACTIVE')
@@ -9871,7 +9927,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
         day: 'numeric',
         timeZone: 'Asia/Bangkok'
       });
-      const baseDay = sampleMember.duty_day === 'ThS' ? 'Th' : sampleMember.duty_day.replace(/S+$/, '');
+      const baseDay = baseDutyDay(sampleMember.duty_day);
       const shiftLabel = getShiftLabel(sampleMember.duty_day);
 
       const sampleEmbed = new EmbedBuilder()
@@ -9956,7 +10012,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
 
       const grouped = { 'M': [], 'T': [], 'W': [], 'Th': [], 'F': [], 'S': [] };
       members.forEach(m => {
-        const base = m.duty_day === 'S' ? 'S' : (['Th', 'ThS', 'ThS'].includes(m.duty_day) ? 'Th' : m.duty_day?.replace(/S+$/, ''));
+        const base = baseDutyDay(m.duty_day);
         if (base && grouped[base] && !grouped[base].includes(m)) grouped[base].push(m);
         if (m.duty_day && m.duty_day !== 'S' && /S$/.test(m.duty_day) && !grouped.S.includes(m)) grouped.S.push(m);
       });
@@ -9969,7 +10025,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
         } else {
           previewText += dayMembers
             .map(m => {
-              const assignment = leadershipAssignments.find(a => a.member_id === m.id && a.shift_code === dayCode);
+              const assignment = leadershipAssignments.find(a => a.member_id === m.id && canonicalShiftCode(a.shift_code) === dayCode);
               const roleTag = assignment?.position === 'HEAD' ? ' 👑(หัวหน้าเวร)' : (assignment?.position === 'DEPUTY' ? ' 🎖️(รอง)' : '');
               return `  • **[${m.duty_id || 'รอรหัส'}]** ${m.nickname} (${m.first_name} ${m.last_name})${roleTag}`;
             })
@@ -10007,7 +10063,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
         .join('\n') || 'ยังไม่มีประวัติการลา';
 
       const { data: memberLeadership } = await supabase.from('shift_leadership').select('shift_code, position').eq('member_id', memberId);
-      const shiftRoleThai = (memberLeadership || []).map(a => `${a.position === 'HEAD' ? '👑 หัวหน้า' : '🎖️ รอง'} (${a.shift_code})`).join(' • ') || 'สารวัตรประจำเวร';
+      const shiftRoleThai = (memberLeadership || []).map(a => `${a.position === 'HEAD' ? '👑 หัวหน้า' : '🎖️ รอง'} (${canonicalShiftCode(a.shift_code)})`).join(' • ') || 'สารวัตรประจำเวร';
       const mainRoleThai = member.role === 'PRESIDENT' ? '👑 ประธานสารวัตร' : (member.role === 'VICE_PRESIDENT' ? '🎖️ รองประธานสารวัตร' : 'สมาชิก');
 
       const profileEmbed = new EmbedBuilder()
@@ -10222,7 +10278,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
       activeMembers.slice(0, 25).forEach(m => {
         const dayText = getDayName(m.duty_day);
         const shiftPositions = leadershipAssignments.filter(a => a.member_id === m.id)
-          .map(a => `${a.position === 'HEAD' ? 'หัวหน้า' : 'รอง'}(${a.shift_code})`).join(', ');
+          .map(a => `${a.position === 'HEAD' ? 'หัวหน้า' : 'รอง'}(${canonicalShiftCode(a.shift_code)})`).join(', ');
         const curRole = m.role === 'PRESIDENT' ? '👑 ประธาน' : (shiftPositions || 'สมาชิก');
         memberSelect.addOptions({
           label: `[${m.duty_id || '-'}] ${m.nickname} (${m.first_name} ${m.last_name})`,
@@ -10573,7 +10629,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
       const { data: previousAssignment, error: previousError } = await supabase
         .from('shift_leadership')
         .select('member_id')
-        .eq('shift_code', selectedDay)
+        .in('shift_code', expandShiftCodeAliases([selectedDay]))
         .eq('position', position)
         .maybeSingle();
       if (previousError) {
@@ -10585,7 +10641,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
         .from('shift_leadership')
         .select('position')
         .eq('member_id', memberId)
-        .eq('shift_code', selectedDay)
+        .in('shift_code', expandShiftCodeAliases([selectedDay]))
         .maybeSingle();
       if (sameShiftError || (sameShiftAssignment && sameShiftAssignment.position !== position)) {
         await interaction.followUp({ content: '❌ สารวัตรคนเดียวกันเป็นทั้งหัวหน้าและรองหัวหน้าในผลัดเดียวกันไม่ได้', ephemeral: true });
@@ -10696,7 +10752,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
 
       const { data: leadershipAssignments = [] } = await supabase
         .from('shift_leadership').select('shift_code, position').eq('member_id', member.id);
-      const shiftPositions = leadershipAssignments.map(a => `${a.position === 'HEAD' ? 'หัวหน้าเวร' : 'รองหัวหน้าเวร'} (${a.shift_code})`);
+      const shiftPositions = leadershipAssignments.map(a => `${a.position === 'HEAD' ? 'หัวหน้าเวร' : 'รองหัวหน้าเวร'} (${canonicalShiftCode(a.shift_code)})`);
 
       const curRoleText = member.role === 'ADMIN' ? '⚡ ผู้ดูแลระบบ (System Admin)' :
                           member.role === 'PRESIDENT' ? '👑 ประธานสารวัตร' :
@@ -11021,12 +11077,13 @@ async function getNextAvailableDutyId(supabase, dutyDayPrefix) {
   const { data } = await supabase
     .from('members')
     .select('duty_id')
-    .eq('duty_day', prefix)
+    .in('duty_day', expandDutyDayAliases([prefix]))
     .eq('status', 'ACTIVE');
 
+  const canonicalPrefix = canonicalDutyId(`${prefix}1`).replace(/1$/, '');
   const occupiedNumbers = new Set(
     (data || [])
-      .map(row => parseInt(row.duty_id?.replace(prefix, ''), 10))
+      .map(row => parseInt(canonicalDutyId(row.duty_id)?.replace(canonicalPrefix, ''), 10))
       .filter(num => !isNaN(num))
   );
 
@@ -11087,7 +11144,7 @@ function generateQRCodeSVG(text, sizeMm = 20) {
 }
 
 function getEnglishDayName(dayCode) {
-  const base = dayCode === 'ThS' ? 'Th' : dayCode.replace(/S+$/, '') || dayCode;
+  const base = baseDutyDay(dayCode);
   switch (base) {
     case 'M': return 'MONDAY';
     case 'T': return 'TUESDAY';
@@ -11106,7 +11163,7 @@ function getAttendanceDates(dayCode, count = 12, qNumber = null, acadYear = null
   const ceYear = y - 543;
 
   const dayIndexMap = { 'M': 0, 'T': 1, 'W': 2, 'Th': 3, 'F': 4, 'S': 0 };
-  const baseDay = dayCode === 'ThS' ? 'Th' : (dayCode.replace(/S+$/, '') || 'M');
+  const baseDay = baseDutyDay(dayCode) || 'M';
   const offsetDays = dayIndexMap[baseDay] ?? 0;
 
   let baseMonday;
@@ -11218,7 +11275,7 @@ function generateAttendanceSheetHTML(dayCode, dayName, members, leadershipAssign
   let rows = '';
   if (members.length > 0) {
     rows = members.map(m => {
-      const assignment = (leadershipAssignments || []).find(a => a.member_id === m.id && a.shift_code === dayCode);
+      const assignment = (leadershipAssignments || []).find(a => a.member_id === m.id && canonicalShiftCode(a.shift_code) === dayCode);
       const roleTag = assignment?.position === 'HEAD'
         ? ' <span style="color: #b91c1c; font-weight: bold; font-size: 7.5pt;">(หัวหน้า)</span>' 
         : (assignment?.position === 'DEPUTY' ? ' <span style="color: #0284c7; font-weight: bold; font-size: 7.5pt;">(รอง)</span>' : '');
@@ -11648,9 +11705,10 @@ function generateCombinedAttendanceSheetHTML(allMembers, leadershipAssignments =
 
   const sectionsHtml = shifts.map(shift => {
     const shiftMembers = allMembers.filter(m => {
-      if (shift.code === 'S') return m.duty_day === 'S' || (m.duty_day && m.duty_day.endsWith('S'));
+      const memberDay = canonicalDutyDay(m.duty_day);
+      if (shift.code === 'S') return memberDay === 'S' || (memberDay && memberDay.endsWith('S'));
       const combinedCode = shift.code === 'Th' ? 'ThS' : `${shift.code}S`;
-      return m.duty_day === shift.code || m.duty_day === combinedCode;
+      return memberDay === shift.code || memberDay === combinedCode;
     });
 
     const head = getShiftLeader(shiftMembers, leadershipAssignments, shift.code, 'HEAD');
@@ -11672,7 +11730,7 @@ function generateCombinedAttendanceSheetHTML(allMembers, leadershipAssignments =
     let rows = '';
     if (shiftMembers.length > 0) {
       rows = shiftMembers.map(m => {
-        const assignment = (leadershipAssignments || []).find(a => a.member_id === m.id && a.shift_code === shift.code);
+        const assignment = (leadershipAssignments || []).find(a => a.member_id === m.id && canonicalShiftCode(a.shift_code) === shift.code);
         const roleTag = assignment?.position === 'HEAD'
           ? ' <span style="color: #b91c1c; font-weight: bold; font-size: 7.5pt;">(หัวหน้า)</span>' 
           : (assignment?.position === 'DEPUTY' ? ' <span style="color: #0284c7; font-weight: bold; font-size: 7.5pt;">(รอง)</span>' : '');

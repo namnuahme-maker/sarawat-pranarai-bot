@@ -46,11 +46,15 @@ function normalizeShift(input) {
     const dayMap = { 1: 'M', 2: 'T', 3: 'W', 4: 'Th', 5: 'F', 6: 'S', 0: 'S' };
     input = dayMap[new Date().getDay()] || 'M';
   }
-  const s = String(input).trim().toUpperCase();
+  const raw = String(input).trim();
+  if (['Th', 'ThS', 'Ts', 'TSS', 'TsS'].includes(raw) || raw.startsWith('พฤหัส')) {
+    return { code: 'Th', dbCodes: ['Th', 'ThS', 'Ts', 'TSS', 'TsS'], name: 'วันพฤหัสบดี' };
+  }
+  const s = raw.toUpperCase();
   if (s.includes('จันทร์') || s === 'M' || s === 'MS') return { code: 'M', dbCodes: ['M', 'MS'], name: 'วันจันทร์' };
   if (s.includes('อังคาร') || s === 'T' || s === 'TS') return { code: 'T', dbCodes: ['T', 'TS'], name: 'วันอังคาร' };
   if (s.includes('พุธ') || s === 'W' || s === 'WS') return { code: 'W', dbCodes: ['W', 'WS'], name: 'วันพุธ' };
-  if (s.includes('พฤหัส') || s === 'TS' || s === 'TH' || s === 'THS') return { code: 'Th', dbCodes: ['Th', 'TH', 'THS'], name: 'วันพฤหัสบดี' };
+  if (s === 'TH' || s === 'THS') return { code: 'Th', dbCodes: ['Th', 'ThS', 'Ts', 'TSS', 'TsS'], name: 'วันพฤหัสบดี' };
   if (s.includes('ศุกร์') || s === 'F' || s === 'FS') return { code: 'F', dbCodes: ['F', 'FS'], name: 'วันศุกร์' };
   if (s.includes('พิเศษ') || s === 'S' || s === 'SS') return { code: 'S', dbCodes: ['S', 'SS'], name: 'เวรพิเศษทุกวัน' };
   return { code: 'M', dbCodes: ['M', 'MS'], name: 'วันจันทร์' };

@@ -84,14 +84,22 @@ client.once(Events.ClientReady || 'ready', async () => {
 
     // 1. ตรวจสอบและสร้าง Roles
     const existingRoles = await guild.roles.fetch();
+    const legacyRoleNames = {
+      ROLE_HEAD_THU: ['👑 หัวหน้าเวรพฤหัสบดี (Ts)'],
+      ROLE_DEPUTY_THU: ['✨ รองหัวหน้าเวรพฤหัสบดี (Ts)'],
+      ROLE_THU: ['🟠 เวรวันพฤหัสบดี (Ts)']
+    };
     for (const r of ROLES_TO_CREATE) {
-      let role = existingRoles.find(er => er.name === r.name);
+      let role = (process.env[r.key] && existingRoles.get(process.env[r.key])) ||
+        existingRoles.find(er => er.name === r.name || (legacyRoleNames[r.key] || []).includes(er.name));
       if (!role) {
         role = await guild.roles.create({
           name: r.name,
           color: r.color,
           reason: r.reason
         });
+      } else if (role.name !== r.name) {
+        await role.setName(r.name, 'เปลี่ยนรหัสผลัดพฤหัสจาก Ts เป็น Th');
       }
       createdRoleIds[r.key] = role.id;
     }
@@ -179,7 +187,13 @@ client.once(Events.ClientReady || 'ready', async () => {
       if (leaderRole) overwrites.push({ id: leaderRole.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages] });
       if (vpRole) overwrites.push({ id: vpRole.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages] });
 
-      await getOrCreateTextChannel(guild, dc.name, catDuty.id, overwrites);
+      await getOrCreateTextChannel(
+        guild,
+        dc.name,
+        catDuty.id,
+        overwrites,
+        dc.code === 'Th' ? ['🟠│เวรวันพฤหัสบดี-ts'] : []
+      );
     }
 
     // Category 5
@@ -390,9 +404,12 @@ async function getOrCreateCategory(guild, name) {
   });
 }
 
-async function getOrCreateTextChannel(guild, name, parentId, permissionOverwrites = []) {
-  const existing = guild.channels.cache.find(c => c.type === ChannelType.GuildText && c.name === name);
-  if (existing) return existing;
+async function getOrCreateTextChannel(guild, name, parentId, permissionOverwrites = [], legacyNames = []) {
+  const existing = guild.channels.cache.find(c => c.type === ChannelType.GuildText && (c.name === name || legacyNames.includes(c.name)));
+  if (existing) {
+    if (existing.name !== name) await existing.setName(name, 'เปลี่ยนรหัสผลัดพฤหัสจาก Ts เป็น Th');
+    return existing;
+  }
   return await guild.channels.create({
     name: name,
     type: ChannelType.GuildText,
