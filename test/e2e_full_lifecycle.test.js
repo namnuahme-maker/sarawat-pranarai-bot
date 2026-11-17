@@ -17,7 +17,7 @@ const MOCK_ROLE_IDS = {
     'M': 'role_day_mon',
     'T': 'role_day_tue',
     'W': 'role_day_wed',
-    'Ts': 'role_day_thu',
+    'Th': 'role_day_thu',
     'F': 'role_day_fri',
     'S': 'role_day_special'
   },
@@ -25,7 +25,7 @@ const MOCK_ROLE_IDS = {
     'M': 'role_head_mon',
     'T': 'role_head_tue',
     'W': 'role_head_wed',
-    'Ts': 'role_head_thu',
+    'Th': 'role_head_thu',
     'F': 'role_head_fri',
     'S': 'role_head_special'
   },
@@ -33,7 +33,7 @@ const MOCK_ROLE_IDS = {
     'M': 'role_deputy_mon',
     'T': 'role_deputy_tue',
     'W': 'role_deputy_wed',
-    'Ts': 'role_deputy_thu',
+    'Th': 'role_deputy_thu',
     'F': 'role_deputy_fri',
     'S': 'role_deputy_special'
   }
@@ -43,8 +43,8 @@ const DAY_NAMES = {
   'M': 'วันจันทร์',
   'T': 'วันอังคาร',
   'W': 'วันพุธ',
-  'Ts': 'วันพฤหัสบดี',
-  'TSS': 'วันพฤหัสบดี',
+  'Th': 'วันพฤหัสบดี',
+  'ThS': 'วันพฤหัสบดี',
   'F': 'วันศุกร์',
   'S': 'พิเศษ (ทุกวัน)',
   'MS': 'วันจันทร์ (เวรพิเศษ)',
@@ -57,7 +57,7 @@ function getDayName(code) {
   if (!code) return 'ไม่ระบุ';
   if (code === 'S') return 'เวรพิเศษ (ทุกวัน)';
   if (code.endsWith('S') && code !== 'S') {
-    const base = code === 'TSS' ? 'Ts' : code.replace(/S+$/, '');
+    const base = code === 'ThS' ? 'Th' : code.replace(/S+$/, '');
     const baseName = DAY_NAMES[base] || base;
     return `เวร${baseName} (พิเศษ)`;
   }
@@ -68,7 +68,7 @@ function getDutyRoles(dutyDay) {
   if (!dutyDay) return [];
   const roles = [];
   if (dutyDay.endsWith('S') && dutyDay !== 'S') {
-    const baseDay = dutyDay === 'TSS' ? 'Ts' : dutyDay.replace(/S+$/, '');
+    const baseDay = dutyDay === 'ThS' ? 'Th' : dutyDay.replace(/S+$/, '');
     if (MOCK_ROLE_IDS.DAYS[baseDay]) roles.push(MOCK_ROLE_IDS.DAYS[baseDay]);
     if (MOCK_ROLE_IDS.DAYS['S']) roles.push(MOCK_ROLE_IDS.DAYS['S']);
   } else if (dutyDay === 'S') {
@@ -87,10 +87,10 @@ function resolveDutyDayForAppoint(currentDutyDay, targetShift) {
   if (isSpecialTarget) {
     if (!currentDutyDay || currentDutyDay === 'S') return 'S';
     if (currentDutyDay.endsWith('S')) return currentDutyDay;
-    return currentDutyDay === 'Ts' ? 'TSS' : `${currentDutyDay}S`;
+    return currentDutyDay === 'Th' ? 'ThS' : `${currentDutyDay}S`;
   } else {
     if (hasSpecial) {
-      return targetShift === 'Ts' ? 'TSS' : `${targetShift}S`;
+      return targetShift === 'Th' ? 'ThS' : `${targetShift}S`;
     }
     return targetShift;
   }
@@ -115,8 +115,8 @@ function getEnglishDayName(dayCode) {
     'M': 'MONDAY',
     'T': 'TUESDAY',
     'W': 'WEDNESDAY',
-    'Ts': 'THURSDAY',
-    'TSS': 'THURSDAY',
+    'Th': 'THURSDAY',
+    'ThS': 'THURSDAY',
     'F': 'FRIDAY',
     'S': 'SPECIAL',
     'MS': 'MONDAY',
@@ -252,7 +252,7 @@ describe('SARAWAT Full-Lifecycle E2E Automated Integration Suite', () => {
     );
   });
 
-  test('Step 3: Leadership Appointment Flow -> Promotes to Shift Head of Thursday (Ts)', async () => {
+  test('Step 3: Leadership Appointment Flow -> Promotes to Shift Head of Thursday (Th)', async () => {
     assert.ok(createdMemberId);
 
     // Fetch member
@@ -262,24 +262,24 @@ describe('SARAWAT Full-Lifecycle E2E Automated Integration Suite', () => {
       .eq('id', createdMemberId)
       .single();
 
-    // Promote to Head of Thursday ('Ts')
-    const selectedDay = 'Ts';
+    // Promote to Head of Thursday ('Th')
+    const selectedDay = 'Th';
     const roleType = 'SHIFT_HEAD';
 
-    // 1. Effective duty day resolution: member was MS -> becomes TSS (Thursday + Special)
+    // 1. Effective duty day resolution: member was MS -> becomes ThS (Thursday + Special)
     const newDutyDay = resolveDutyDayForAppoint(member.duty_day, selectedDay);
-    assert.equal(newDutyDay, 'TSS', 'MS member appointed to Ts must retain special duty as TSS');
+    assert.equal(newDutyDay, 'ThS', 'MS member appointed to Th must retain special duty as ThS');
 
     // 2. Role calculation
     const validDayRoles = getDutyRoles(newDutyDay);
-    assert.deepEqual(validDayRoles, [MOCK_ROLE_IDS.DAYS['Ts'], MOCK_ROLE_IDS.DAYS['S']]);
+    assert.deepEqual(validDayRoles, [MOCK_ROLE_IDS.DAYS['Th'], MOCK_ROLE_IDS.DAYS['S']]);
 
     const allDayRoles = Object.values(MOCK_ROLE_IDS.DAYS);
     const obsoleteDayRoles = allDayRoles.filter(rid => !validDayRoles.includes(rid));
 
     // Old Monday role MUST be in obsolete roles to be removed
     assert.ok(obsoleteDayRoles.includes(MOCK_ROLE_IDS.DAYS['M']), 'Old Monday day role must be in obsolete list');
-    assert.ok(!obsoleteDayRoles.includes(MOCK_ROLE_IDS.DAYS['Ts']), 'New Thursday day role must not be stripped');
+    assert.ok(!obsoleteDayRoles.includes(MOCK_ROLE_IDS.DAYS['Th']), 'New Thursday day role must not be stripped');
     assert.ok(!obsoleteDayRoles.includes(MOCK_ROLE_IDS.DAYS['S']), 'Special duty role must not be stripped');
 
     // 3. Update Supabase
@@ -296,7 +296,7 @@ describe('SARAWAT Full-Lifecycle E2E Automated Integration Suite', () => {
 
     assert.equal(appointErr, null);
     assert.equal(appointedMember.shift_role, 'SHIFT_HEAD');
-    assert.equal(appointedMember.duty_day, 'TSS');
+    assert.equal(appointedMember.duty_day, 'ThS');
   });
 
   test('Step 4: Attendance Sheet Generation -> Renders HTML with uppercase badge, fonts, and Head display', async () => {
@@ -309,7 +309,7 @@ describe('SARAWAT Full-Lifecycle E2E Automated Integration Suite', () => {
       .single();
 
     // Render Thursday Attendance Sheet
-    const thursdayHtml = renderAttendanceSheetSample('Ts', 'วันพฤหัสบดี', [member]);
+    const thursdayHtml = renderAttendanceSheetSample('Th', 'วันพฤหัสบดี', [member]);
 
     assert.ok(thursdayHtml.includes('ใบเช็คชื่อ'), 'Must have title ใบเช็คชื่อ');
     assert.ok(!thursdayHtml.includes('SARAWAT-PRANARAI OS v5.0'), 'Must not include legacy version tag');
@@ -328,7 +328,7 @@ describe('SARAWAT Full-Lifecycle E2E Automated Integration Suite', () => {
     assert.ok(createdMemberId);
 
     // Hop 1: Appoint to Wednesday (W)
-    const hop1Day = resolveDutyDayForAppoint('TSS', 'W');
+    const hop1Day = resolveDutyDayForAppoint('ThS', 'W');
     assert.equal(hop1Day, 'WS', 'Special duty must be preserved as WS when hopping to Wednesday');
 
     // Hop 2: Appoint to Special only (S)

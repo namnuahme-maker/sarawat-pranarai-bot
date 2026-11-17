@@ -5,8 +5,8 @@ const DAY_NAMES = {
   'M': 'วันจันทร์',
   'T': 'วันอังคาร',
   'W': 'วันพุธ',
-  'Ts': 'วันพฤหัสบดี',
-  'TSS': 'วันพฤหัสบดี',
+  'Th': 'วันพฤหัสบดี',
+  'ThS': 'วันพฤหัสบดี',
   'F': 'วันศุกร์',
   'S': 'พิเศษ (ทุกวัน)'
 };
@@ -15,7 +15,7 @@ function getShiftLabel(code) {
   if (!code) return 'ไม่ระบุ';
   if (code === 'S') return 'พิเศษ ทุกวัน (S)';
   if (code.endsWith('S') && code !== 'S') {
-    const base = code === 'TSS' ? 'Ts' : code.replace(/S+$/, '');
+    const base = code === 'ThS' ? 'Th' : code.replace(/S+$/, '');
     const baseName = DAY_NAMES[base] || base;
     return `${baseName} + เวรพิเศษทุกวัน (${code})`;
   }
@@ -28,7 +28,7 @@ const mockRoles = {
     'M': 'role_mon',
     'T': 'role_tue',
     'W': 'role_wed',
-    'Ts': 'role_thu',
+    'Th': 'role_thu',
     'F': 'role_fri',
     'S': 'role_special'
   }
@@ -38,7 +38,7 @@ function getDutyRoles(dutyDay) {
   if (!dutyDay) return [];
   const roles = [];
   if (dutyDay.endsWith('S') && dutyDay !== 'S') {
-    const baseDay = dutyDay === 'TSS' ? 'Ts' : dutyDay.replace(/S+$/, '');
+    const baseDay = dutyDay === 'ThS' ? 'Th' : dutyDay.replace(/S+$/, '');
     if (mockRoles.DAYS[baseDay]) roles.push(mockRoles.DAYS[baseDay]);
     if (mockRoles.DAYS['S']) roles.push(mockRoles.DAYS['S']);
   } else if (dutyDay === 'S') {
@@ -70,7 +70,7 @@ describe('SARAWAT-BOT New Shift & Combined Duty ID Verification', () => {
     assert.equal(getShiftLabel('MS'), 'วันจันทร์ + เวรพิเศษทุกวัน (MS)');
     assert.equal(getShiftLabel('TS'), 'วันอังคาร + เวรพิเศษทุกวัน (TS)');
     assert.equal(getShiftLabel('WS'), 'วันพุธ + เวรพิเศษทุกวัน (WS)');
-    assert.equal(getShiftLabel('TSS'), 'วันพฤหัสบดี + เวรพิเศษทุกวัน (TSS)');
+    assert.equal(getShiftLabel('ThS'), 'วันพฤหัสบดี + เวรพิเศษทุกวัน (ThS)');
     assert.equal(getShiftLabel('FS'), 'วันศุกร์ + เวรพิเศษทุกวัน (FS)');
     assert.equal(getShiftLabel('S'), 'พิเศษ ทุกวัน (S)');
 
@@ -92,11 +92,11 @@ describe('SARAWAT-BOT New Shift & Combined Duty ID Verification', () => {
     assert.deepEqual(legacySpecialRoles, ['role_special']);
   });
 
-  test('calculateNextDutyId should assign duty IDs for combined prefixes (MS, TS, FS, TSS)', () => {
+  test('calculateNextDutyId should assign duty IDs for combined prefixes (MS, TS, FS, ThS)', () => {
     assert.equal(calculateNextDutyId(['MS1', 'MS2'], 'MS'), 'MS3');
     assert.equal(calculateNextDutyId(['MS1', 'MS3'], 'MS'), 'MS2'); // gap filling
     assert.equal(calculateNextDutyId([], 'FS'), 'FS1');
-    assert.equal(calculateNextDutyId(['TSS1'], 'TSS'), 'TSS2');
+    assert.equal(calculateNextDutyId(['ThS1'], 'ThS'), 'ThS2');
   });
 
   test('Webhook authorization should reject invalid or missing secrets', () => {
@@ -121,12 +121,12 @@ describe('SARAWAT-BOT New Shift & Combined Duty ID Verification', () => {
 
   test('Attendance sheet should format English day name in UPPERCASE and SPECIAL correctly', () => {
     function getEnglishDayName(dayCode) {
-      const base = dayCode === 'TSS' ? 'Ts' : dayCode.replace(/S+$/, '') || dayCode;
+      const base = dayCode === 'ThS' ? 'Th' : dayCode.replace(/S+$/, '') || dayCode;
       switch (base) {
         case 'M': return 'MONDAY';
         case 'T': return 'TUESDAY';
         case 'W': return 'WEDNESDAY';
-        case 'Ts': return 'THURSDAY';
+        case 'Th': return 'THURSDAY';
         case 'F': return 'FRIDAY';
         case 'S': return 'SPECIAL';
         default: return 'ATTENDANCE';
@@ -139,8 +139,8 @@ describe('SARAWAT-BOT New Shift & Combined Duty ID Verification', () => {
     assert.equal(getEnglishDayName('TS'), 'TUESDAY');
     assert.equal(getEnglishDayName('W'), 'WEDNESDAY');
     assert.equal(getEnglishDayName('WS'), 'WEDNESDAY');
-    assert.equal(getEnglishDayName('Ts'), 'THURSDAY');
-    assert.equal(getEnglishDayName('TSS'), 'THURSDAY');
+    assert.equal(getEnglishDayName('Th'), 'THURSDAY');
+    assert.equal(getEnglishDayName('ThS'), 'THURSDAY');
     assert.equal(getEnglishDayName('F'), 'FRIDAY');
     assert.equal(getEnglishDayName('FS'), 'FRIDAY');
     assert.equal(getEnglishDayName('S'), 'SPECIAL');
@@ -173,8 +173,8 @@ describe('SARAWAT-BOT New Shift & Combined Duty ID Verification', () => {
 
   test('Attendance dates should produce 12 Month/Day format dates instead of generic week labels', () => {
     function getAttendanceDates(dayCode, count = 12) {
-      const dayIndexMap = { 'M': 1, 'T': 2, 'W': 3, 'Ts': 4, 'F': 5, 'S': 1 };
-      const baseDay = dayCode === 'TSS' ? 'Ts' : dayCode.replace(/S+$/, '') || 'M';
+      const dayIndexMap = { 'M': 1, 'T': 2, 'W': 3, 'Th': 4, 'F': 5, 'S': 1 };
+      const baseDay = dayCode === 'ThS' ? 'Th' : dayCode.replace(/S+$/, '') || 'M';
       const targetDay = dayIndexMap[baseDay] || 1;
 
       const now = new Date();
@@ -198,7 +198,7 @@ describe('SARAWAT-BOT New Shift & Combined Duty ID Verification', () => {
     assert.equal(mondayDates.some(d => d.startsWith('ส.')), false);
   });
 
-  test('resolveDutyDayForAppoint should accurately align duty shifts for M, T, W, Ts, F, S appointments', () => {
+  test('resolveDutyDayForAppoint should accurately align duty shifts for M, T, W, Th, F, S appointments', () => {
     function resolveDutyDayForAppoint(currentDutyDay, targetShift) {
       if (!targetShift) return currentDutyDay;
       const isSpecialTarget = targetShift === 'S';
@@ -207,10 +207,10 @@ describe('SARAWAT-BOT New Shift & Combined Duty ID Verification', () => {
       if (isSpecialTarget) {
         if (!currentDutyDay || currentDutyDay === 'S') return 'S';
         if (currentDutyDay.endsWith('S')) return currentDutyDay;
-        return currentDutyDay === 'Ts' ? 'TSS' : `${currentDutyDay}S`;
+        return currentDutyDay === 'Th' ? 'ThS' : `${currentDutyDay}S`;
       } else {
         if (hasSpecial) {
-          return targetShift === 'Ts' ? 'TSS' : `${targetShift}S`;
+          return targetShift === 'Th' ? 'ThS' : `${targetShift}S`;
         }
         return targetShift;
       }
@@ -219,17 +219,17 @@ describe('SARAWAT-BOT New Shift & Combined Duty ID Verification', () => {
     // Appoint regular day
     assert.equal(resolveDutyDayForAppoint('M', 'M'), 'M');
     assert.equal(resolveDutyDayForAppoint('T', 'W'), 'W');
-    assert.equal(resolveDutyDayForAppoint('F', 'Ts'), 'Ts');
+    assert.equal(resolveDutyDayForAppoint('F', 'Th'), 'Th');
 
     // Appoint regular day when member has special duty
     assert.equal(resolveDutyDayForAppoint('MS', 'M'), 'MS');
     assert.equal(resolveDutyDayForAppoint('TS', 'W'), 'WS');
-    assert.equal(resolveDutyDayForAppoint('FS', 'Ts'), 'TSS');
+    assert.equal(resolveDutyDayForAppoint('FS', 'Th'), 'ThS');
     assert.equal(resolveDutyDayForAppoint('S', 'T'), 'TS');
 
     // Appoint special duty (S)
     assert.equal(resolveDutyDayForAppoint('M', 'S'), 'MS');
-    assert.equal(resolveDutyDayForAppoint('Ts', 'S'), 'TSS');
+    assert.equal(resolveDutyDayForAppoint('Th', 'S'), 'ThS');
     assert.equal(resolveDutyDayForAppoint('MS', 'S'), 'MS');
     assert.equal(resolveDutyDayForAppoint('S', 'S'), 'S');
   });
@@ -250,9 +250,9 @@ describe('SARAWAT-BOT New Shift & Combined Duty ID Verification', () => {
     assert.equal(parsedHeadMon.selectedDay, 'M');
     assert.equal(parsedHeadMon.roleType, 'SHIFT_HEAD');
 
-    const parsedDeputyThu = parseAppointButtonCustomId(`btn_confirm_appoint_${testUuid}_Ts_SHIFT_DEPUTY`);
+    const parsedDeputyThu = parseAppointButtonCustomId(`btn_confirm_appoint_${testUuid}_Th_SHIFT_DEPUTY`);
     assert.equal(parsedDeputyThu.memberId, testUuid);
-    assert.equal(parsedDeputyThu.selectedDay, 'Ts');
+    assert.equal(parsedDeputyThu.selectedDay, 'Th');
     assert.equal(parsedDeputyThu.roleType, 'SHIFT_DEPUTY');
 
     const parsedSpecial = parseAppointButtonCustomId(`btn_confirm_appoint_${testUuid}_S_SHIFT_HEAD`);
@@ -266,7 +266,7 @@ describe('SARAWAT-BOT New Shift & Combined Duty ID Verification', () => {
       'M': 'role_mon',
       'T': 'role_tue',
       'W': 'role_wed',
-      'Ts': 'role_thu',
+      'Th': 'role_thu',
       'F': 'role_fri',
       'S': 'role_special'
     };
@@ -279,8 +279,8 @@ describe('SARAWAT-BOT New Shift & Combined Duty ID Verification', () => {
       return { rolesToAdd, obsoleteDayRoles };
     }
 
-    // Moving from Monday (M) to Thursday Special (TSS) as Head of Ts
-    const delta = calculateRoleDeltas('TSS', 'role_head_thu');
+    // Moving from Monday (M) to Thursday Special (ThS) as Head of Th
+    const delta = calculateRoleDeltas('ThS', 'role_head_thu');
     assert.deepEqual(delta.rolesToAdd, ['role_head_thu', 'role_thu', 'role_special']);
     assert.equal(delta.obsoleteDayRoles.includes('role_mon'), true); // Old Monday role MUST be in obsolete
     assert.equal(delta.obsoleteDayRoles.includes('role_tue'), true);
@@ -362,11 +362,11 @@ describe('SARAWAT-BOT New Shift & Combined Duty ID Verification', () => {
     assert.equal(calculateNextDutyId(emptyIds, 'M'), 'M1');
     assert.equal(calculateNextDutyId(emptyIds, 'T'), 'T1');
     assert.equal(calculateNextDutyId(emptyIds, 'W'), 'W1');
-    assert.equal(calculateNextDutyId(emptyIds, 'Ts'), 'Ts1');
+    assert.equal(calculateNextDutyId(emptyIds, 'Th'), 'Th1');
     assert.equal(calculateNextDutyId(emptyIds, 'F'), 'F1');
     assert.equal(calculateNextDutyId(emptyIds, 'S'), 'S1');
     assert.equal(calculateNextDutyId(emptyIds, 'MS'), 'MS1');
-    assert.equal(calculateNextDutyId(emptyIds, 'TSS'), 'TSS1');
+    assert.equal(calculateNextDutyId(emptyIds, 'ThS'), 'ThS1');
   });
 
   test('cleanGradeClass should strip "ม." and enforce number/number format', () => {

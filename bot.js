@@ -3,7 +3,7 @@
  * ระบบบอทสารวัตรนักเรียน โรงเรียนพระนารายณ์
  * 
  * ฟีเจอร์หลัก:
- * 1. ยืนยันตัวตน + บันทึกเบอร์โทร + เวรประจำวัน (M, T, W, Ts, F) และ เวรพิเศษ (S) ปฏิบัติหน้าที่ทุกวัน
+ * 1. ยืนยันตัวตน + บันทึกเบอร์โทร + เวรประจำวัน (M, T, W, Th, F) และ เวรพิเศษ (S) ปฏิบัติหน้าที่ทุกวัน
  * 2. ยศหัวหน้าเวรและรองหัวหน้าเวรแยกตามวันโดยเฉพาะ (เช่น 👑 หัวหน้าเวร S, ✨ รองหัวหน้าเวร F)
  * 3. ระบบใบตารางเช็คชื่อ A4 ดึงชื่อและรหัสของ "หัวหน้าเวร" และ "รองหัวหน้าเวร" มาแสดงบนหัวกระดาษอัตโนมัติ
  * 4. ระบบอนุมัติสมาชิกโดยผู้บริหารก่อนเข้า + ขอรูปถ่ายหน้าตรงเพื่อทำบัตรประจำตัว
@@ -323,7 +323,7 @@ const ROLE_IDS = {
     'M': process.env.ROLE_MON || '1567570846388854804',
     'T': process.env.ROLE_TUE || '1567570847726567526',
     'W': process.env.ROLE_WED || '1567570849953743049',
-    'Ts': process.env.ROLE_THU || '1567570850935218449',
+    'Th': process.env.ROLE_THU || '1567570850935218449',
     'F': process.env.ROLE_FRI || '1567570856966758431',
     'S': process.env.ROLE_SPECIAL || '1567570841548627971'
   },
@@ -331,7 +331,7 @@ const ROLE_IDS = {
     'M': process.env.ROLE_HEAD_M || '1567570806412804126',
     'T': process.env.ROLE_HEAD_T || '1567570810439335946',
     'W': process.env.ROLE_HEAD_W || '1567570813878804511',
-    'Ts': process.env.ROLE_HEAD_THU || '1567570829288542218',
+    'Th': process.env.ROLE_HEAD_THU || '1567570829288542218',
     'F': process.env.ROLE_HEAD_F || '1567570837215649962',
     'S': process.env.ROLE_HEAD_S || '1567570801866047589'
   },
@@ -339,7 +339,7 @@ const ROLE_IDS = {
     'M': process.env.ROLE_DEPUTY_M || '1567570808270758020',
     'T': process.env.ROLE_DEPUTY_T || '1567570812024786996',
     'W': process.env.ROLE_DEPUTY_W || '1567570815728353490',
-    'Ts': process.env.ROLE_DEPUTY_THU || '1567570831851126804',
+    'Th': process.env.ROLE_DEPUTY_THU || '1567570831851126804',
     'F': process.env.ROLE_DEPUTY_F || '1567570839925293178',
     'S': process.env.ROLE_DEPUTY_S || '1567570803703423006'
   }
@@ -370,7 +370,7 @@ function getShiftLeader(members, assignments, shiftCode, position) {
 function memberBelongsToLeadershipShift(dutyDay, shiftCode) {
   const code = String(dutyDay || '').trim();
   if (shiftCode === 'S') return code === 'S' || /S$/.test(code);
-  if (shiftCode === 'Ts') return ['Ts', 'TSS', 'TsS'].includes(code);
+  if (shiftCode === 'Th') return ['Th', 'ThS', 'ThS'].includes(code);
   const specialVariants = { M: 'MS', T: 'TS', W: 'WS', F: 'FS' };
   return code === shiftCode || code === specialVariants[shiftCode];
 }
@@ -379,8 +379,8 @@ const DAY_NAMES = {
   'M': 'วันจันทร์',
   'T': 'วันอังคาร',
   'W': 'วันพุธ',
-  'Ts': 'วันพฤหัสบดี',
-  'TSS': 'วันพฤหัสบดี',
+  'Th': 'วันพฤหัสบดี',
+  'ThS': 'วันพฤหัสบดี',
   'F': 'วันศุกร์',
   'S': 'พิเศษ (ทุกวัน)',
   'MS': 'วันจันทร์ (เวรพิเศษ)',
@@ -393,7 +393,7 @@ function getDayName(code) {
   if (!code) return 'ไม่ระบุ';
   if (code === 'S') return 'เวรพิเศษ (ทุกวัน)';
   if (code.endsWith('S') && code !== 'S') {
-    const base = code === 'TSS' ? 'Ts' : code.replace(/S+$/, '');
+    const base = code === 'ThS' ? 'Th' : code.replace(/S+$/, '');
     const baseName = DAY_NAMES[base] || base;
     return `เวร${baseName} (พิเศษ)`;
   }
@@ -404,7 +404,7 @@ function getShiftLabel(code) {
   if (!code) return 'ไม่ระบุ';
   if (code === 'S') return 'พิเศษ ทุกวัน (S)';
   if (code.endsWith('S') && code !== 'S') {
-    const base = code === 'TSS' ? 'Ts' : code.replace(/S+$/, '');
+    const base = code === 'ThS' ? 'Th' : code.replace(/S+$/, '');
     const baseName = DAY_NAMES[base] || base;
     return `${baseName} + เวรพิเศษทุกวัน (${code})`;
   }
@@ -416,7 +416,7 @@ function getShiftLabel(code) {
  */
 function buildPrivateReviewCard(member) {
   const isSpecial = member.duty_day && member.duty_day.endsWith('S');
-  const weekday = member.duty_day ? (member.duty_day === 'TSS' ? 'Ts' : member.duty_day.replace(/S+$/, '') || member.duty_day) : 'M';
+  const weekday = member.duty_day ? (member.duty_day === 'ThS' ? 'Th' : member.duty_day.replace(/S+$/, '') || member.duty_day) : 'M';
   const weekdayName = DAY_NAMES[weekday] || weekday;
   const shiftLabel = getShiftLabel(member.duty_day);
 
@@ -645,7 +645,7 @@ function getDutyRoles(dutyDay) {
   if (!dutyDay) return [];
   const roles = [];
   if (dutyDay.endsWith('S') && dutyDay !== 'S') {
-    const baseDay = dutyDay === 'TSS' ? 'Ts' : dutyDay.replace(/S+$/, '');
+    const baseDay = dutyDay === 'ThS' ? 'Th' : dutyDay.replace(/S+$/, '');
     if (ROLE_IDS.DAYS[baseDay]) roles.push(ROLE_IDS.DAYS[baseDay]);
     if (ROLE_IDS.DAYS['S']) roles.push(ROLE_IDS.DAYS['S']);
   } else if (dutyDay === 'S') {
@@ -664,10 +664,10 @@ function resolveDutyDayForAppoint(currentDutyDay, targetShift) {
   if (isSpecialTarget) {
     if (!currentDutyDay || currentDutyDay === 'S') return 'S';
     if (currentDutyDay.endsWith('S')) return currentDutyDay;
-    return currentDutyDay === 'Ts' ? 'TSS' : `${currentDutyDay}S`;
+    return currentDutyDay === 'Th' ? 'ThS' : `${currentDutyDay}S`;
   } else {
     if (hasSpecial) {
-      return targetShift === 'Ts' ? 'TSS' : `${targetShift}S`;
+      return targetShift === 'Th' ? 'ThS' : `${targetShift}S`;
     }
     return targetShift;
   }
@@ -799,7 +799,7 @@ const slashCommands = [
           { name: '🔵 วันจันทร์ (M, MS, S)', value: 'M' },
           { name: '🟣 วันอังคาร (T, TS, S)', value: 'T' },
           { name: '🟢 วันพุธ (W, WS, S)', value: 'W' },
-          { name: '🟠 วันพฤหัสบดี (Ts, TSS, S)', value: 'Ts' },
+          { name: '🟠 วันพฤหัสบดี (Th, ThS, S)', value: 'Th' },
           { name: '🔴 วันศุกร์ (F, FS, S)', value: 'F' },
           { name: '⭐ เวรพิเศษ (S)', value: 'S' }
         )
@@ -1599,7 +1599,7 @@ function getTodayDutyCodes(referenceDate = new Date()) {
     1: ['M', 'MS', 'S'],
     2: ['T', 'TS', 'S'],
     3: ['W', 'WS', 'S'],
-    4: ['Ts', 'TSS', 'S'],
+    4: ['Th', 'ThS', 'S'],
     5: ['F', 'FS', 'S']
   };
   return dayMap[dayNum] || [];
@@ -1716,10 +1716,10 @@ async function sendBotActionLog(guild, {
 async function broadcastConsolidatedShiftLeaveCard(guild, dutyDay, newLeave = null, actor = null) {
   if (!guild || !dutyDay) return { success: false, reason: 'Missing guild or dutyDay' };
 
-  const baseDay = dutyDay === 'S' ? 'S' : (dutyDay === 'TSS' ? 'Ts' : (dutyDay.replace(/S+$/, '') || dutyDay));
+  const baseDay = dutyDay === 'S' ? 'S' : (dutyDay === 'ThS' ? 'Th' : (dutyDay.replace(/S+$/, '') || dutyDay));
   const matchingCodes = baseDay === 'S'
-    ? ['S', 'MS', 'TS', 'WS', 'TSS', 'TsS', 'FS']
-    : [baseDay, baseDay === 'Ts' ? 'TSS' : `${baseDay}S`, ...(baseDay === 'Ts' ? ['TsS'] : []), 'S'];
+    ? ['S', 'MS', 'TS', 'WS', 'ThS', 'ThS', 'FS']
+    : [baseDay, baseDay === 'Th' ? 'ThS' : `${baseDay}S`, ...(baseDay === 'Th' ? ['ThS'] : []), 'S'];
 
   // 1. ดึงสมาชิกทั้งหมดที่สังกัดเวรนี้
   const { data: shiftMembers = [] } = await supabase
@@ -1826,7 +1826,7 @@ async function broadcastConsolidatedShiftLeaveCard(guild, dutyDay, newLeave = nu
     'M': 'เวรวันจันทร์-m',
     'T': 'เวรวันอังคาร-t',
     'W': 'เวรวันพุธ-w',
-    'Ts': 'เวรวันพฤหัสบดี-ts',
+    'Th': 'เวรวันพฤหัสบดี-ts',
     'F': 'เวรวันศุกร์-f',
     'S': 'เวรพิเศษ-s'
   };
@@ -1896,7 +1896,7 @@ async function broadcastConsolidatedShiftLeaveCard(guild, dutyDay, newLeave = nu
  */
 async function sendDailyDutyReminders(guild, options = { dryRun: false, forceDay: null, actor: null }) {
   const targetCodes = options.forceDay
-    ? [options.forceDay, options.forceDay === 'Ts' ? 'TSS' : `${options.forceDay}S`, 'S']
+    ? [options.forceDay, options.forceDay === 'Th' ? 'ThS' : `${options.forceDay}S`, 'S']
     : getTodayDutyCodes();
 
   if (targetCodes.length === 0 && !options.forceDay) {
@@ -1938,7 +1938,7 @@ async function sendDailyDutyReminders(guild, options = { dryRun: false, forceDay
   const remindedList = [];
 
   for (const m of members) {
-    const baseDay = m.duty_day === 'TSS' ? 'Ts' : m.duty_day.replace(/S+$/, '');
+    const baseDay = m.duty_day === 'ThS' ? 'Th' : m.duty_day.replace(/S+$/, '');
     const shiftLabel = getShiftLabel(m.duty_day);
 
     const embed = new EmbedBuilder()
@@ -2303,7 +2303,7 @@ async function executeDDay(guild, executorUser) {
           .setTitle('🚨 ประกาศ: ปฏิบัติการ D-DAY รีเซ็ตระบบสู่จุดเริ่มต้นเสร็จสิ้น')
           .setDescription(
             `ศูนย์บัญชาการสารวัตรนักเรียน โรงเรียนพระนารายณ์ ได้ดำเนินการ **D-DAY RESET** เรียบร้อยแล้ว\n\n` +
-            `• 🔄 **สถานะระบบ:** รีเซ็ตสู่จุดเริ่มต้น (0 คน) รหัสเวรเริ่มต้นนับ 1 ใหม่ (M1, T1, Ts1, ...)\n` +
+            `• 🔄 **สถานะระบบ:** รีเซ็ตสู่จุดเริ่มต้น (0 คน) รหัสเวรเริ่มต้นนับ 1 ใหม่ (M1, T1, Th1, ...)\n` +
             `• 🎓 **ภาคเรียน:** ${sem}\n` +
             `• 🛡️ **การลงทะเบียน:** ขอให้สารวัตรนักเรียนทุกท่านลงทะเบียนยืนยันตัวตนใหม่ที่ห้อง ${chVerify ? `<#${chVerify.id}>` : '`🛡️│ยืนยันตัวตน`'}\n` +
             `• 📸 **การทำบัตร:** เมื่อผ่านการอนุมัติแล้ว ให้อัปโหลดรูปหน้าตรงที่ห้อง ${chPhoto ? `<#${chPhoto.id}>` : '`📸│อัปโหลดรูปโปรไฟล์-ทำบัตร`'}\n\n` +
@@ -3296,7 +3296,7 @@ client.on('messageCreate', async (message) => {
         `⚠️ **คำเตือนความปลอดภัยขั้นสูงสุด (DESTRUCTIVE ACTION)**\n\n` +
         `คุณกำลังจะสั่งการล้างระบบสารวัตรนักเรียนทั้งหมด ข้อมูลต่อไปนี้จะถูกรีเซ็ตอย่างถาวร:\n\n` +
         `• 🗑️ **ฐานข้อมูล:** ลบข้อมูลสารวัตรทุกคนใน \`members\`, \`leave_requests\`, และ \`cases\`\n` +
-        `• 🔄 **รหัสเวร:** เริ่มต้นนับ 1 ใหม่ (เช่น M1, T1, Ts1, S1)\n` +
+        `• 🔄 **รหัสเวร:** เริ่มต้นนับ 1 ใหม่ (เช่น M1, T1, Th1, S1)\n` +
         `• 🛡️ **ยศ Discord:** ปลดบทบาทสารวัตรและรีเซ็ตชื่อเล่นของทุกคน\n` +
         `• 🧹 **ช่องแชท:** ล้างข้อความเก่าและติดตั้งแผงระบบใหม่ในทุกช่องแชท\n\n` +
         `**หากแน่ใจ ให้กดปุ่มสีแดงด้านล่างและกรอกรหัสยืนยันเพื่อเริ่มปฏิบัติการ**`
@@ -3545,7 +3545,7 @@ client.on('messageCreate', async (message) => {
 
       // 8. แสดงการ์ดพรีวิวรูปภาพ พร้อม 2 ปุ่ม (ครอบรูป 1 นิ้ว / เปลี่ยนรูปใหม่)
       const isSpecial = member.duty_day && member.duty_day.endsWith('S');
-      const weekday = member.duty_day ? (member.duty_day === 'TSS' ? 'Ts' : member.duty_day.replace(/S+$/, '') || member.duty_day) : 'M';
+      const weekday = member.duty_day ? (member.duty_day === 'ThS' ? 'Th' : member.duty_day.replace(/S+$/, '') || member.duty_day) : 'M';
       const weekdayName = DAY_NAMES[weekday] || weekday;
       const shiftLabel = getShiftLabel(member.duty_day);
 
@@ -3812,7 +3812,7 @@ client.on('messageCreate', async (message) => {
 
           // สร้าง Rich Embed พรีวิวรูปถ่าย พร้อมจัดหมวดหมู่ข้อมูลที่เข้าใจง่าย และแสดง 2 ปุ่มทันที (ครอบรูป / เปลี่ยนรูป)
           const isSpecial = member.duty_day && member.duty_day.endsWith('S');
-          const weekday = member.duty_day ? (member.duty_day === 'TSS' ? 'Ts' : member.duty_day.replace(/S+$/, '') || member.duty_day) : 'M';
+          const weekday = member.duty_day ? (member.duty_day === 'ThS' ? 'Th' : member.duty_day.replace(/S+$/, '') || member.duty_day) : 'M';
           const weekdayName = DAY_NAMES[weekday] || weekday;
           const shiftLabel = getShiftLabel(member.duty_day);
 
@@ -3943,7 +3943,7 @@ client.on('messageCreate', async (message) => {
       });
 
       // ดึงตัวอย่าง shift จากข้อความ เช่น "!test-attendance TS" หรือใช้วันปัจจุบัน
-      const matchShift = message.content.match(/(จันทร์|อังคาร|พุธ|พฤหัส|ศุกร์|พิเศษ|M|MS|T|TS|W|Ts|TH|F|FS|S)/i);
+      const matchShift = message.content.match(/(จันทร์|อังคาร|พุธ|พฤหัส|ศุกร์|พิเศษ|M|MS|T|TS|W|Th|TH|F|FS|S)/i);
       const testShift = matchShift ? matchShift[0] : null;
 
       const result = await processAttendancePhoto({
@@ -4004,7 +4004,7 @@ client.on('messageCreate', async (message) => {
           pendingAttendanceUploads.delete(message.author.id);
         }
 
-        const matchShift = message.content.match(/(จันทร์|อังคาร|พุธ|พฤหัส|ศุกร์|พิเศษ|M|MS|T|TS|W|Ts|TH|F|FS|S)/i);
+        const matchShift = message.content.match(/(จันทร์|อังคาร|พุธ|พฤหัส|ศุกร์|พิเศษ|M|MS|T|TS|W|Th|TH|F|FS|S)/i);
         const shiftParam = pendingUpload ? pendingUpload.shift : (matchShift ? matchShift[0] : null);
         const targetDate = pendingUpload ? pendingUpload.dateStr : 'วันนี้';
 
@@ -4687,7 +4687,7 @@ client.on('interactionCreate', async (interaction) => {
             day: 'numeric',
             timeZone: 'Asia/Bangkok'
           });
-          const baseDay = sampleMember.duty_day === 'TSS' ? 'Ts' : sampleMember.duty_day.replace(/S+$/, '');
+          const baseDay = sampleMember.duty_day === 'ThS' ? 'Th' : sampleMember.duty_day.replace(/S+$/, '');
           const shiftLabel = getShiftLabel(sampleMember.duty_day);
 
           const sampleEmbed = new EmbedBuilder()
@@ -5019,7 +5019,7 @@ client.on('interactionCreate', async (interaction) => {
             `⚠️ **คำเตือนความปลอดภัยขั้นสูงสุด (DESTRUCTIVE ACTION)**\n\n` +
             `คุณกำลังจะสั่งการล้างระบบสารวัตรนักเรียนทั้งหมด ข้อมูลต่อไปนี้จะถูกรีเซ็ตอย่างถาวร:\n\n` +
             `• 🗑️ **ฐานข้อมูล:** ลบข้อมูลสารวัตรทุกคนใน \`members\`, \`leave_requests\`, และ \`cases\`\n` +
-            `• 🔄 **รหัสเวร:** เริ่มต้นนับ 1 ใหม่ (เช่น M1, T1, Ts1, S1)\n` +
+            `• 🔄 **รหัสเวร:** เริ่มต้นนับ 1 ใหม่ (เช่น M1, T1, Th1, S1)\n` +
             `• 🛡️ **ยศ Discord:** ปลดบทบาทสารวัตรและรีเซ็ตชื่อเล่นของทุกคน\n` +
             `• 🧹 **ช่องแชท:** ล้างข้อความเก่าและติดตั้งแผงระบบใหม่ในทุกช่องแชท\n\n` +
             `**หากแน่ใจ ให้กดปุ่มสีแดงด้านล่างและกรอกรหัสยืนยันเพื่อเริ่มปฏิบัติการ**`
@@ -5428,7 +5428,7 @@ client.on('interactionCreate', async (interaction) => {
         .setDescription(
           `ศูนย์บัญชาการสารวัตรนักเรียน โรงเรียนพระนารายณ์ ได้รีเซ็ตระบบทั้งหมดสู่จุดเริ่มต้น (0) สำเร็จลุล่วงแล้ว\n\n` +
           `• 🗑️ **ฐานข้อมูล:** ลบข้อมูลสารวัตร ${ddayResult.deletedMembers} นาย, คำขอลา ${ddayResult.deletedLeaves} รายการ, คดี ${ddayResult.deletedCases} เรื่อง\n` +
-          `• 🔄 **รหัสเวร:** เริ่มต้นนับ 1 ใหม่ สำหรับการลงทะเบียนใหม่ (เช่น M1, T1, Ts1, S1)\n` +
+          `• 🔄 **รหัสเวร:** เริ่มต้นนับ 1 ใหม่ สำหรับการลงทะเบียนใหม่ (เช่น M1, T1, Th1, S1)\n` +
           `• 🛡️ **ยศ Discord:** ปลดบทบาทและล้างชื่อเล่นสมาชิกสารวัตรเดิม ${ddayResult.wipedMembers} นาย\n` +
           `• 🧹 **ช่องแชท:** ล้างข้อความและติดตั้งแผงระบบใหม่ใน ${ddayResult.resetChannels} ช่อง\n\n` +
           `📢 สารวัตรนักเรียนทุกท่านสามารถเริ่มลงทะเบียนใหม่ได้ทันทีที่ห้องยืนยันตัวตน`
@@ -6532,7 +6532,7 @@ client.on('interactionCreate', async (interaction) => {
 
       const { data: member } = await supabase.from('members').select('*').eq('id', memberId).single();
       const weekdayName = DAY_NAMES[selectedWeekday] || selectedWeekday;
-      const specialCodePreview = selectedWeekday === 'Ts' ? 'TSS' : `${selectedWeekday}S`;
+      const specialCodePreview = selectedWeekday === 'Th' ? 'ThS' : `${selectedWeekday}S`;
 
       // สร้างปุ่มถามว่า เป็นเวรพิเศษ (ปฏิบัติหน้าที่ทุกวัน) ด้วยหรือไม่?
       const specialEmbed = new EmbedBuilder()
@@ -6596,8 +6596,8 @@ client.on('interactionCreate', async (interaction) => {
       const memberId = parts[0];
       const weekday = parts[1] || 'M';
 
-      // ถ้าเป็นเวรพิเศษ รหัสผลัดจะเป็น: M -> MS, T -> TS, W -> WS, Ts -> TSS, F -> FS
-      const effectiveDutyDay = isSpecial ? (weekday === 'Ts' ? 'TSS' : `${weekday}S`) : weekday;
+      // ถ้าเป็นเวรพิเศษ รหัสผลัดจะเป็น: M -> MS, T -> TS, W -> WS, Th -> ThS, F -> FS
+      const effectiveDutyDay = isSpecial ? (weekday === 'Th' ? 'ThS' : `${weekday}S`) : weekday;
 
       // เคลียร์ discord_id ออกจากแถวอื่นของผู้ใช้นี้ก่อน เพื่อป้องกัน UNIQUE constraint collision
       await supabase
@@ -6658,7 +6658,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
   const isTeacher = member.role === 'TEACHER';
   const isCropped = !!(member.photo_cropped_at);
   const isSpecial = member.duty_day && member.duty_day.endsWith('S');
-  const weekday = member.duty_day ? (member.duty_day === 'TSS' ? 'Ts' : member.duty_day.replace(/S+$/, '') || member.duty_day) : 'M';
+  const weekday = member.duty_day ? (member.duty_day === 'ThS' ? 'Th' : member.duty_day.replace(/S+$/, '') || member.duty_day) : 'M';
   const weekdayName = DAY_NAMES[weekday] || weekday;
   const shiftLabel = isTeacher ? '👨‍🏫 ครูที่ปรึกษา (ทุกวัน/ทุกผลัด)' : getShiftLabel(member.duty_day);
 
@@ -7071,7 +7071,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
 
       const shiftLabel = getShiftLabel(member.duty_day);
       const isSpecial = member.duty_day && member.duty_day.endsWith('S');
-      const weekday = member.duty_day ? (member.duty_day === 'TSS' ? 'Ts' : member.duty_day.replace(/S+$/, '') || member.duty_day) : 'M';
+      const weekday = member.duty_day ? (member.duty_day === 'ThS' ? 'Th' : member.duty_day.replace(/S+$/, '') || member.duty_day) : 'M';
       const weekdayName = DAY_NAMES[weekday] || weekday;
 
       const doneEmbed = new EmbedBuilder()
@@ -7113,7 +7113,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
       if (approvalChannel) {
         const isTeacher = member.role === 'TEACHER' || member.shift_role === 'TEACHER';
         const isSpecial = member.duty_day && member.duty_day.endsWith('S');
-        const weekday = member.duty_day ? (member.duty_day === 'TSS' ? 'Ts' : member.duty_day.replace(/S+$/, '') || member.duty_day) : 'M';
+        const weekday = member.duty_day ? (member.duty_day === 'ThS' ? 'Th' : member.duty_day.replace(/S+$/, '') || member.duty_day) : 'M';
         const weekdayName = DAY_NAMES[weekday] || weekday;
 
         const metaTag = (promptChanId && promptMsgId) ? ` • [msg:${promptChanId}:${promptMsgId}]` : '';
@@ -7205,12 +7205,12 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
             if (shiftText.includes('(MS)') || (shiftText.includes('จันทร์') && shiftText.includes('พิเศษ'))) dutyDay = 'MS';
             else if (shiftText.includes('(TS)') || (shiftText.includes('อังคาร') && shiftText.includes('พิเศษ'))) dutyDay = 'TS';
             else if (shiftText.includes('(WS)') || (shiftText.includes('พุธ') && shiftText.includes('พิเศษ'))) dutyDay = 'WS';
-            else if (shiftText.includes('(TSS)') || shiftText.includes('(TsS)') || (shiftText.includes('พฤหัส') && shiftText.includes('พิเศษ'))) dutyDay = 'TSS';
+            else if (shiftText.includes('(ThS)') || shiftText.includes('(ThS)') || (shiftText.includes('พฤหัส') && shiftText.includes('พิเศษ'))) dutyDay = 'ThS';
             else if (shiftText.includes('(FS)') || (shiftText.includes('ศุกร์') && shiftText.includes('พิเศษ'))) dutyDay = 'FS';
             else if (shiftText.includes('(M)') || shiftText.includes('จันทร์')) dutyDay = 'M';
             else if (shiftText.includes('(T)') || shiftText.includes('อังคาร')) dutyDay = 'T';
             else if (shiftText.includes('(W)') || shiftText.includes('พุธ')) dutyDay = 'W';
-            else if (shiftText.includes('(Ts)') || shiftText.includes('พฤหัส')) dutyDay = 'Ts';
+            else if (shiftText.includes('(Th)') || shiftText.includes('พฤหัส')) dutyDay = 'Th';
             else if (shiftText.includes('(F)') || shiftText.includes('ศุกร์')) dutyDay = 'F';
             else if (shiftText.includes('(S)') || shiftText.includes('พิเศษ')) dutyDay = 'S';
           }
@@ -7414,7 +7414,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
           { label: 'วันจันทร์ (Shift M)', value: 'M', description: 'เช็คชื่อสารวัตรเวรวันจันทร์', emoji: '🔵' },
           { label: 'วันอังคาร (Shift T)', value: 'T', description: 'เช็คชื่อสารวัตรเวรวันอังคาร', emoji: '🟣' },
           { label: 'วันพุธ (Shift W)', value: 'W', description: 'เช็คชื่อสารวัตรเวรวันพุธ', emoji: '🟢' },
-          { label: 'วันพฤหัสบดี (Shift Ts)', value: 'Ts', description: 'เช็คชื่อสารวัตรเวรวันพฤหัสบดี', emoji: '🟠' },
+          { label: 'วันพฤหัสบดี (Shift Th)', value: 'Th', description: 'เช็คชื่อสารวัตรเวรวันพฤหัสบดี', emoji: '🟠' },
           { label: 'วันศุกร์ (Shift F)', value: 'F', description: 'เช็คชื่อสารวัตรเวรวันศุกร์', emoji: '🔴' },
           { label: 'เวรพิเศษทุกวัน (Shift S)', value: 'S', description: 'เช็คชื่อสารวัตรเวรพิเศษ (ปฏิบัติหน้าที่ทุกวัน)', emoji: '⭐' }
         ]);
@@ -7430,7 +7430,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
 
     if (interaction.isStringSelectMenu() && interaction.customId === 'select_attendance_scan_shift') {
       const shift = interaction.values[0];
-      const shiftNames = { M: 'วันจันทร์', T: 'วันอังคาร', W: 'วันพุธ', Ts: 'วันพฤหัสบดี', F: 'วันศุกร์', S: 'เวรพิเศษทุกวัน' };
+      const shiftNames = { M: 'วันจันทร์', T: 'วันอังคาร', W: 'วันพุธ', Th: 'วันพฤหัสบดี', F: 'วันศุกร์', S: 'เวรพิเศษทุกวัน' };
       const shiftName = shiftNames[shift] || shift;
 
       // วันที่ปัจจุบัน (เช่น 11/14)
@@ -7464,7 +7464,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
 
     if (interaction.isStringSelectMenu() && interaction.customId === 'select_attendance_scan_date') {
       const [shift, dateStr] = interaction.values[0].split('|');
-      const shiftNames = { M: 'วันจันทร์', T: 'วันอังคาร', W: 'วันพุธ', Ts: 'วันพฤหัสบดี', F: 'วันศุกร์', S: 'เวรพิเศษทุกวัน' };
+      const shiftNames = { M: 'วันจันทร์', T: 'วันอังคาร', W: 'วันพุธ', Th: 'วันพฤหัสบดี', F: 'วันศุกร์', S: 'เวรพิเศษทุกวัน' };
       const shiftName = shiftNames[shift] || shift;
 
       pendingAttendanceUploads.set(interaction.user.id, {
@@ -7529,7 +7529,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
         const attachment = new AttachmentBuilder(buffer, { name: 'ตารางเช็คชื่อ_รวมทุกเวร_12สัปดาห์.html' });
 
         const embed = new EmbedBuilder()
-        .setTitle('📄 ตารางเช็คชื่อ: รวม 6 ผลัด (M, T, W, Ts, F, S)')
+        .setTitle('📄 ตารางเช็คชื่อ: รวม 6 ผลัด (M, T, W, Th, F, S)')
           .setDescription(
             `เวร: รวม 6 ผลัด (วันจันทร์ - ศุกร์ และเวรพิเศษ S)\n` +
             `สมาชิกทั้งหมด: ${members.length} นาย\n` +
@@ -7564,11 +7564,11 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
         .setCustomId('select_attendance_sheet_day')
         .setPlaceholder('📅 เลือกเวรที่ต้องการพิมพ์ใบตารางเช็คชื่อ')
         .addOptions([
-          { label: '📑 ขอรวม (ทุกรอบเวร M, T, W, Ts, F)', value: 'ALL', description: 'รวมสมาชิกทุกรอบเวรในเอกสารเดียว (5 กะ วันจันทร์ - ศุกร์)', emoji: '📑' },
+          { label: '📑 ขอรวม (ทุกรอบเวร M, T, W, Th, F)', value: 'ALL', description: 'รวมสมาชิกทุกรอบเวรในเอกสารเดียว (5 กะ วันจันทร์ - ศุกร์)', emoji: '📑' },
           { label: 'วันจันทร์ (M)', value: 'M', description: 'ใบเช็คชื่อสารวัตรเวรวันจันทร์', emoji: '🔵' },
           { label: 'วันอังคาร (T)', value: 'T', description: 'ใบเช็คชื่อสารวัตรเวรวันอังคาร', emoji: '🟣' },
           { label: 'วันพุธ (W)', value: 'W', description: 'ใบเช็คชื่อสารวัตรเวรวันพุธ', emoji: '🟢' },
-          { label: 'วันพฤหัสบดี (Ts)', value: 'Ts', description: 'ใบเช็คชื่อสารวัตรเวรวันพฤหัสบดี', emoji: '🟠' },
+          { label: 'วันพฤหัสบดี (Th)', value: 'Th', description: 'ใบเช็คชื่อสารวัตรเวรวันพฤหัสบดี', emoji: '🟠' },
           { label: 'วันศุกร์ (F)', value: 'F', description: 'ใบเช็คชื่อสารวัตรเวรวันศุกร์', emoji: '🔴' }
         ]);
 
@@ -7615,7 +7615,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
         const attachment = new AttachmentBuilder(buffer, { name: 'ตารางเช็คชื่อ_รวมทุกเวร_12สัปดาห์.html' });
 
         const embed = new EmbedBuilder()
-          .setTitle('📄 ตารางเช็คชื่อ: รวม 6 ผลัด (M, T, W, Ts, F, S)')
+          .setTitle('📄 ตารางเช็คชื่อ: รวม 6 ผลัด (M, T, W, Th, F, S)')
           .setDescription(
             `เวร: รวม 6 ผลัด (วันจันทร์ - ศุกร์ และเวรพิเศษ S)\n` +
             `สมาชิกทั้งหมด: ${members.length} นาย\n` +
@@ -7648,8 +7648,8 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
       // Single Day
       // Single Day: ดึงทั้งเวรปกติ และสารวัตรเวรพิเศษที่สังกัดวันนี้ (เช่น M และ MS)
       const targetDays = selectedDay === 'S'
-        ? ['S', 'MS', 'TS', 'WS', 'TSS', 'TsS', 'FS']
-        : [selectedDay, selectedDay === 'Ts' ? 'TSS' : `${selectedDay}S`, ...(selectedDay === 'Ts' ? ['TsS'] : [])];
+        ? ['S', 'MS', 'TS', 'WS', 'ThS', 'ThS', 'FS']
+        : [selectedDay, selectedDay === 'Th' ? 'ThS' : `${selectedDay}S`, ...(selectedDay === 'Th' ? ['ThS'] : [])];
 
       const { data: members, error } = await supabase
         .from('members')
@@ -7867,7 +7867,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
         substitute: substitute
       }, `👮 [${member.duty_id || 'สารวัตร'}] คุณ${member.nickname}`);
 
-      const baseDay = member.duty_day === 'S' ? 'S' : (member.duty_day === 'TSS' ? 'Ts' : (member.duty_day.replace(/S+$/, '') || member.duty_day));
+      const baseDay = member.duty_day === 'S' ? 'S' : (member.duty_day === 'ThS' ? 'Th' : (member.duty_day.replace(/S+$/, '') || member.duty_day));
       await interaction.editReply({
         content: `# ✅ ส่งคำขอลาเวรเรียบร้อยแล้ว\n` +
                  `- **ผู้ขอลา:** [${member.duty_id || 'สารวัตร'}] คุณ${member.nickname} (${member.first_name})\n` +
@@ -8627,7 +8627,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
 
       const shiftLabel = getShiftLabel(member.duty_day);
       const isSpecial = member.duty_day && member.duty_day.endsWith('S');
-      const weekday = member.duty_day ? (member.duty_day === 'TSS' ? 'Ts' : member.duty_day.replace(/S+$/, '') || member.duty_day) : 'M';
+      const weekday = member.duty_day ? (member.duty_day === 'ThS' ? 'Th' : member.duty_day.replace(/S+$/, '') || member.duty_day) : 'M';
       const weekdayName = DAY_NAMES[weekday] || weekday;
 
       const profileEmbed = new EmbedBuilder()
@@ -9753,10 +9753,10 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
       });
 
       // ค้นหาหัวหน้าเวรและรองหัวหน้าเวรประจำวัน
-      const baseDay = member.duty_day === 'S' ? 'S' : (member.duty_day === 'TSS' ? 'Ts' : (member.duty_day.replace(/S+$/, '') || member.duty_day));
+      const baseDay = member.duty_day === 'S' ? 'S' : (member.duty_day === 'ThS' ? 'Th' : (member.duty_day.replace(/S+$/, '') || member.duty_day));
       const targetDays = baseDay === 'S'
-        ? ['S', 'MS', 'TS', 'WS', 'TSS', 'TsS', 'FS']
-        : [member.duty_day, baseDay, ...(baseDay === 'Ts' ? ['TsS'] : [])].filter(Boolean);
+        ? ['S', 'MS', 'TS', 'WS', 'ThS', 'ThS', 'FS']
+        : [member.duty_day, baseDay, ...(baseDay === 'Th' ? ['ThS'] : [])].filter(Boolean);
       const targetLeadershipShifts = baseDay === 'S' ? ['S'] : [baseDay, 'S'];
       const { data: headAssignments = [] } = await supabase
         .from('shift_leadership').select('member_id').in('shift_code', targetLeadershipShifts);
@@ -9871,7 +9871,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
         day: 'numeric',
         timeZone: 'Asia/Bangkok'
       });
-      const baseDay = sampleMember.duty_day === 'TSS' ? 'Ts' : sampleMember.duty_day.replace(/S+$/, '');
+      const baseDay = sampleMember.duty_day === 'ThS' ? 'Th' : sampleMember.duty_day.replace(/S+$/, '');
       const shiftLabel = getShiftLabel(sampleMember.duty_day);
 
       const sampleEmbed = new EmbedBuilder()
@@ -9954,9 +9954,9 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
         .from('shift_leadership').select('member_id, shift_code, position');
       if (leadershipError) throw leadershipError;
 
-      const grouped = { 'M': [], 'T': [], 'W': [], 'Ts': [], 'F': [], 'S': [] };
+      const grouped = { 'M': [], 'T': [], 'W': [], 'Th': [], 'F': [], 'S': [] };
       members.forEach(m => {
-        const base = m.duty_day === 'S' ? 'S' : (['Ts', 'TSS', 'TsS'].includes(m.duty_day) ? 'Ts' : m.duty_day?.replace(/S+$/, ''));
+        const base = m.duty_day === 'S' ? 'S' : (['Th', 'ThS', 'ThS'].includes(m.duty_day) ? 'Th' : m.duty_day?.replace(/S+$/, ''));
         if (base && grouped[base] && !grouped[base].includes(m)) grouped[base].push(m);
         if (m.duty_day && m.duty_day !== 'S' && /S$/.test(m.duty_day) && !grouped.S.includes(m)) grouped.S.push(m);
       });
@@ -10251,7 +10251,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
           { label: '👨‍🏫 ครูที่ปรึกษา (Teacher Advisor)', description: 'ครูที่ปรึกษาฝ่ายสารวัตร สิทธิ์ดูข้อมูล/อนุมัติ', value: 'APPOINT_TEACHER', emoji: '👨‍🏫' },
           { label: '👑 ประธานสารวัตรนักเรียน', description: 'ผู้นำสูงสุดของฝ่ายสารวัตร', value: 'APPOINT_PRESIDENT', emoji: '👑' },
           { label: '🎖️ รองประธานสารวัตรนักเรียน', description: 'รองผู้นำฝ่ายสารวัตร', value: 'APPOINT_VICE_PRESIDENT', emoji: '🎖️' },
-          { label: '⭐ หัวหน้าและรองหัวหน้าเวร (เลือกผลัด)', description: 'แต่งตั้งแยกตามผลัด M, T, W, Ts, F หรือเวรพิเศษ S', value: 'FLOW_SHIFT_LEADER', emoji: '⭐' },
+          { label: '⭐ หัวหน้าและรองหัวหน้าเวร (เลือกผลัด)', description: 'แต่งตั้งแยกตามผลัด M, T, W, Th, F หรือเวรพิเศษ S', value: 'FLOW_SHIFT_LEADER', emoji: '⭐' },
           { label: '🛡️ สารวัตรนักเรียนทั่วไป', description: 'ปลดยศผู้นำกลับเป็นสมาชิกปกติ', value: 'DEMOTE_MEMBER', emoji: '🛡️' }
         ]);
 
@@ -10289,7 +10289,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
           { label: '👨‍🏫 ครูที่ปรึกษา (Teacher Advisor)', description: 'ครูที่ปรึกษาฝ่ายสารวัตร สิทธิ์ดูข้อมูล/อนุมัติ', value: 'APPOINT_TEACHER', emoji: '👨‍🏫' },
           { label: '👑 ประธานสารวัตรนักเรียน', description: 'ผู้นำสูงสุดของฝ่ายสารวัตร', value: 'APPOINT_PRESIDENT', emoji: '👑' },
           { label: '🎖️ รองประธานสารวัตรนักเรียน', description: 'รองผู้นำฝ่ายสารวัตร', value: 'APPOINT_VICE_PRESIDENT', emoji: '🎖️' },
-          { label: '⭐ หัวหน้าและรองหัวหน้าเวร (เลือกผลัด)', description: 'แต่งตั้งแยกตามผลัด M, T, W, Ts, F หรือเวรพิเศษ S', value: 'FLOW_SHIFT_LEADER', emoji: '⭐' },
+          { label: '⭐ หัวหน้าและรองหัวหน้าเวร (เลือกผลัด)', description: 'แต่งตั้งแยกตามผลัด M, T, W, Th, F หรือเวรพิเศษ S', value: 'FLOW_SHIFT_LEADER', emoji: '⭐' },
           { label: '🛡️ สารวัตรนักเรียนทั่วไป', description: 'ปลดยศผู้นำกลับเป็นสมาชิกปกติ', value: 'DEMOTE_MEMBER', emoji: '🛡️' }
         ]);
 
@@ -10313,7 +10313,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
         return;
       }
 
-      // ขั้นที่ 2 ของโฟลว์หัวหน้าและรองหัวหน้า: แสดงเมนูให้เลือกผลัด (M, T, W, Ts, F, S)
+      // ขั้นที่ 2 ของโฟลว์หัวหน้าและรองหัวหน้า: แสดงเมนูให้เลือกผลัด (M, T, W, Th, F, S)
       if (action === 'FLOW_SHIFT_LEADER') {
         const dayMenu = new StringSelectMenuBuilder()
           .setCustomId(`select_shift_day_appoint_${member.id}`)
@@ -10322,7 +10322,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
             { label: '🟡 เวรวันจันทร์ (Monday - M)', value: 'M', description: 'แต่งตั้งหัวหน้า/รอง ประจำวันจันทร์', emoji: '🟡' },
             { label: '🌸 เวรวันอังคาร (Tuesday - T)', value: 'T', description: 'แต่งตั้งหัวหน้า/รอง ประจำวันอังคาร', emoji: '🌸' },
             { label: '🟢 เวรวันพุธ (Wednesday - W)', value: 'W', description: 'แต่งตั้งหัวหน้า/รอง ประจำวันพุธ', emoji: '🟢' },
-            { label: '🟠 เวรวันพฤหัสบดี (Ts)', value: 'Ts', description: 'แต่งตั้งหัวหน้า/รอง ประจำวันพฤหัสบดี', emoji: '🟠' },
+            { label: '🟠 เวรวันพฤหัสบดี (Th)', value: 'Th', description: 'แต่งตั้งหัวหน้า/รอง ประจำวันพฤหัสบดี', emoji: '🟠' },
             { label: '🔵 เวรวันศุกร์ (Friday - F)', value: 'F', description: 'แต่งตั้งหัวหน้า/รอง ประจำวันศุกร์', emoji: '🔵' },
             { label: '🟣 เวรพิเศษ (Special Duty - S)', value: 'S', description: 'แต่งตั้งหัวหน้า/รอง ประจำเวรพิเศษทุกวัน', emoji: '🟣' }
           ]);
@@ -10338,7 +10338,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
         await interaction.editReply({
           content: `👑 **แต่งตั้งหัวหน้าและรองหัวหน้าเวร:**\n` +
                    `👤 สารวัตร: **[${member.duty_id || '-'}] ${member.nickname} (${member.first_name} ${member.last_name})**\n` +
-                   `👉 ขั้นที่ 1: เลือกผลัดที่จะแต่งตั้ง (M, T, W, Ts, F หรือเวรพิเศษ S):`,
+                   `👉 ขั้นที่ 1: เลือกผลัดที่จะแต่งตั้ง (M, T, W, Th, F หรือเวรพิเศษ S):`,
           components: [rowMenu, rowBack]
         });
         return;
@@ -10496,7 +10496,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
           { label: '🟡 เวรวันจันทร์ (Monday - M)', value: 'M', description: 'แต่งตั้งหัวหน้า/รอง ประจำวันจันทร์', emoji: '🟡' },
           { label: '🌸 เวรวันอังคาร (Tuesday - T)', value: 'T', description: 'แต่งตั้งหัวหน้า/รอง ประจำวันอังคาร', emoji: '🌸' },
           { label: '🟢 เวรวันพุธ (Wednesday - W)', value: 'W', description: 'แต่งตั้งหัวหน้า/รอง ประจำวันพุธ', emoji: '🟢' },
-          { label: '🟠 เวรวันพฤหัสบดี (Ts)', value: 'Ts', description: 'แต่งตั้งหัวหน้า/รอง ประจำวันพฤหัสบดี', emoji: '🟠' },
+          { label: '🟠 เวรวันพฤหัสบดี (Th)', value: 'Th', description: 'แต่งตั้งหัวหน้า/รอง ประจำวันพฤหัสบดี', emoji: '🟠' },
           { label: '🔵 เวรวันศุกร์ (Friday - F)', value: 'F', description: 'แต่งตั้งหัวหน้า/รอง ประจำวันศุกร์', emoji: '🔵' },
           { label: '🟣 เวรพิเศษ (Special Duty - S)', value: 'S', description: 'แต่งตั้งหัวหน้า/รอง ประจำเวรพิเศษทุกวัน', emoji: '🟣' }
         ]);
@@ -10512,7 +10512,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
       await interaction.editReply({
         content: `👑 **แต่งตั้งหัวหน้าและรองหัวหน้าเวร:**\n` +
                  `👤 สารวัตร: **[${member.duty_id || '-'}] ${member.nickname} (${member.first_name} ${member.last_name})**\n` +
-                 `👉 ขั้นที่ 1: เลือกผลัดที่จะแต่งตั้ง (M, T, W, Ts หรือเวรพิเศษ S):`,
+                 `👉 ขั้นที่ 1: เลือกผลัดที่จะแต่งตั้ง (M, T, W, Th หรือเวรพิเศษ S):`,
         components: [rowMenu, rowBack]
       });
       return;
@@ -10532,7 +10532,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
           { label: '👨‍🏫 ครูที่ปรึกษา (Teacher Advisor)', description: 'ครูที่ปรึกษาฝ่ายสารวัตร สิทธิ์ดูข้อมูล/อนุมัติ', value: 'APPOINT_TEACHER', emoji: '👨‍🏫' },
           { label: '👑 ประธานสารวัตรนักเรียน', description: 'ผู้นำสูงสุดของฝ่ายสารวัตร', value: 'APPOINT_PRESIDENT', emoji: '👑' },
           { label: '🎖️ รองประธานสารวัตรนักเรียน', description: 'รองผู้นำฝ่ายสารวัตร', value: 'APPOINT_VICE_PRESIDENT', emoji: '🎖️' },
-          { label: '⭐ หัวหน้าและรองหัวหน้าเวร (เลือกผลัด)', description: 'แต่งตั้งแยกตามผลัด M, T, W, Ts, F หรือเวรพิเศษ S', value: 'FLOW_SHIFT_LEADER', emoji: '⭐' },
+          { label: '⭐ หัวหน้าและรองหัวหน้าเวร (เลือกผลัด)', description: 'แต่งตั้งแยกตามผลัด M, T, W, Th, F หรือเวรพิเศษ S', value: 'FLOW_SHIFT_LEADER', emoji: '⭐' },
           { label: '🛡️ สารวัตรนักเรียนทั่วไป', description: 'ปลดยศผู้นำกลับเป็นสมาชิกปกติ', value: 'DEMOTE_MEMBER', emoji: '🛡️' }
         ]);
 
@@ -10869,7 +10869,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
           { label: 'วันจันทร์ (M)', value: 'M', emoji: '🔵' },
           { label: 'วันอังคาร (T)', value: 'T', emoji: '🟣' },
           { label: 'วันพุธ (W)', value: 'W', emoji: '🟢' },
-          { label: 'วันพฤหัสบดี (Ts)', value: 'Ts', emoji: '🟠' },
+          { label: 'วันพฤหัสบดี (Th)', value: 'Th', emoji: '🟠' },
           { label: 'วันศุกร์ (F)', value: 'F', emoji: '🔴' },
           { label: 'เวรพิเศษทุกวัน (S)', value: 'S', emoji: '⭐' }
         ]);
@@ -10982,7 +10982,7 @@ async function showDutySelection(interaction, memberId, nickname, fullName) {
       { label: 'วันจันทร์ (Monday - M)', value: 'M', description: 'ปฏิบัติหน้าที่เวรประจำวันจันทร์', emoji: '🔵' },
       { label: 'วันอังคาร (Tuesday - T)', value: 'T', description: 'ปฏิบัติหน้าที่เวรประจำวันอังคาร', emoji: '🟣' },
       { label: 'วันพุธ (Wednesday - W)', value: 'W', description: 'ปฏิบัติหน้าที่เวรประจำวันพุธ', emoji: '🟢' },
-      { label: 'วันพฤหัสบดี (Thursday - Ts)', value: 'Ts', description: 'ปฏิบัติหน้าที่เวรประจำวันพฤหัสบดี', emoji: '🟠' },
+      { label: 'วันพฤหัสบดี (Thursday - Th)', value: 'Th', description: 'ปฏิบัติหน้าที่เวรประจำวันพฤหัสบดี', emoji: '🟠' },
       { label: 'วันศุกร์ (Friday - F)', value: 'F', description: 'ปฏิบัติหน้าที่เวรประจำวันศุกร์', emoji: '🔴' }
     ]);
 
@@ -11087,12 +11087,12 @@ function generateQRCodeSVG(text, sizeMm = 20) {
 }
 
 function getEnglishDayName(dayCode) {
-  const base = dayCode === 'TSS' ? 'Ts' : dayCode.replace(/S+$/, '') || dayCode;
+  const base = dayCode === 'ThS' ? 'Th' : dayCode.replace(/S+$/, '') || dayCode;
   switch (base) {
     case 'M': return 'MONDAY';
     case 'T': return 'TUESDAY';
     case 'W': return 'WEDNESDAY';
-    case 'Ts': return 'THURSDAY';
+    case 'Th': return 'THURSDAY';
     case 'F': return 'FRIDAY';
     case 'S': return 'SPECIAL';
     default: return 'ATTENDANCE';
@@ -11105,8 +11105,8 @@ function getAttendanceDates(dayCode, count = 12, qNumber = null, acadYear = null
   const y = acadYear || period.academicYear || 2569;
   const ceYear = y - 543;
 
-  const dayIndexMap = { 'M': 0, 'T': 1, 'W': 2, 'Ts': 3, 'F': 4, 'S': 0 };
-  const baseDay = dayCode === 'TSS' ? 'Ts' : (dayCode.replace(/S+$/, '') || 'M');
+  const dayIndexMap = { 'M': 0, 'T': 1, 'W': 2, 'Th': 3, 'F': 4, 'S': 0 };
+  const baseDay = dayCode === 'ThS' ? 'Th' : (dayCode.replace(/S+$/, '') || 'M');
   const offsetDays = dayIndexMap[baseDay] ?? 0;
 
   let baseMonday;
@@ -11641,7 +11641,7 @@ function generateCombinedAttendanceSheetHTML(allMembers, leadershipAssignments =
     { code: 'M', name: 'เวรวันจันทร์' },
     { code: 'T', name: 'เวรวันอังคาร' },
     { code: 'W', name: 'เวรวันพุธ' },
-    { code: 'Ts', name: 'เวรวันพฤหัสบดี' },
+    { code: 'Th', name: 'เวรวันพฤหัสบดี' },
     { code: 'F', name: 'เวรวันศุกร์' },
     { code: 'S', name: 'เวรพิเศษ' }
   ];
@@ -11649,7 +11649,7 @@ function generateCombinedAttendanceSheetHTML(allMembers, leadershipAssignments =
   const sectionsHtml = shifts.map(shift => {
     const shiftMembers = allMembers.filter(m => {
       if (shift.code === 'S') return m.duty_day === 'S' || (m.duty_day && m.duty_day.endsWith('S'));
-      const combinedCode = shift.code === 'Ts' ? 'TSS' : `${shift.code}S`;
+      const combinedCode = shift.code === 'Th' ? 'ThS' : `${shift.code}S`;
       return m.duty_day === shift.code || m.duty_day === combinedCode;
     });
 
@@ -11830,7 +11830,7 @@ function generateCombinedAttendanceSheetHTML(allMembers, leadershipAssignments =
 <html lang="th">
 <head>
   <meta charset="UTF-8">
-  <title>ใบเช็คชื่อ - รวมทุกรอบเวร (M, T, W, Ts, F)</title>
+  <title>ใบเช็คชื่อ - รวมทุกรอบเวร (M, T, W, Th, F)</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Sarabun:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;1,400&display=swap" rel="stylesheet">
@@ -12099,7 +12099,7 @@ function generateCombinedAttendanceSheetHTML(allMembers, leadershipAssignments =
       <a href="#shift-M" class="nav-btn">จันทร์</a>
       <a href="#shift-T" class="nav-btn">อังคาร</a>
       <a href="#shift-W" class="nav-btn">พุธ</a>
-      <a href="#shift-Ts" class="nav-btn">พฤหัสบดี</a>
+      <a href="#shift-Th" class="nav-btn">พฤหัสบดี</a>
       <a href="#shift-F" class="nav-btn">ศุกร์</a>
       <button class="btn-print" onclick="window.print()">สั่งพิมพ์เอกสารทั้งหมด (Print All A4)</button>
     </div>

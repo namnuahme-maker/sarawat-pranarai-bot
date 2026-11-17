@@ -88,8 +88,8 @@ test('runSystemDiagnostics produces valid diagnostic report schema', async () =>
 });
 
 test('sendDailyDutyReminders dryRun mode executes safely', async () => {
-  const res = await sendDailyDutyReminders(null, { dryRun: true, forceDay: 'Ts' });
+  const res = await sendDailyDutyReminders(null, { dryRun: true, forceDay: 'Th' });
   assert.ok(res.success, 'dryRun should succeed');
   assert.ok(Array.isArray(res.codes), 'target codes should be returned');
-  assert.ok(res.codes.includes('Ts'), 'target codes should include forced day');
+  assert.ok(res.codes.includes('Th'), 'target codes should include forced day');
 });

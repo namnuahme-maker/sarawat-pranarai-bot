@@ -49,8 +49,8 @@ const ROLES_TO_CREATE = [
   { key: 'ROLE_DEPUTY_T', name: '✨ รองหัวหน้าเวรอังคาร (T)', color: '#BB8FCE', reason: 'รองผู้นำเวรวันอังคาร' },
   { key: 'ROLE_HEAD_W', name: '👑 หัวหน้าเวรพุธ (W)', color: '#27AE60', reason: 'ผู้นำเวรวันพุธ' },
   { key: 'ROLE_DEPUTY_W', name: '✨ รองหัวหน้าเวรพุธ (W)', color: '#58D68D', reason: 'รองผู้นำเวรวันพุธ' },
-  { key: 'ROLE_HEAD_THU', name: '👑 หัวหน้าเวรพฤหัสบดี (Ts)', color: '#D35400', reason: 'ผู้นำเวรวันพฤหัสบดี' },
-  { key: 'ROLE_DEPUTY_THU', name: '✨ รองหัวหน้าเวรพฤหัสบดี (Ts)', color: '#E59866', reason: 'รองผู้นำเวรวันพฤหัสบดี' },
+  { key: 'ROLE_HEAD_THU', name: '👑 หัวหน้าเวรพฤหัสบดี (Th)', color: '#D35400', reason: 'ผู้นำเวรวันพฤหัสบดี' },
+  { key: 'ROLE_DEPUTY_THU', name: '✨ รองหัวหน้าเวรพฤหัสบดี (Th)', color: '#E59866', reason: 'รองผู้นำเวรวันพฤหัสบดี' },
   { key: 'ROLE_HEAD_F', name: '👑 หัวหน้าเวรศุกร์ (F)', color: '#C0392B', reason: 'ผู้นำเวรวันศุกร์' },
   { key: 'ROLE_DEPUTY_F', name: '✨ รองหัวหน้าเวรศุกร์ (F)', color: '#EC7063', reason: 'รองผู้นำเวรวันศุกร์' },
   { key: 'ROLE_SPECIAL', name: '🌟 สารวัตรเวรพิเศษ (S)', color: '#8E44AD', reason: 'สารวัตรปฏิบัติหน้าที่ทุกวัน' },
@@ -58,7 +58,7 @@ const ROLES_TO_CREATE = [
   { key: 'ROLE_MON', name: '🔵 เวรวันจันทร์ (M)', color: '#00A8FF', reason: 'เวรวันจันทร์' },
   { key: 'ROLE_TUE', name: '🟣 เวรวันอังคาร (T)', color: '#9C88FF', reason: 'เวรวันอังคาร' },
   { key: 'ROLE_WED', name: '🟢 เวรวันพุธ (W)', color: '#4CD137', reason: 'เวรวันพุธ' },
-  { key: 'ROLE_THU', name: '🟠 เวรวันพฤหัสบดี (Ts)', color: '#E67E22', reason: 'เวรวันพฤหัสบดี' },
+  { key: 'ROLE_THU', name: '🟠 เวรวันพฤหัสบดี (Th)', color: '#E67E22', reason: 'เวรวันพฤหัสบดี' },
   { key: 'ROLE_FRI', name: '🔴 เวรวันศุกร์ (F)', color: '#E84118', reason: 'เวรวันศุกร์' },
   { key: 'ROLE_UNVERIFIED', name: '⏳ รอการยืนยันตัวตน / รออนุมัติ', color: '#7F8C8D', reason: 'สมาชิกใหม่รออนุมัติ' }
 ];
@@ -157,7 +157,7 @@ client.once(Events.ClientReady || 'ready', async () => {
       { code: 'M', name: '🔵│เวรวันจันทร์-m', roleKey: 'ROLE_MON' },
       { code: 'T', name: '🟣│เวรวันอังคาร-t', roleKey: 'ROLE_TUE' },
       { code: 'W', name: '🟢│เวรวันพุธ-w', roleKey: 'ROLE_WED' },
-      { code: 'Ts', name: '🟠│เวรวันพฤหัสบดี-ts', roleKey: 'ROLE_THU' },
+      { code: 'Th', name: '🟠│เวรวันพฤหัสบดี-ts', roleKey: 'ROLE_THU' },
       { code: 'F', name: '🔴│เวรวันศุกร์-f', roleKey: 'ROLE_FRI' }
     ];
 

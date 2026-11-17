@@ -43,14 +43,14 @@ function saveAttendanceData(db) {
  */
 function normalizeShift(input) {
   if (!input) {
-    const dayMap = { 1: 'M', 2: 'T', 3: 'W', 4: 'Ts', 5: 'F', 6: 'S', 0: 'S' };
+    const dayMap = { 1: 'M', 2: 'T', 3: 'W', 4: 'Th', 5: 'F', 6: 'S', 0: 'S' };
     input = dayMap[new Date().getDay()] || 'M';
   }
   const s = String(input).trim().toUpperCase();
   if (s.includes('จันทร์') || s === 'M' || s === 'MS') return { code: 'M', dbCodes: ['M', 'MS'], name: 'วันจันทร์' };
   if (s.includes('อังคาร') || s === 'T' || s === 'TS') return { code: 'T', dbCodes: ['T', 'TS'], name: 'วันอังคาร' };
   if (s.includes('พุธ') || s === 'W' || s === 'WS') return { code: 'W', dbCodes: ['W', 'WS'], name: 'วันพุธ' };
-  if (s.includes('พฤหัส') || s === 'TS' || s === 'TH' || s === 'THS') return { code: 'Ts', dbCodes: ['Ts', 'TH', 'THS'], name: 'วันพฤหัสบดี' };
+  if (s.includes('พฤหัส') || s === 'TS' || s === 'TH' || s === 'THS') return { code: 'Th', dbCodes: ['Th', 'TH', 'THS'], name: 'วันพฤหัสบดี' };
   if (s.includes('ศุกร์') || s === 'F' || s === 'FS') return { code: 'F', dbCodes: ['F', 'FS'], name: 'วันศุกร์' };
   if (s.includes('พิเศษ') || s === 'S' || s === 'SS') return { code: 'S', dbCodes: ['S', 'SS'], name: 'เวรพิเศษทุกวัน' };
   return { code: 'M', dbCodes: ['M', 'MS'], name: 'วันจันทร์' };
