@@ -6313,19 +6313,53 @@ client.on('interactionCreate', async (interaction) => {
 
       const { data: member } = await supabase.from('members').select('*').eq('id', selectedValue).single();
 
-      if (!member.phone_number) {
-        const phoneModal = new ModalBuilder()
-          .setCustomId(`modal_fill_phone_${member.id}`)
-          .setTitle('📞 ระบุเบอร์โทรศัพท์เพื่อยืนยัน');
+      // ตรวจสอบข้อมูลส่วนตัวที่ยังขาด (กรณีเพิ่มจากเว็บโดยเว้นว่างไว้)
+      const missingPhone = !member.phone_number || member.phone_number === '-';
+      const missingClass = !member.grade_class || member.grade_class === '-';
+      const missingNo = !member.student_no || member.student_no === 0;
 
-        const phoneInput = new TextInputBuilder()
-          .setCustomId('input_phone')
-          .setLabel('เบอร์โทรศัพท์ (เช่น 0891234567)')
-          .setStyle(TextInputStyle.Short)
-          .setRequired(true);
+      if (missingPhone || missingClass || missingNo) {
+        const completeModal = new ModalBuilder()
+          .setCustomId(`modal_complete_member_${member.id}`)
+          .setTitle('📝 ระบุข้อมูลเพิ่มเติมเพื่อยืนยัน');
 
-        phoneModal.addComponents(new ActionRowBuilder().addComponents(phoneInput));
-        await interaction.showModal(phoneModal);
+        if (missingPhone) {
+          const phoneInput = new TextInputBuilder()
+            .setCustomId('input_phone')
+            .setLabel('เบอร์โทรศัพท์ (เช่น 0891234567)')
+            .setPlaceholder('กรอกเบอร์โทรศัพท์มือถือ')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true);
+          completeModal.addComponents(new ActionRowBuilder().addComponents(phoneInput));
+        }
+
+        if (missingClass) {
+          const classInput = new TextInputBuilder()
+            .setCustomId('input_class')
+            .setLabel('ระดับชั้น (เช่น 6/7 ไม่ต้องใส่ ม.)')
+            .setPlaceholder('เช่น 6/7, 5/2, 4/10')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true);
+          completeModal.addComponents(new ActionRowBuilder().addComponents(classInput));
+        }
+
+        if (missingNo) {
+          const noInput = new TextInputBuilder()
+            .setCustomId('input_no')
+            .setLabel('เลขที่ในห้องเรียน')
+            .setPlaceholder('เช่น 15, 23')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true);
+          completeModal.addComponents(new ActionRowBuilder().addComponents(noInput));
+        }
+
+        await interaction.showModal(completeModal);
+        return;
+      }
+
+      // หากยังไม่ได้กำหนดวันเวร ให้ข้ามไปขั้นตอนเลือกวันเวรทันที
+      if (!member.duty_day || member.duty_day === '-') {
+        await showDutySelection(interaction, member.id, member.nickname, `${member.first_name} ${member.last_name}`);
         return;
       }
 
@@ -6336,6 +6370,7 @@ client.on('interactionCreate', async (interaction) => {
           `โปรดตรวจสอบข้อมูลด้านล่างนี้ว่าถูกต้องและตรงกับตัวคุณหรือไม่\n\n` +
           `👤 **ชื่อ-นามสกุล:** ${member.first_name} ${member.last_name} (**${member.nickname}**)\n` +
           `🏫 **ชั้นเรียน:** มัธยมศึกษาปีที่ **${member.grade_class}** (เลขที่ **${member.student_no}**)\n` +
+          `📅 **เวรประจำวัน:** **${getShiftLabel(member.duty_day) || member.duty_day}**\n` +
           `📞 **เบอร์โทรศัพท์:** \`${member.phone_number || '-'}\`\n\n` +
           `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
           `🔹 **สถานะขั้นตอน:** 🟩⬜⬜ (ขั้นตอนที่ 1 จาก 3)`
@@ -6585,19 +6620,130 @@ client.on('interactionCreate', async (interaction) => {
       return;
     }
 
+    if (interaction.isModalSubmit() && interaction.customId.startsWith('modal_complete_member_')) {
+      const memberId = interaction.customId.replace('modal_complete_member_', '');
+      const updates = {};
+
+      try {
+        const phone = interaction.fields.getTextInputValue('input_phone')?.trim();
+        if (phone) updates.phone_number = phone;
+      } catch (e) {}
+
+      try {
+        const gradeClass = interaction.fields.getTextInputValue('input_class')?.trim();
+        if (gradeClass) updates.grade_class = gradeClass.replace(/^ม\./, '').trim();
+      } catch (e) {}
+
+      try {
+        const rawNo = interaction.fields.getTextInputValue('input_no')?.trim();
+        if (rawNo) updates.student_no = parseInt(rawNo, 10) || null;
+      } catch (e) {}
+
+      updates.updated_at = new Date();
+
+      if (Object.keys(updates).length > 0) {
+        await supabase.from('members').update(updates).eq('id', memberId);
+      }
+
+      const { data: member } = await supabase.from('members').select('*').eq('id', memberId).single();
+
+      if (!member.duty_day || member.duty_day === '-') {
+        await showDutySelection(interaction, member.id, member.nickname, `${member.first_name} ${member.last_name}`);
+      } else {
+        const confirmEmbed = new EmbedBuilder()
+          .setTitle('🛡️ [ขั้นตอนที่ 1/3] ตรวจสอบข้อมูลตัวตนของคุณ')
+          .setColor('#3498DB')
+          .setDescription(
+            `โปรดตรวจสอบข้อมูลด้านล่างนี้ว่าถูกต้องและตรงกับตัวคุณหรือไม่\n\n` +
+            `👤 **ชื่อ-นามสกุล:** ${member.first_name} ${member.last_name} (**${member.nickname}**)\n` +
+            `🏫 **ชั้นเรียน:** มัธยมศึกษาปีที่ **${member.grade_class}** (เลขที่ **${member.student_no || '-'}**)\n` +
+            `📅 **เวรประจำวัน:** **${getShiftLabel(member.duty_day) || member.duty_day}**\n` +
+            `📞 **เบอร์โทรศัพท์:** \`${member.phone_number || '-'}\`\n\n` +
+            `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+            `🔹 **สถานะขั้นตอน:** 🟩⬜⬜ (ขั้นตอนที่ 1 จาก 3)`
+          );
+
+        const confirmRow = new ActionRowBuilder().addComponents(
+          new ButtonBuilder()
+            .setCustomId(`btn_confirm_identity_${member.id}`)
+            .setLabel('✅ ข้อมูลถูกต้อง ยืนยันตัวตน')
+            .setStyle(ButtonStyle.Success),
+          new ButtonBuilder()
+            .setCustomId('btn_reg_choose_student')
+            .setLabel('↩️ ไม่ใช่ / เลือกชื่อใหม่')
+            .setStyle(ButtonStyle.Secondary)
+        );
+
+        await interaction.reply({
+          embeds: [confirmEmbed],
+          components: [confirmRow],
+          ephemeral: true
+        });
+      }
+      return;
+    }
+
     if (interaction.isModalSubmit() && interaction.customId.startsWith('modal_fill_phone_')) {
       const memberId = interaction.customId.replace('modal_fill_phone_', '');
       const phone = interaction.fields.getTextInputValue('input_phone').trim();
 
       await supabase.from('members').update({ phone_number: phone }).eq('id', memberId);
       const { data: member } = await supabase.from('members').select('*').eq('id', memberId).single();
-      await showDutySelection(interaction, member.id, member.nickname, `${member.first_name} ${member.last_name}`);
+      if (!member.duty_day || member.duty_day === '-') {
+        await showDutySelection(interaction, member.id, member.nickname, `${member.first_name} ${member.last_name}`);
+      } else {
+        await showDutySelection(interaction, member.id, member.nickname, `${member.first_name} ${member.last_name}`);
+      }
     }
 
     if (interaction.isButton() && interaction.customId.startsWith('btn_confirm_identity_')) {
       const memberId = interaction.customId.replace('btn_confirm_identity_', '');
       const { data: member } = await supabase.from('members').select('*').eq('id', memberId).single();
-      await showDutySelection(interaction, member.id, member.nickname, `${member.first_name} ${member.last_name}`);
+
+      if (!member.duty_day || member.duty_day === '-') {
+        await showDutySelection(interaction, member.id, member.nickname, `${member.first_name} ${member.last_name}`);
+      } else {
+        await interaction.deferUpdate();
+        // เคลียร์ discord_id ออกจากแถวอื่นของผู้ใช้นี้ก่อน เพื่อป้องกัน duplicate
+        await supabase
+          .from('members')
+          .update({ discord_id: null })
+          .eq('discord_id', interaction.user.id)
+          .neq('id', memberId);
+
+        await supabase
+          .from('members')
+          .update({
+            discord_id: interaction.user.id,
+            status: 'PENDING_APPROVAL',
+            updated_at: new Date()
+          })
+          .eq('id', memberId);
+
+        if (ROLE_IDS.UNVERIFIED) {
+          try {
+            const gm = await interaction.guild.members.fetch(interaction.user.id);
+            await gm.roles.add(ROLE_IDS.UNVERIFIED).catch(() => {});
+          } catch (e) {}
+        }
+
+        const promptPhotoEmbed = new EmbedBuilder()
+          .setTitle('📸 [ขั้นตอนสุดท้าย] กรุณาส่งรูปถ่ายหน้าตรงของคุณ')
+          .setColor('#F39C12')
+          .setDescription(
+            `ระบบได้บันทึกข้อมูลส่วนตัวของ **${member.first_name} ${member.last_name} (${member.nickname})** เรียบร้อยแล้ว!\n\n` +
+            `👉 **ส่งรูปในช่องนี้เพื่ออัพโหลดรูปหน้าคุณ**\n` +
+            `*(แนบไฟล์รูปถ่ายหน้าตรงในเครื่องแบบของคุณ เพื่อนำไปจัดทำบัตรประจำตัวและส่งขออนุมัติ)*\n\n` +
+            `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+            `💡 *เมื่อคุณส่งรูปเข้ามาในช่องนี้แล้ว บอทจะบันทึกรูปและให้คุณตรวจสอบเพื่อกดยืนยันก่อนเสนอผู้บริหารทันที*`
+          )
+          .setFooter({ text: 'ระบบลงทะเบียนสารวัตร • โรงเรียนพระนารายณ์' });
+
+        await interaction.editReply({
+          embeds: [promptPhotoEmbed],
+          components: []
+        });
+      }
     }
 
     // 2. เลือกเวรประจำสัปดาห์ (จันทร์ - ศุกร์) -> ขั้นถัดไปถามเรื่องเวรพิเศษ
