@@ -345,6 +345,44 @@ const ROLE_IDS = {
   }
 };
 
+async function getLeadershipRoleIdsForMember(memberId) {
+  if (!memberId) return [];
+  try {
+    const { data, error } = await supabase
+      .from('shift_leadership')
+      .select('shift_code, position')
+      .eq('member_id', memberId);
+    if (error) throw error;
+    return (data || []).map(a => a.position === 'HEAD'
+      ? ROLE_IDS.HEADS[a.shift_code]
+      : ROLE_IDS.DEPUTIES[a.shift_code]).filter(Boolean);
+  } catch (e) {
+    console.error('[LEADERSHIP] Failed to load assignments:', e.message);
+    return [];
+  }
+}
+
+function getShiftLeader(members, assignments, shiftCode, position) {
+  const memberId = (assignments || []).find(a => a.shift_code === shiftCode && a.position === position)?.member_id;
+  const fromAssignment = (members || []).find(m => m.id === memberId);
+  if (fromAssignment) return fromAssignment;
+  if (position === 'HEAD') {
+    return (members || []).find(m => m.shift_role === 'SHIFT_HEAD' || m.role === 'SHIFT_HEAD' || !!m.is_head) || null;
+  }
+  if (position === 'DEPUTY') {
+    return (members || []).find(m => m.shift_role === 'SHIFT_DEPUTY' || m.role === 'SHIFT_DEPUTY' || !!m.is_deputy) || null;
+  }
+  return null;
+}
+
+function memberBelongsToLeadershipShift(dutyDay, shiftCode) {
+  const code = String(dutyDay || '').trim();
+  if (shiftCode === 'S') return code === 'S' || /S$/.test(code);
+  if (shiftCode === 'Ts') return ['Ts', 'TSS', 'TsS'].includes(code);
+  const specialVariants = { M: 'MS', T: 'TS', W: 'WS', F: 'FS' };
+  return code === shiftCode || code === specialVariants[shiftCode];
+}
+
 const DAY_NAMES = {
   'M': 'วันจันทร์',
   'T': 'วันอังคาร',
@@ -1110,6 +1148,24 @@ async function syncAllMemberRoles(guild) {
     return { success: false, message: 'ℹ️ ไม่พบสมาชิกสถานะ ACTIVE ที่มี Discord ID ในฐานข้อมูล', successCount: 0, failCount: 0 };
   }
 
+  let leadershipAssignments = [];
+  try {
+    const { data: assignments, error: leadershipError } = await supabase
+      .from('shift_leadership').select('member_id, shift_code, position');
+    if (!leadershipError && assignments) leadershipAssignments = assignments;
+  } catch (e) {}
+
+  const leadershipRolesByMember = new Map();
+  for (const assignment of leadershipAssignments || []) {
+    const roleId = assignment.position === 'HEAD'
+      ? ROLE_IDS.HEADS[assignment.shift_code]
+      : ROLE_IDS.DEPUTIES[assignment.shift_code];
+    if (!roleId) continue;
+    leadershipRolesByMember.set(assignment.member_id, [
+      ...(leadershipRolesByMember.get(assignment.member_id) || []), roleId
+    ]);
+  }
+
   let successCount = 0;
   let failCount = 0;
   const errors = [];
@@ -1124,14 +1180,21 @@ async function syncAllMemberRoles(guild) {
       if (m.role === 'TEACHER' && ROLE_IDS.TEACHER) rolesToAdd.push(ROLE_IDS.TEACHER);
       if (m.role === 'PRESIDENT' && ROLE_IDS.PRESIDENT) rolesToAdd.push(ROLE_IDS.PRESIDENT);
       if (m.role === 'VICE_PRESIDENT' && ROLE_IDS.VICE_PRESIDENT) rolesToAdd.push(ROLE_IDS.VICE_PRESIDENT);
-      const baseDay = m.duty_day === 'TSS' ? 'Ts' : m.duty_day.replace(/S+$/, '');
-      if (m.shift_role === 'SHIFT_HEAD') {
-        if (ROLE_IDS.HEADS[baseDay]) rolesToAdd.push(ROLE_IDS.HEADS[baseDay]);
-        if (m.duty_day.endsWith('S') && ROLE_IDS.HEAD_S) rolesToAdd.push(ROLE_IDS.HEAD_S);
-      }
-      if (m.shift_role === 'SHIFT_DEPUTY') {
-        if (ROLE_IDS.DEPUTIES[baseDay]) rolesToAdd.push(ROLE_IDS.DEPUTIES[baseDay]);
-        if (m.duty_day.endsWith('S') && ROLE_IDS.DEPUTY_S) rolesToAdd.push(ROLE_IDS.DEPUTY_S);
+
+      const assignedLeadership = leadershipRolesByMember.get(m.id);
+      if (assignedLeadership && assignedLeadership.length > 0) {
+        rolesToAdd.push(...assignedLeadership);
+      } else {
+        // Fallback to legacy shift_role
+        const baseDay = m.duty_day === 'TSS' ? 'Ts' : (m.duty_day || '').replace(/S+$/, '');
+        if (m.shift_role === 'SHIFT_HEAD' || m.role === 'SHIFT_HEAD' || !!m.is_head) {
+          if (ROLE_IDS.HEADS[baseDay]) rolesToAdd.push(ROLE_IDS.HEADS[baseDay]);
+          if ((m.duty_day || '').endsWith('S') && ROLE_IDS.HEADS.S) rolesToAdd.push(ROLE_IDS.HEADS.S);
+        }
+        if (m.shift_role === 'SHIFT_DEPUTY' || m.role === 'SHIFT_DEPUTY' || !!m.is_deputy) {
+          if (ROLE_IDS.DEPUTIES[baseDay]) rolesToAdd.push(ROLE_IDS.DEPUTIES[baseDay]);
+          if ((m.duty_day || '').endsWith('S') && ROLE_IDS.DEPUTIES.S) rolesToAdd.push(ROLE_IDS.DEPUTIES.S);
+        }
       }
 
       const validRoles = rolesToAdd.filter(rid => rid && guild.roles.cache.has(rid));
@@ -2467,6 +2530,10 @@ async function executeDemoteLeader(memberId, operatorId, guild) {
     })
     .eq('id', memberId);
 
+  const { error: leadershipDeleteError } = await supabase
+    .from('shift_leadership').delete().eq('member_id', memberId);
+  if (leadershipDeleteError) console.warn('[DEMOTE_LEADER] Could not clear shift assignments:', leadershipDeleteError.message);
+
   // ปรับยศใน Discord
   if (member.discord_id && guild) {
     try {
@@ -2538,6 +2605,10 @@ async function executeDismissMember(memberId, operatorId, guild) {
       updated_at: new Date()
     })
     .eq('id', memberId);
+
+  const { error: leadershipDeleteError } = await supabase
+    .from('shift_leadership').delete().eq('member_id', memberId);
+  if (leadershipDeleteError) console.warn('[DISMISS_MEMBER] Could not clear shift assignments:', leadershipDeleteError.message);
 
   // ปรับยศใน Discord
   if (member.discord_id && guild) {
@@ -2640,16 +2711,20 @@ async function handleOpenDemoteMenu(interaction, targetUser = null) {
     return;
   }
 
+  const { data: leadershipAssignments = [] } = await supabase
+    .from('shift_leadership').select('member_id, shift_code, position');
+
   const selectMenu = new StringSelectMenuBuilder()
     .setCustomId('select_demote_target_member')
     .setPlaceholder('🔍 เลือกสารวัตรที่ต้องการปลดหน้าที่ / ถอดยศ');
 
   members.slice(0, 25).forEach(m => {
     const dayText = getDayName(m.duty_day);
+    const shiftPositions = leadershipAssignments.filter(a => a.member_id === m.id)
+      .map(a => `${a.position === 'HEAD' ? 'หัวหน้า' : 'รอง'}(${a.shift_code})`).join(', ');
     const curRole = m.role === 'PRESIDENT' ? '👑 ประธาน' :
                     m.role === 'VICE_PRESIDENT' ? '🎖️ รองประธาน' :
-                    m.shift_role === 'SHIFT_HEAD' ? '👑 หัวหน้าเวร' :
-                    m.shift_role === 'SHIFT_DEPUTY' ? '🎖️ รองหัวหน้าเวร' : 'สารวัตรทั่วไป';
+                    shiftPositions || 'สารวัตรทั่วไป';
 
     selectMenu.addOptions({
       label: `[${m.duty_id || '-'}] ${m.nickname} (${m.first_name} ${m.last_name})`.slice(0, 100),
@@ -2687,15 +2762,16 @@ async function handleOpenDemoteMenu(interaction, targetUser = null) {
  */
 async function renderDemoteLevelSelection(interaction, member) {
   const dayText = getDayName(member.duty_day);
+  const { data: leadershipAssignments = [] } = await supabase
+    .from('shift_leadership').select('shift_code, position').eq('member_id', member.id);
+  const shiftPositions = leadershipAssignments.map(a => `${a.position === 'HEAD' ? 'หัวหน้าเวร' : 'รองหัวหน้าเวร'} (${a.shift_code})`);
   const isLeader = member.role === 'PRESIDENT' ||
                    member.role === 'VICE_PRESIDENT' ||
-                   member.shift_role === 'SHIFT_HEAD' ||
-                   member.shift_role === 'SHIFT_DEPUTY';
+                   leadershipAssignments.length > 0;
 
   const roleText = member.role === 'PRESIDENT' ? '👑 ประธานสารวัตรนักเรียน' :
                    member.role === 'VICE_PRESIDENT' ? '🎖️ รองประธานสารวัตรนักเรียน' :
-                   member.shift_role === 'SHIFT_HEAD' ? '👑 หัวหน้าเวร' :
-                   member.shift_role === 'SHIFT_DEPUTY' ? '🎖️ รองหัวหน้าเวร' : '🛡️ สารวัตรนักเรียนทั่วไป';
+                   shiftPositions.length ? shiftPositions.join(' • ') : '🛡️ สารวัตรนักเรียนทั่วไป';
 
   const embed = new EmbedBuilder()
     .setTitle('⛔ จัดการปลดหน้าที่ / ถอดยศสารวัตร')
@@ -7211,16 +7287,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
               if (member.role === 'PRESIDENT' && ROLE_IDS.PRESIDENT) rolesToAdd.push(ROLE_IDS.PRESIDENT);
               if (member.role === 'VICE_PRESIDENT' && ROLE_IDS.VICE_PRESIDENT) rolesToAdd.push(ROLE_IDS.VICE_PRESIDENT);
               
-              // แจกยศหัวหน้าเวร / รองหัวหน้าเวรประจำวันนั้นๆ
-              const baseDay = member.duty_day === 'S' ? 'S' : (member.duty_day === 'TSS' ? 'Ts' : (member.duty_day.replace(/S+$/, '') || member.duty_day));
-              if (member.shift_role === 'SHIFT_HEAD') {
-                if (ROLE_IDS.HEADS[baseDay]) rolesToAdd.push(ROLE_IDS.HEADS[baseDay]);
-                if (member.duty_day.endsWith('S') && ROLE_IDS.HEAD_S) rolesToAdd.push(ROLE_IDS.HEAD_S);
-              }
-              if (member.shift_role === 'SHIFT_DEPUTY') {
-                if (ROLE_IDS.DEPUTIES[baseDay]) rolesToAdd.push(ROLE_IDS.DEPUTIES[baseDay]);
-                if (member.duty_day.endsWith('S') && ROLE_IDS.DEPUTY_S) rolesToAdd.push(ROLE_IDS.DEPUTY_S);
-              }
+              rolesToAdd.push(...await getLeadershipRoleIdsForMember(member.id));
 
               const validApprovedRoles = rolesToAdd.filter(rid => rid && interaction.guild.roles.cache.has(rid));
               if (validApprovedRoles.length > 0) {
@@ -7468,7 +7535,11 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
           return;
         }
 
-        const htmlContent = generateCombinedAttendanceSheetHTML(members);
+        const { data: leadershipAssignments, error: leadershipError } = await supabase
+          .from('shift_leadership').select('member_id, shift_code, position');
+        if (leadershipError) throw leadershipError;
+
+        const htmlContent = generateCombinedAttendanceSheetHTML(members, leadershipAssignments || []);
         const tempId = storeTempAttendanceSheet(htmlContent, 'ขอรวมทุกรอบเวร');
         const onlineUrl = `${getBaseUrl()}/sheet/${tempId}`;
 
@@ -7476,9 +7547,9 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
         const attachment = new AttachmentBuilder(buffer, { name: 'ตารางเช็คชื่อ_รวมทุกเวร_12สัปดาห์.html' });
 
         const embed = new EmbedBuilder()
-          .setTitle('📄 ตารางเช็คชื่อ: รวมทุกรอบเวร (M, T, W, Ts, F)')
+        .setTitle('📄 ตารางเช็คชื่อ: รวม 6 ผลัด (M, T, W, Ts, F, S)')
           .setDescription(
-            `เวร: รวมทุกรอบเวร (5 รอบเวร วันจันทร์ - ศุกร์)\n` +
+            `เวร: รวม 6 ผลัด (วันจันทร์ - ศุกร์ และเวรพิเศษ S)\n` +
             `สมาชิกทั้งหมด: ${members.length} นาย\n` +
             `ลิงก์ออนไลน์: ${onlineUrl}\n` +
             `อายุลิงก์: 30 นาที (ลบอัตโนมัติ)\n` +
@@ -7550,7 +7621,11 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
           return;
         }
 
-        const htmlContent = generateCombinedAttendanceSheetHTML(members);
+        const { data: leadershipAssignments, error: leadershipError } = await supabase
+          .from('shift_leadership').select('member_id, shift_code, position');
+        if (leadershipError) throw leadershipError;
+
+        const htmlContent = generateCombinedAttendanceSheetHTML(members, leadershipAssignments || []);
         const tempId = storeTempAttendanceSheet(htmlContent, 'รวมทุกรอบเวร');
         const onlineUrl = `${getBaseUrl()}/sheet/${tempId}`;
 
@@ -7558,9 +7633,9 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
         const attachment = new AttachmentBuilder(buffer, { name: 'ตารางเช็คชื่อ_รวมทุกเวร_12สัปดาห์.html' });
 
         const embed = new EmbedBuilder()
-          .setTitle('📄 ตารางเช็คชื่อ: รวมทุกรอบเวร (M, T, W, Ts, F)')
+          .setTitle('📄 ตารางเช็คชื่อ: รวม 6 ผลัด (M, T, W, Ts, F, S)')
           .setDescription(
-            `เวร: รวมทุกรอบเวร (5 รอบเวร วันจันทร์ - ศุกร์)\n` +
+            `เวร: รวม 6 ผลัด (วันจันทร์ - ศุกร์ และเวรพิเศษ S)\n` +
             `สมาชิกทั้งหมด: ${members.length} นาย\n` +
             `ลิงก์ออนไลน์: ${onlineUrl}\n` +
             `อายุลิงก์: 30 นาที (ลบอัตโนมัติ)\n` +
@@ -7603,6 +7678,10 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
 
       if (error) throw error;
 
+      const { data: leadershipAssignments, error: leadershipError } = await supabase
+        .from('shift_leadership').select('member_id, shift_code, position');
+      if (leadershipError) throw leadershipError;
+
       const dayText = getDayName(selectedDay);
 
       if (!members || members.length === 0) {
@@ -7613,15 +7692,15 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
         return;
       }
 
-      const htmlContent = generateAttendanceSheetHTML(selectedDay, dayText, members);
+      const htmlContent = generateAttendanceSheetHTML(selectedDay, dayText, members, leadershipAssignments || []);
       const tempId = storeTempAttendanceSheet(htmlContent, dayText);
       const onlineUrl = `${getBaseUrl()}/sheet/${tempId}`;
 
       const buffer = Buffer.from(htmlContent, 'utf-8');
       const attachment = new AttachmentBuilder(buffer, { name: `ตารางเช็คชื่อ_เวร_${selectedDay}.html` });
 
-      const head = members.find(m => m.shift_role === 'SHIFT_HEAD');
-      const deputy = members.find(m => m.shift_role === 'SHIFT_DEPUTY');
+      const head = getShiftLeader(members, leadershipAssignments, selectedDay, 'HEAD');
+      const deputy = getShiftLeader(members, leadershipAssignments, selectedDay, 'DEPUTY');
 
       const headText = head ? `[${head.duty_id}] ${head.nickname} (${head.first_name} ${head.last_name})` : 'ยังไม่ได้แต่งตั้ง';
       const deputyText = deputy ? `[${deputy.duty_id}] ${deputy.nickname} (${deputy.first_name} ${deputy.last_name})` : 'ยังไม่ได้แต่งตั้ง';
@@ -9889,18 +9968,15 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
 
       if (error) throw error;
 
+      const { data: leadershipAssignments, error: leadershipError } = await supabase
+        .from('shift_leadership').select('member_id, shift_code, position');
+      if (leadershipError) throw leadershipError;
+
       const grouped = { 'M': [], 'T': [], 'W': [], 'Ts': [], 'F': [], 'S': [] };
       members.forEach(m => {
-        if (grouped[m.duty_day]) {
-          grouped[m.duty_day].push(m);
-        } else {
-          const base = m.duty_day === 'TSS' ? 'Ts' : m.duty_day?.replace(/S+$/, '');
-          if (base && grouped[base]) {
-            grouped[base].push(m);
-          } else if (grouped['S']) {
-            grouped['S'].push(m);
-          }
-        }
+        const base = m.duty_day === 'S' ? 'S' : (['Ts', 'TSS', 'TsS'].includes(m.duty_day) ? 'Ts' : m.duty_day?.replace(/S+$/, ''));
+        if (base && grouped[base] && !grouped[base].includes(m)) grouped[base].push(m);
+        if (m.duty_day && m.duty_day !== 'S' && /S$/.test(m.duty_day) && !grouped.S.includes(m)) grouped.S.push(m);
       });
 
       let previewText = '📋 **พรีวิวรายชื่อสารวัตรนักเรียนทั้งหมด (แยกตามเวร):**\n';
@@ -9911,7 +9987,8 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
         } else {
           previewText += dayMembers
             .map(m => {
-              const roleTag = m.shift_role === 'SHIFT_HEAD' ? ' 👑(หัวหน้าเวร)' : (m.shift_role === 'SHIFT_DEPUTY' ? ' 🎖️(รอง)' : '');
+              const assignment = leadershipAssignments.find(a => a.member_id === m.id && a.shift_code === dayCode);
+              const roleTag = assignment?.position === 'HEAD' ? ' 👑(หัวหน้าเวร)' : (assignment?.position === 'DEPUTY' ? ' 🎖️(รอง)' : '');
               return `  • **[${m.duty_id || 'รอรหัส'}]** ${m.nickname} (${m.first_name} ${m.last_name})${roleTag}`;
             })
             .join('\n') + '\n';
@@ -9947,7 +10024,8 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
         .map(l => `• ${l.leave_date} (${l.leave_type}): ${l.reason}`)
         .join('\n') || 'ยังไม่มีประวัติการลา';
 
-      const shiftRoleThai = member.shift_role === 'SHIFT_HEAD' ? '👑 หัวหน้าเวร' : (member.shift_role === 'SHIFT_DEPUTY' ? '🎖️ รองหัวหน้าเวร' : 'สารวัตรประจำเวร');
+      const { data: memberLeadership } = await supabase.from('shift_leadership').select('shift_code, position').eq('member_id', memberId);
+      const shiftRoleThai = (memberLeadership || []).map(a => `${a.position === 'HEAD' ? '👑 หัวหน้า' : '🎖️ รอง'} (${a.shift_code})`).join(' • ') || 'สารวัตรประจำเวร';
       const mainRoleThai = member.role === 'PRESIDENT' ? '👑 ประธานสารวัตร' : (member.role === 'VICE_PRESIDENT' ? '🎖️ รองประธานสารวัตร' : 'สมาชิก');
 
       const profileEmbed = new EmbedBuilder()
@@ -10333,6 +10411,13 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
         })
         .eq('id', memberId);
 
+      const { error: clearLeadershipError } = await supabase
+        .from('shift_leadership').delete().eq('member_id', memberId);
+      if (clearLeadershipError) {
+        await interaction.followUp({ content: '❌ อัปเดตตำแหน่งไม่สำเร็จ กรุณาติดตั้ง migration_v10 แล้วลองอีกครั้ง', ephemeral: true });
+        return;
+      }
+
       if (member.discord_id) {
         try {
           const guildMember = await interaction.guild.members.fetch(member.discord_id).catch(() => null);
@@ -10492,39 +10577,64 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
       const roleTitle = isHead ? `👑 หัวหน้าเวร (${dayName})` : `🎖️ รองหัวหน้าเวร (${dayName})`;
       const addRoleId = isHead ? ROLE_IDS.HEADS[selectedDay] : ROLE_IDS.DEPUTIES[selectedDay];
 
-      const newDutyDay = resolveDutyDayForAppoint(member.duty_day, selectedDay);
-      const validDayRoles = getDutyRoles(newDutyDay);
-      const allDayRoles = Object.values(ROLE_IDS.DAYS || {}).filter(Boolean);
-      const obsoleteDayRoles = allDayRoles.filter(rid => !validDayRoles.includes(rid));
+      if (!addRoleId || !memberBelongsToLeadershipShift(member.duty_day, selectedDay)) {
+        await interaction.followUp({ content: '❌ แต่งตั้งไม่สำเร็จ: สมาชิกต้องอยู่ในผลัดที่เลือก และต้องตั้งค่า Discord role ของผลัดนั้นให้ครบ', ephemeral: true });
+        return;
+      }
 
-      const allHeadAndDeputyRoles = [
-        ...Object.values(ROLE_IDS.HEADS || {}),
-        ...Object.values(ROLE_IDS.DEPUTIES || {})
-      ].filter(Boolean);
-      const obsoleteLeadershipRoles = allHeadAndDeputyRoles.filter(rid => rid !== addRoleId);
+      const position = isHead ? 'HEAD' : 'DEPUTY';
+      const { data: previousAssignment, error: previousError } = await supabase
+        .from('shift_leadership')
+        .select('member_id')
+        .eq('shift_code', selectedDay)
+        .eq('position', position)
+        .maybeSingle();
+      if (previousError) {
+        await interaction.followUp({ content: '❌ อ่านตำแหน่งเดิมไม่สำเร็จ โปรดติดตั้ง migration_v10 แล้วลองอีกครั้ง', ephemeral: true });
+        return;
+      }
 
-      const rolesToAdd = [addRoleId, ...validDayRoles].filter(Boolean);
-      const removeRoleIds = [...obsoleteLeadershipRoles, ...obsoleteDayRoles].filter(Boolean);
+      const { data: sameShiftAssignment, error: sameShiftError } = await supabase
+        .from('shift_leadership')
+        .select('position')
+        .eq('member_id', memberId)
+        .eq('shift_code', selectedDay)
+        .maybeSingle();
+      if (sameShiftError || (sameShiftAssignment && sameShiftAssignment.position !== position)) {
+        await interaction.followUp({ content: '❌ สารวัตรคนเดียวกันเป็นทั้งหัวหน้าและรองหัวหน้าในผลัดเดียวกันไม่ได้', ephemeral: true });
+        return;
+      }
 
-      await supabase
-        .from('members')
-        .update({
-          shift_role: roleType,
-          duty_day: newDutyDay,
-          updated_at: new Date()
-        })
-        .eq('id', memberId);
+      const { error: assignError } = await supabase
+        .from('shift_leadership')
+        .upsert({
+          shift_code: selectedDay,
+          position,
+          member_id: memberId,
+          assigned_by: interaction.user.id,
+          updated_at: new Date().toISOString()
+        }, { onConflict: 'shift_code,position' });
+      if (assignError) {
+        await interaction.followUp({ content: '❌ บันทึกตำแหน่งไม่สำเร็จ โปรดติดตั้ง migration_v10 แล้วลองอีกครั้ง', ephemeral: true });
+        return;
+      }
+
+      if (previousAssignment?.member_id && previousAssignment.member_id !== memberId) {
+        const previousRoleId = isHead ? ROLE_IDS.HEADS[selectedDay] : ROLE_IDS.DEPUTIES[selectedDay];
+        if (previousRoleId) {
+          const previousMember = await supabase.from('members').select('discord_id').eq('id', previousAssignment.member_id).maybeSingle();
+          if (previousMember.data?.discord_id) {
+            const oldGuildMember = await interaction.guild.members.fetch(previousMember.data.discord_id).catch(() => null);
+            if (oldGuildMember?.roles.cache.has(previousRoleId)) await oldGuildMember.roles.remove(previousRoleId).catch(() => {});
+          }
+        }
+      }
 
       if (member.discord_id) {
         try {
           const guildMember = await interaction.guild.members.fetch(member.discord_id).catch(() => null);
           if (guildMember) {
-            for (const rid of rolesToAdd) {
-              await guildMember.roles.add(rid).catch(() => {});
-            }
-            for (const rid of removeRoleIds) {
-              await guildMember.roles.remove(rid).catch(() => {});
-            }
+            await guildMember.roles.add(addRoleId).catch(() => {});
           }
         } catch (e) {
           console.warn('Role update error:', e.message);
@@ -10535,7 +10645,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
         content: `✅ **แต่งตั้งตำแหน่งเรียบร้อยแล้ว**\n` +
                  `👤 **ชื่อ:** [${member.duty_id || '-'}] ${member.nickname} (${member.first_name} ${member.last_name})\n` +
                  `🎖️ **ตำแหน่ง:** ${roleTitle}\n` +
-                 `📅 **เวรปฏิบัติหน้าที่:** ${getDayName(newDutyDay)} (${newDutyDay})\n` +
+                 `📅 **ผลัดที่รับตำแหน่ง:** ${getDayName(selectedDay)} (${selectedDay})\n` +
                  `🛡️ **ผู้แต่งตั้ง:** <@${interaction.user.id}>`,
         components: []
       });
@@ -10547,7 +10657,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
           .setDescription(
             `👤 **ชื่อ:** [${member.duty_id || '-'}] ${member.nickname} (${member.first_name} ${member.last_name}) <@${member.discord_id}>\n` +
             `🎖️ **ตำแหน่ง:** ${roleTitle}\n` +
-            `📅 **เวรปฏิบัติหน้าที่:** ${getDayName(newDutyDay)} (${newDutyDay})\n` +
+            `📅 **ผลัดที่รับตำแหน่ง:** ${getDayName(selectedDay)} (${selectedDay})\n` +
             `🛡️ **ผู้แต่งตั้ง:** <@${interaction.user.id}>`
           )
           .setColor(isHead ? '#F1C40F' : '#3498DB')
@@ -10597,11 +10707,14 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
         return;
       }
 
+      const { data: leadershipAssignments = [] } = await supabase
+        .from('shift_leadership').select('shift_code, position').eq('member_id', member.id);
+      const shiftPositions = leadershipAssignments.map(a => `${a.position === 'HEAD' ? 'หัวหน้าเวร' : 'รองหัวหน้าเวร'} (${a.shift_code})`);
+
       const curRoleText = member.role === 'ADMIN' ? '⚡ ผู้ดูแลระบบ (System Admin)' :
                           member.role === 'PRESIDENT' ? '👑 ประธานสารวัตร' :
                           member.role === 'VICE_PRESIDENT' ? '🎖️ รองประธานสารวัตร' :
-                          member.shift_role === 'SHIFT_HEAD' ? '👑 หัวหน้าเวร' :
-                          member.shift_role === 'SHIFT_DEPUTY' ? '🎖️ รองหัวหน้าเวร' : 'ผู้นำ';
+                          shiftPositions.length ? shiftPositions.join(' • ') : 'ผู้นำ';
 
       const confirmEmbed = new EmbedBuilder()
         .setTitle('⚠️ ยืนยันการปลดตำแหน่งผู้นำ (ระดับ 1)')
@@ -11087,10 +11200,10 @@ function generateAttendanceCoverPageHTML(options) {
 }
 
 // ฟังก์ชันสร้างหน้าเว็บใบเช็คชื่อ A4 มาตรฐาน พร้อมระบุชื่อหัวหน้า/รองหัวหน้าบนหัวกระดาษ (OMR + Vision Anchor ฉบับปรับปรุง 11 ข้อ)
-function generateAttendanceSheetHTML(dayCode, dayName, members) {
+function generateAttendanceSheetHTML(dayCode, dayName, members, leadershipAssignments = []) {
   const period = getAcademicPeriod();
-  const head = members.find(m => m.shift_role === 'SHIFT_HEAD');
-  const deputy = members.find(m => m.shift_role === 'SHIFT_DEPUTY');
+  const head = getShiftLeader(members, leadershipAssignments, dayCode, 'HEAD');
+  const deputy = getShiftLeader(members, leadershipAssignments, dayCode, 'DEPUTY');
 
   const headText = head ? `[${head.duty_id || '-'}] ${head.nickname || '-'} (${head.first_name || ''} ${head.last_name || ''})` : 'ยังไม่ได้แต่งตั้ง';
   const deputyText = deputy ? `[${deputy.duty_id || '-'}] ${deputy.nickname || '-'} (${deputy.first_name || ''} ${deputy.last_name || ''})` : 'ยังไม่ได้แต่งตั้ง';
@@ -11118,9 +11231,10 @@ function generateAttendanceSheetHTML(dayCode, dayName, members) {
   let rows = '';
   if (members.length > 0) {
     rows = members.map(m => {
-      const roleTag = m.shift_role === 'SHIFT_HEAD' 
+      const assignment = (leadershipAssignments || []).find(a => a.member_id === m.id && a.shift_code === dayCode);
+      const roleTag = assignment?.position === 'HEAD'
         ? ' <span style="color: #b91c1c; font-weight: bold; font-size: 7.5pt;">(หัวหน้า)</span>' 
-        : (m.shift_role === 'SHIFT_DEPUTY' ? ' <span style="color: #0284c7; font-weight: bold; font-size: 7.5pt;">(รอง)</span>' : '');
+        : (assignment?.position === 'DEPUTY' ? ' <span style="color: #0284c7; font-weight: bold; font-size: 7.5pt;">(รอง)</span>' : '');
 
       const dateCells = dates.map((dStr, wIdx) => `
         <td style="width: 12.5mm; height: 8mm; padding: 0; text-align: center; vertical-align: middle;">
@@ -11523,15 +11637,15 @@ function generateAttendanceSheetHTML(dayCode, dayName, members) {
 </html>`;
 }
 
-function generateCombinedAttendanceSheetHTML(allMembers) {
+function generateCombinedAttendanceSheetHTML(allMembers, leadershipAssignments = []) {
   const period = getAcademicPeriod();
   const logoBase64 = getSarawatLogoBase64();
 
   const coverPageHtml = generateAttendanceCoverPageHTML({
     logoBase64,
-    subtitle: 'สมุดบันทึกการมาปฏิบัติหน้าที่ประจำจุด • รวมทุกรอบผลัดเวร (วันจันทร์ - วันศุกร์)',
+    subtitle: 'สมุดบันทึกการมาปฏิบัติหน้าที่ประจำจุด • รวม 6 ผลัด (วันจันทร์ - วันศุกร์ และเวรพิเศษ S)',
     periodText: `${period.fullLabel}`,
-    shiftText: `รวม 5 ผลัดเวรปฏิบัติหน้าที่ (วันจันทร์ - วันศุกร์) • กำลังพลทั้งหมด ${allMembers.length} นาย`,
+    shiftText: `รวม 6 ผลัดเวรปฏิบัติหน้าที่ • กำลังพลทั้งหมด ${allMembers.length} นาย`,
     leadInfo: 'กลุ่มงานกิจการนักเรียน • ฝ่ายสารวัตรนักเรียน โรงเรียนพระนารายณ์',
     academicYear: period.academicYear
   });
@@ -11541,7 +11655,8 @@ function generateCombinedAttendanceSheetHTML(allMembers) {
     { code: 'T', name: 'เวรวันอังคาร' },
     { code: 'W', name: 'เวรวันพุธ' },
     { code: 'Ts', name: 'เวรวันพฤหัสบดี' },
-    { code: 'F', name: 'เวรวันศุกร์' }
+    { code: 'F', name: 'เวรวันศุกร์' },
+    { code: 'S', name: 'เวรพิเศษ' }
   ];
 
   const sectionsHtml = shifts.map(shift => {
@@ -11551,8 +11666,8 @@ function generateCombinedAttendanceSheetHTML(allMembers) {
       return m.duty_day === shift.code || m.duty_day === combinedCode;
     });
 
-    const head = shiftMembers.find(m => m.shift_role === 'SHIFT_HEAD');
-    const deputy = shiftMembers.find(m => m.shift_role === 'SHIFT_DEPUTY');
+    const head = getShiftLeader(shiftMembers, leadershipAssignments, shift.code, 'HEAD');
+    const deputy = getShiftLeader(shiftMembers, leadershipAssignments, shift.code, 'DEPUTY');
 
     const headText = head ? `[${head.duty_id || '-'}] ${head.nickname || '-'} (${head.first_name || ''} ${head.last_name || ''})` : 'ยังไม่ได้แต่งตั้ง';
     const deputyText = deputy ? `[${deputy.duty_id || '-'}] ${deputy.nickname || '-'} (${deputy.first_name || ''} ${deputy.last_name || ''})` : 'ยังไม่ได้แต่งตั้ง';
@@ -11570,9 +11685,10 @@ function generateCombinedAttendanceSheetHTML(allMembers) {
     let rows = '';
     if (shiftMembers.length > 0) {
       rows = shiftMembers.map(m => {
-        const roleTag = m.shift_role === 'SHIFT_HEAD' 
+        const assignment = (leadershipAssignments || []).find(a => a.member_id === m.id && a.shift_code === shift.code);
+        const roleTag = assignment?.position === 'HEAD'
           ? ' <span style="color: #b91c1c; font-weight: bold; font-size: 7.5pt;">(หัวหน้า)</span>' 
-          : (m.shift_role === 'SHIFT_DEPUTY' ? ' <span style="color: #0284c7; font-weight: bold; font-size: 7.5pt;">(รอง)</span>' : '');
+          : (assignment?.position === 'DEPUTY' ? ' <span style="color: #0284c7; font-weight: bold; font-size: 7.5pt;">(รอง)</span>' : '');
 
         const dateCells = dates.map((dStr, wIdx) => `
           <td style="width: 12.5mm; height: 8mm; padding: 0; text-align: center; vertical-align: middle;">
