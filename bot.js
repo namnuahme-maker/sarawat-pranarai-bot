@@ -5963,52 +5963,120 @@ client.on('interactionCreate', async (interaction) => {
     }
 
     if (interaction.isButton() && interaction.customId === 'btn_reg_choose_student') {
-      const modal = new ModalBuilder()
-        .setCustomId('modal_new_member')
-        .setTitle('📝 แบบฟอร์มลงทะเบียนสารวัตรใหม่');
+      // 1. ค้นหารายชื่อสารวัตรที่ยังไม่เคยผูกไอดี Discord ในระบบ
+      const { data: unlinkedMembers } = await supabase
+        .from('members')
+        .select('*')
+        .is('discord_id', null)
+        .in('status', ['PENDING_APPROVAL', 'ACTIVE'])
+        .order('grade_class', { ascending: true })
+        .order('student_no', { ascending: true })
+        .order('first_name', { ascending: true })
+        .limit(24);
 
-      const nameInput = new TextInputBuilder()
-        .setCustomId('input_full_name')
-        .setLabel('ชื่อจริง-นามสกุล (มี นาย/นาง/นางสาว ติดชื่อ)')
-        .setPlaceholder('เช่น นายสมชาย ใจดี หรือ นางสาวสมหญิง รักเรียน')
-        .setStyle(TextInputStyle.Short)
-        .setRequired(true);
+      // ถ้าในระบบยังไม่มีรายชื่อสารวัตรเดิมเลย ให้เปิด Modal กรอกข้อมูลใหม่ทันที
+      if (!unlinkedMembers || unlinkedMembers.length === 0) {
+        const modal = new ModalBuilder()
+          .setCustomId('modal_new_member')
+          .setTitle('📝 แบบฟอร์มลงทะเบียนสารวัตรใหม่');
 
-      const nicknameInput = new TextInputBuilder()
-        .setCustomId('input_nickname')
-        .setLabel('ชื่อเล่น')
-        .setPlaceholder('เช่น น้ำเหนือ, ปัน, นน')
-        .setStyle(TextInputStyle.Short)
-        .setRequired(true);
+        const nameInput = new TextInputBuilder()
+          .setCustomId('input_full_name')
+          .setLabel('ชื่อจริง-นามสกุล (มี นาย/นาง/นางสาว ติดชื่อ)')
+          .setPlaceholder('เช่น นายสมชาย ใจดี หรือ นางสาวสมหญิง รักเรียน')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true);
 
-      const classInput = new TextInputBuilder()
-        .setCustomId('input_class')
-        .setLabel('ระดับชั้น (เช่น 6/7, 4/10 ไม่ต้องใส่ ม.)')
-        .setPlaceholder('เช่น 6/7, 4/10, 5/2 (ห้ามใส่ ม.)')
-        .setStyle(TextInputStyle.Short)
-        .setRequired(true);
+        const nicknameInput = new TextInputBuilder()
+          .setCustomId('input_nickname')
+          .setLabel('ชื่อเล่น')
+          .setPlaceholder('เช่น น้ำเหนือ, ปัน, นน')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true);
 
-      const noInput = new TextInputBuilder()
-        .setCustomId('input_no')
-        .setLabel('เลขที่')
-        .setStyle(TextInputStyle.Short)
-        .setRequired(true);
+        const classInput = new TextInputBuilder()
+          .setCustomId('input_class')
+          .setLabel('ระดับชั้น (เช่น 6/7, 4/10 ไม่ต้องใส่ ม.)')
+          .setPlaceholder('เช่น 6/7, 4/10, 5/2 (ห้ามใส่ ม.)')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true);
 
-      const phoneInput = new TextInputBuilder()
-        .setCustomId('input_phone')
-        .setLabel('เบอร์โทรศัพท์ (เช่น 0891234567)')
-        .setStyle(TextInputStyle.Short)
-        .setRequired(true);
+        const noInput = new TextInputBuilder()
+          .setCustomId('input_no')
+          .setLabel('เลขที่')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true);
 
-      modal.addComponents(
-        new ActionRowBuilder().addComponents(nameInput),
-        new ActionRowBuilder().addComponents(nicknameInput),
-        new ActionRowBuilder().addComponents(classInput),
-        new ActionRowBuilder().addComponents(noInput),
-        new ActionRowBuilder().addComponents(phoneInput)
+        const phoneInput = new TextInputBuilder()
+          .setCustomId('input_phone')
+          .setLabel('เบอร์โทรศัพท์ (เช่น 0891234567)')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true);
+
+        modal.addComponents(
+          new ActionRowBuilder().addComponents(nameInput),
+          new ActionRowBuilder().addComponents(nicknameInput),
+          new ActionRowBuilder().addComponents(classInput),
+          new ActionRowBuilder().addComponents(noInput),
+          new ActionRowBuilder().addComponents(phoneInput)
+        );
+
+        await interaction.showModal(modal);
+        return;
+      }
+
+      // สร้างตัวเลือก Dropdown (Select Menu): ตัวเลือกแรกคือ "➕ ไม่มีรายชื่อของฉัน (เพิ่มข้อมูลใหม่)"
+      const selectMenu = new StringSelectMenuBuilder()
+        .setCustomId('select_member_identity')
+        .setPlaceholder('🔍 เลือกรหัส / รายชื่อของคุณ หรือเลือกเพิ่มข้อมูลใหม่...')
+        .addOptions([
+          {
+            label: '➕ ไม่มีรายชื่อของฉัน (เพิ่มข้อมูลใหม่)',
+            value: 'action_add_new_member',
+            description: 'หากไม่พบรายชื่อในระบบ คลิกที่นี่เพื่อกรอกข้อมูลด้วยตนเอง',
+            emoji: '➕'
+          },
+          ...unlinkedMembers.slice(0, 24).map(m => {
+            const classText = m.grade_class ? `ม.${m.grade_class}` : '-';
+            const noText = m.student_no ? `เลขที่ ${m.student_no}` : '';
+            const dutyText = m.duty_day ? `[เวร ${getShiftLabel(m.duty_day) || m.duty_day}]` : '';
+            const desc = `${classText} ${noText} ${dutyText}`.trim().slice(0, 100) || 'สารวัตรนักเรียน';
+            const fullName = `${m.first_name} ${m.last_name}`.trim();
+            const label = `${fullName} (${m.nickname || '-'})`.slice(0, 100);
+            return {
+              label,
+              value: m.id,
+              description: desc,
+              emoji: '👤'
+            };
+          })
+        ]);
+
+      const selectRow = new ActionRowBuilder().addComponents(selectMenu);
+      const cancelRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId('btn_start_verify')
+          .setLabel('↩️ ย้อนกลับไปเลือกประเภท')
+          .setStyle(ButtonStyle.Secondary)
       );
 
-      await interaction.showModal(modal);
+      const embed = new EmbedBuilder()
+        .setTitle('🛡️ [ขั้นตอนที่ 1/3] เลือกรายชื่อสารวัตรของคุณ')
+        .setColor('#3498DB')
+        .setDescription(
+          'โปรดตรวจสอบและเลือกรายชื่อของคุณจากเมนูด้านล่างนี้:\n\n' +
+          '• **หากพบรายชื่อของคุณ:** ให้กดเลือกชื่อของคุณเพื่อตรวจสอบข้อมูลและยืนยันตัวตน\n' +
+          '• **หากยังไม่มีรายชื่อของคุณ:** ให้เลือก **"➕ ไม่มีรายชื่อของฉัน (เพิ่มข้อมูลใหม่)"** เพื่อกรอกข้อมูลใหม่ด้วยตนเอง\n\n' +
+          '━━━━━━━━━━━━━━━━━━━━━━━━━━\n' +
+          '🔹 **สถานะขั้นตอน:** 🟩⬜⬜ (ขั้นตอนที่ 1 จาก 3)'
+        )
+        .setFooter({ text: 'ระบบลงทะเบียนสารวัตร • โรงเรียนพระนารายณ์ (เฉพาะคุณที่มองเห็น)' });
+
+      await interaction.update({
+        embeds: [embed],
+        components: [selectRow, cancelRow],
+        content: null
+      });
       return;
     }
 
@@ -6145,7 +6213,7 @@ client.on('interactionCreate', async (interaction) => {
           .setLabel('✅ ข้อมูลถูกต้อง ยืนยันตัวตน')
           .setStyle(ButtonStyle.Success),
         new ButtonBuilder()
-          .setCustomId('btn_start_verify')
+          .setCustomId('btn_reg_choose_student')
           .setLabel('↩️ ไม่ใช่ / เลือกชื่อใหม่')
           .setStyle(ButtonStyle.Secondary)
       );
