@@ -11810,6 +11810,11 @@ function generateAttendanceSheetHTML(dayCode, dayName, members, leadershipAssign
     `<th class="date-header" style="width: 12.5mm; font-size: 7.5pt; font-weight: 700;" title="สัปดาห์ที่ ${idx + 1}: ${d}">${d}</th>`
   ).join('');
 
+  const isSpecialShift = baseDutyDay(dayCode) === 'S';
+  const legendNote = isSpecialShift
+    ? '* ขีดนับการปฏิบัติหน้าที่รายวันในช่องสี่เหลี่ยม [卌] = มาครบ 5 วัน/สัปดาห์ | การลาเวรให้แจ้งผ่านระบบ Discord *'
+    : '* ฝนดำในวงกลม [○] (ม) = มาปฏิบัติหน้าที่ | ช่องว่าง = มาสาย (ส) | การลาเวรให้แจ้งผ่านระบบ Discord *';
+
   let rows = '';
   if (members.length > 0) {
     const sortedMembers = sortMembersByGradeRoomNumber(members);
@@ -11819,13 +11824,21 @@ function generateAttendanceSheetHTML(dayCode, dayName, members, leadershipAssign
         ? ' <span style="color: #b91c1c; font-weight: bold; font-size: 7.5pt;">(หัวหน้า)</span>' 
         : (assignment?.position === 'DEPUTY' ? ' <span style="color: #0284c7; font-weight: bold; font-size: 7.5pt;">(รอง)</span>' : '');
 
-      const dateCells = dates.map((dStr, wIdx) => `
-        <td style="width: 12.5mm; height: 8mm; padding: 0; text-align: center; vertical-align: middle;">
-          <div class="omr-circle" data-duty="${m.duty_id || ''}" data-col="${wIdx}" onclick="this.classList.toggle('marked-present')" title="${m.duty_id || ''} วันที่ ${dStr}: ฝนดำเมื่อมาปฏิบัติหน้าที่ (ม)">
-            ม
-          </div>
-        </td>
-      `).join('');
+      const dateCells = dates.map((dStr, wIdx) => {
+        if (isSpecialShift) {
+          return `
+            <td style="width: 12.5mm; height: 8mm; padding: 0; text-align: center; vertical-align: middle; background-color: #ffffff;">
+            </td>
+          `;
+        }
+        return `
+          <td style="width: 12.5mm; height: 8mm; padding: 0; text-align: center; vertical-align: middle;">
+            <div class="omr-circle" data-duty="${m.duty_id || ''}" data-col="${wIdx}" onclick="this.classList.toggle('marked-present')" title="${m.duty_id || ''} วันที่ ${dStr}: ฝนดำเมื่อมาปฏิบัติหน้าที่ (ม)">
+              ม
+            </div>
+          </td>
+        `;
+      }).join('');
 
       return `
         <tr style="height: 8mm;">
@@ -12153,7 +12166,7 @@ function generateAttendanceSheetHTML(dayCode, dayName, members, leadershipAssign
         <div>
           <span><strong>รอบเวร:</strong> ${dayName} (${dayCode})</span>
           <span style="margin-left: 14px;"><strong>จำนวนสมาชิกในเวร:</strong> ${members.length} นาย</span>
-          <span style="margin-left: 14px; color: #047857; font-size: 8pt; font-weight: 600;">* ฝนดำในวงกลม [○] (ม) = มาปฏิบัติหน้าที่ | ช่องว่าง = มาสาย (ส) | การลาเวรให้แจ้งผ่านระบบ Discord *</span>
+          <span style="margin-left: 14px; color: #047857; font-size: 8pt; font-weight: 600;">${legendNote}</span>
         </div>
 
         <!-- Machine QR Session Anchor (Offline Embedded SVG 20mm) -->
@@ -12260,6 +12273,10 @@ function generateCombinedAttendanceSheetHTML(allMembers, leadershipAssignments =
     const isSpecial = shift.code === 'S';
     const dates = getAttendanceDates(shift.code, 12, period.quarter, period.academicYear);
 
+    const legendNote = isSpecial
+      ? '* ขีดนับการปฏิบัติหน้าที่รายวันในช่องสี่เหลี่ยม [卌] = มาครบ 5 วัน/สัปดาห์ | การลาเวรให้แจ้งผ่านระบบ Discord *'
+      : '* ฝนดำในวงกลม [○] (ม) = มาปฏิบัติหน้าที่ | ช่องว่าง = มาสาย (ส) | การลาเวรให้แจ้งผ่านระบบ Discord *';
+
     const tableColspanHeader = isSpecial 
       ? 'บันทึกการมาปฏิบัติหน้าที่ (สัปดาห์ที่ 1 ถึง 12)' 
       : 'บันทึกการมาปฏิบัติหน้าที่ (เดือน/วัน)';
@@ -12276,13 +12293,21 @@ function generateCombinedAttendanceSheetHTML(allMembers, leadershipAssignments =
           ? ' <span style="color: #b91c1c; font-weight: bold; font-size: 7.5pt;">(หัวหน้า)</span>' 
           : (assignment?.position === 'DEPUTY' ? ' <span style="color: #0284c7; font-weight: bold; font-size: 7.5pt;">(รอง)</span>' : '');
 
-        const dateCells = dates.map((dStr, wIdx) => `
-          <td style="width: 12.5mm; height: 8mm; padding: 0; text-align: center; vertical-align: middle;">
-            <div class="omr-circle" data-duty="${m.duty_id || ''}" data-col="${wIdx}" onclick="this.classList.toggle('marked-present')" title="${m.duty_id || ''} วันที่ ${dStr}: ฝนดำเมื่อมาปฏิบัติหน้าที่ (ม)">
-              ม
-            </div>
-          </td>
-        `).join('');
+        const dateCells = dates.map((dStr, wIdx) => {
+          if (isSpecial) {
+            return `
+              <td style="width: 12.5mm; height: 8mm; padding: 0; text-align: center; vertical-align: middle; background-color: #ffffff;">
+              </td>
+            `;
+          }
+          return `
+            <td style="width: 12.5mm; height: 8mm; padding: 0; text-align: center; vertical-align: middle;">
+              <div class="omr-circle" data-duty="${m.duty_id || ''}" data-col="${wIdx}" onclick="this.classList.toggle('marked-present')" title="${m.duty_id || ''} วันที่ ${dStr}: ฝนดำเมื่อมาปฏิบัติหน้าที่ (ม)">
+                ม
+              </div>
+            </td>
+          `;
+        }).join('');
 
         return `
           <tr style="height: 8mm;">
@@ -12359,7 +12384,7 @@ function generateCombinedAttendanceSheetHTML(allMembers, leadershipAssignments =
             <div>
               <span><strong>รอบเวร:</strong> ${shift.name} (${shift.code})</span>
               <span style="margin-left: 14px;"><strong>จำนวนสมาชิกในเวร:</strong> ${shiftMembers.length} นาย</span>
-              <span style="margin-left: 14px; color: #047857; font-size: 8pt; font-weight: 600;">* ฝนดำในวงกลม [○] (ม) = มาปฏิบัติหน้าที่ | ช่องว่าง = มาสาย (ส) | การลาเวรให้แจ้งผ่านระบบ Discord *</span>
+              <span style="margin-left: 14px; color: #047857; font-size: 8pt; font-weight: 600;">${legendNote}</span>
             </div>
 
             <!-- Machine QR Session Anchor (Offline Embedded SVG 20mm) -->
@@ -13219,6 +13244,7 @@ module.exports = {
   deleteRegistrationPromptMessage,
   getMemberSortKey,
   sortMembersByGradeRoomNumber,
+  generateAttendanceSheetHTML,
   logError,
   logWarn
 };

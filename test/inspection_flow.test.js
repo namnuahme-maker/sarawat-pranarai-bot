@@ -174,3 +174,22 @@ test('sortMembersByGradeRoomNumber sorts members accurately by Grade -> Room -> 
 
   assert.deepEqual(resultOrder, expectedOrder, 'Roster must be strictly ordered by Grade -> Room -> Student Number');
 });
+
+test('Special Shift (S) uses blank boxes for 5-day tallying, while Weekdays use OMR circles', () => {
+  const { generateAttendanceSheetHTML } = require('../bot.js');
+  assert.equal(typeof generateAttendanceSheetHTML, 'function', 'generateAttendanceSheetHTML must be exported');
+
+  const sampleMembers = [
+    { id: 'm1', duty_id: 'MS1', nickname: 'ไอซ์', first_name: 'มัลลิกา', last_name: 'เลื่อนลอย', grade_class: '5/7', student_no: 14, post: 'ประตู 1' }
+  ];
+
+  // Weekday Monday (M) -> Should contain omr-circle
+  const mondayHtml = generateAttendanceSheetHTML('M', 'เวรวันจันทร์', sampleMembers);
+  assert.ok(mondayHtml.includes('class="omr-circle"'), 'Weekday shift must have OMR circles for AI scanning');
+  assert.ok(mondayHtml.includes('ฝนดำในวงกลม'), 'Weekday shift legend must explain OMR bubbles');
+
+  // Special Shift (S) -> Should NOT contain omr-circle, should have blank boxes and tally legend
+  const specialHtml = generateAttendanceSheetHTML('S', 'เวรพิเศษ', sampleMembers);
+  assert.ok(!specialHtml.includes('class="omr-circle"'), 'Special shift must NOT have OMR circles');
+  assert.ok(specialHtml.includes('卌'), 'Special shift legend must explain tally marking [卌]');
+});
