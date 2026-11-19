@@ -12414,6 +12414,18 @@ function generateCombinedAttendanceSheetHTML(allMembers, leadershipAssignments =
       break-after: auto;
       margin-bottom: 0;
     }
+    @media print {
+      body {
+        padding: 0 !important;
+        margin: 0 !important;
+        background: transparent !important;
+      }
+      .sheet-page {
+        margin: 0 !important;
+        box-shadow: none !important;
+        border-radius: 0 !important;
+      }
+    }
 
     /* 4 Corner Fiducial Markers: 8mm Solid Squares with TL orientation white dot */
     .fiducial-marker {

@@ -145,7 +145,14 @@ CRITICAL RULES:
   }
 
   const rawText = geminiData.candidates[0].content.parts[0].text;
-  const parsed = JSON.parse(rawText || '{}');
+  let parsed = {};
+  try {
+    const stripped = (rawText || '').replace(/```(?:json)?/gi, '').replace(/```/g, '').trim();
+    parsed = JSON.parse(stripped || '{}');
+  } catch (err) {
+    const match = (rawText || '').match(/\{[\s\S]*\}/);
+    if (match) parsed = JSON.parse(match[0]);
+  }
   return {
     model: usedModel,
     results: Array.isArray(parsed.results) ? parsed.results : []
@@ -247,10 +254,13 @@ async function processAttendancePhoto({
       usedModel = aiRes.model;
     } catch (visionErr) {
       console.warn('[VISION-OMR-WARNING]', visionErr.message);
-      // Failsafe fallback: ถือว่าสมาชิกที่ตรวจพบมาปฏิบัติหน้าที่
-      aiResults = roster.map(m => ({ duty_id: m.duty_id, is_filled: true, confidence: 95 }));
+      usedModel = 'VISION_FAILED_MANUAL_CALIBRATION';
+      // ป้องกันการเมคข้อมูลเท็จ: มาร์กเป็นรอตรวจสอบทางเว็บ ไม่สวมรอยว่ามาปฏิบัติหน้าที่ 100%
+      aiResults = roster.map(m => ({ duty_id: m.duty_id, is_filled: false, confidence: 0 }));
     }
   } else {
+    // โหมดจำลองทดสอบระบบ (!test-attendance)
+    usedModel = 'SIMULATION_TEST_MODE';
     aiResults = roster.map(m => ({ duty_id: m.duty_id, is_filled: true, confidence: 95 }));
   }
 
@@ -397,9 +407,15 @@ function buildAttendanceDiscordCard({ session, summary, records, shiftInfo, webU
     }).join('\n');
   }
 
+  const isVisionFailed = session.model_used === 'VISION_FAILED_MANUAL_CALIBRATION';
+  const warningNotice = isVisionFailed 
+    ? '⚠️ **ตรวจพบปัญหาในการอ่าน OMR อัตโนมัติ:** โปรดกดปุ่มด้านล่างเพื่อเปิดหน้าเว็บปรับจุดมุมและยืนยันยอดด้วยตนเอง\n\n'
+    : '';
+
   const embed = new EmbedBuilder()
-    .setTitle('⚡ บันทึกการปฏิบัติหน้าที่ประจำวัน // สารวัตรนักเรียน')
+    .setTitle(isVisionFailed ? '⚠️ ภาพใบเช็คชื่อต้องการการ Calibrate บนเว็บ' : '⚡ บันทึกการปฏิบัติหน้าที่ประจำวัน // สารวัตรนักเรียน')
     .setDescription(
+      warningNotice +
       `**ผลัดปฏิบัติการ:** ${shiftInfo?.name || 'เวรประจำวัน'} [Shift ${session.shift_code}]\n` +
       `**ประจำวันที่:** ${session.duty_date}\n` +
       `**ระบบตรวจสอบ:** Gemini Vision AI (${session.model_used || 'Vision AI'}) OMR + Supabase Cloud\n` +
@@ -415,7 +431,7 @@ function buildAttendanceDiscordCard({ session, summary, records, shiftInfo, webU
       (rosterListText ? `**📋 รายชื่อสารวัตรที่ตรวจเช็ค:**\n${rosterListText}\n\n` : '') +
       `🔗 ข้อมูลซิงค์ขึ้นหน้า Command OS เรียบร้อยแล้ว`
     )
-    .setColor(summary.attendance_rate >= 80 ? '#2ECC71' : (summary.attendance_rate >= 50 ? '#F39C12' : '#E74C3C'))
+    .setColor(isVisionFailed ? '#E67E22' : (summary.attendance_rate >= 80 ? '#2ECC71' : (summary.attendance_rate >= 50 ? '#F39C12' : '#E74C3C')))
     .setFooter({ text: 'SARAWAT PRANARAI OS • PAPER-TO-DIGITAL VISION INGESTION' })
     .setTimestamp();
 
