@@ -45,6 +45,8 @@ const { generateCardHTML } = require('./card_template');
 const { processAttendancePhoto, buildAttendanceDiscordCard } = require('./attendance_manager');
 const { uploadToGoogleDrive } = require('./services/gdrive_service');
 const { initLogger, logError, logWarn } = require('./services/logger');
+const { checkRateLimit } = require('./services/rateLimiter');
+const stateStore = require('./services/stateStore');
 
 const PORT = process.env.PORT || 10000;
 
@@ -345,6 +347,7 @@ const client = new Client({
 });
 
 initLogger({ client, supabase });
+stateStore.init(supabase);
 
 client.on('error', err => {
   logWarn('Discord Client Error', err);
@@ -4639,6 +4642,8 @@ async function createInspectionTicket(interaction, { target, period, officers, p
 // ⚡ จัดการ INTERACTION ทั้งหมด
 // ==========================================================
 client.on('interactionCreate', async (interaction) => {
+  if (!checkRateLimit(interaction)) return;
+
   // ⏱️ ตั้งค่าข้อความแบบ "Only you can see" (ephemeral) ให้หายไปอัตโนมัติใน 2 นาที (120 วินาที)
   const EPHEMERAL_TTL_MS = 2 * 60 * 1000;
   let isEphemeralSession = false;
@@ -6037,6 +6042,7 @@ client.on('interactionCreate', async (interaction) => {
 
     // 1. เริ่มต้นลงทะเบียนสารวัตรใหม่ (ให้เลือกระหว่าง [🎒 สารวัตรนักเรียน] และ [👨‍🏫 ครูที่ปรึกษา])
     if (interaction.isButton() && interaction.customId === 'btn_start_verify') {
+      await interaction.deferReply({ ephemeral: true });
       // ตรวจสอบว่าบัญชีนี้ได้รับการอนุมัติเป็นสารวัตรอยู่แล้วหรือไม่
       const { data: existingActive } = await supabase
         .from('members')
@@ -6054,13 +6060,12 @@ client.on('interactionCreate', async (interaction) => {
                           (existingActive.role === 'PRESIDENT' ? '👑 ประธานสารวัตร' :
                           (existingActive.role === 'VICE_PRESIDENT' ? '🎖️ รองประธานสารวัตร' : (shiftRoleLabel || 'สารวัตรประจำเวร'))));
         const dutyText = isTeacher ? 'ครูที่ปรึกษางานสารวัตร (ทุกวัน/ทุกผลัด)' : getShiftLabel(existingActive.duty_day);
-        await interaction.reply({
+        await interaction.editReply({
           content: `✅ คุณได้รับการยืนยันตัวตนและอนุมัติในระบบแล้ว:\n` +
                    `• ชื่อ: ${existingActive.first_name} ${existingActive.last_name} (${existingActive.nickname})\n` +
                    `• ตำแหน่ง: ${roleLabel}\n` +
                    `• สังกัด/เวร: ${dutyText}\n\n` +
-                   `*(หากต้องการอัปเดตรูปถ่ายทำบัตร สามารถส่งรูปใหม่เข้ามาในช่องนี้ได้ตลอดเวลาครับ)*`,
-          ephemeral: true
+                   `*(หากต้องการอัปเดตรูปถ่ายทำบัตร สามารถส่งรูปใหม่เข้ามาในช่องนี้ได้ตลอดเวลาครับ)*`
         });
         return;
       }
@@ -6088,10 +6093,9 @@ client.on('interactionCreate', async (interaction) => {
           .setStyle(ButtonStyle.Success)
       );
 
-      await interaction.reply({
+      await interaction.editReply({
         embeds: [chooseRoleEmbed],
-        components: [chooseRoleRow],
-        ephemeral: true
+        components: [chooseRoleRow]
       });
       return;
     }
@@ -7960,6 +7964,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
 
     // 5. ขอลาเวร (ด่วน รวดเร็ว เลือกประเภทได้ทันที)
     if (interaction.isButton() && (interaction.customId === 'btn_request_leave' || interaction.customId.startsWith('btn_dm_quick_leave_'))) {
+      await interaction.deferReply({ ephemeral: true });
       let member = null;
       if (interaction.customId.startsWith('btn_dm_quick_leave_')) {
         const memId = interaction.customId.replace('btn_dm_quick_leave_', '');
@@ -7971,9 +7976,8 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
       }
 
       if (!member) {
-        await interaction.reply({
-          content: '⚠️ ไม่พบข้อมูลสารวัตรในระบบ กรุณายืนยันตัวตนในห้อง `#ยืนยันตัวตน` ก่อนครับ',
-          ephemeral: true
+        await interaction.editReply({
+          content: '⚠️ ไม่พบข้อมูลสารวัตรในระบบ กรุณายืนยันตัวตนในห้อง `#ยืนยันตัวตน` ก่อนครับ'
         });
         return;
       }
@@ -7997,12 +8001,11 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
           .setStyle(ButtonStyle.Secondary)
       );
 
-      await interaction.reply({
+      await interaction.editReply({
         content: `### 📝 **แบบฟอร์มขอลาเวรด่วน [${member.duty_id || 'สารวัตร'}]**\n` +
                  `คุณ **${member.nickname}** (${member.first_name})\n` +
                  `โปรดกดเลือกประเภทการลาด้านล่าง เพื่อระบุหมายเหตุ/เหตุผล:`,
-        components: [row],
-        ephemeral: true
+        components: [row]
       });
       return;
     }
@@ -8122,6 +8125,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
     // 5.0.1 ศูนย์บริการสารวัตร: ปุ่ม +ขออนุญาตออกตรวจ (Step-by-Step Flow)
     // -------------------------------------------------------------
     if (interaction.isButton() && (interaction.customId === 'btn_service_request_inspection' || interaction.customId === 'btn_service_request_leave')) {
+      await interaction.deferReply({ ephemeral: true });
       const { data: member } = await supabase
         .from('members')
         .select('*')
@@ -8130,9 +8134,8 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
         .maybeSingle();
 
       if (!member) {
-        await interaction.reply({
-          content: '⚠️ **ไม่พบข้อมูลสารวัตรในระบบ** กรุณายืนยันตัวตนในห้อง `#🛡️│ยืนยันตัวตน` ก่อนทำรายการครับ',
-          ephemeral: true
+        await interaction.editReply({
+          content: '⚠️ **ไม่พบข้อมูลสารวัตรในระบบ** กรุณายืนยันตัวตนในห้อง `#🛡️│ยืนยันตัวตน` ก่อนทำรายการครับ'
         });
         return;
       }
@@ -8145,7 +8148,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
       draft.updatedAt = Date.now();
 
       const panel = buildStep1Panel(member, interaction.user);
-      await interaction.reply(panel);
+      await interaction.editReply(panel);
       return;
     }
 
@@ -8848,6 +8851,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
     // ✏️ ศูนย์บริการสารวัตร: ปุ่มแก้ไขข้อมูลตัวเอง (Self-Service Profile Edit)
     // ==========================================================
     if (interaction.isButton() && interaction.customId === 'btn_service_edit_profile') {
+      await interaction.deferReply({ ephemeral: true });
       const { data: member } = await supabase
         .from('members')
         .select('*')
@@ -8857,9 +8861,8 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
         .maybeSingle();
 
       if (!member) {
-        await interaction.reply({
-          content: '⚠️ **ไม่พบข้อมูลสารวัตรในระบบ:** บัญชี Discord ของคุณยังไม่ได้ลงทะเบียนสารวัตร กรุณาไปที่ห้องลงทะเบียนก่อนครับ',
-          ephemeral: true
+        await interaction.editReply({
+          content: '⚠️ **ไม่พบข้อมูลสารวัตรในระบบ:** บัญชี Discord ของคุณยังไม่ได้ลงทะเบียนสารวัตร กรุณาไปที่ห้องลงทะเบียนก่อนครับ'
         });
         return;
       }
@@ -8903,10 +8906,9 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
           .setStyle(ButtonStyle.Primary)
       );
 
-      await interaction.reply({
+      await interaction.editReply({
         embeds: [profileEmbed],
-        components: [row],
-        ephemeral: true
+        components: [row]
       });
       return;
     }
@@ -11123,6 +11125,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
     }
 
     if (interaction.isStringSelectMenu() && interaction.customId.startsWith('select_assign_case_')) {
+      await interaction.deferUpdate();
       const caseId = interaction.customId.replace('select_assign_case_', '');
       const selectedDay = interaction.values[0];
       const dayText = getDayName(selectedDay);
@@ -11132,7 +11135,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
         status: 'INVESTIGATING'
       }).eq('case_id', caseId);
 
-      await interaction.update({
+      await interaction.editReply({
         content: `มอบหมายคดี ${caseId} ให้ **${dayText}** แล้ว`,
         components: []
       });

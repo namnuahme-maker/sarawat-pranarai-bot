@@ -7,8 +7,8 @@ const fs = require('fs');
 const path = require('path');
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 
-const ATTENDANCE_DB_FILE = path.join(__dirname, 'data', 'attendance_db.json');
-const ATTENDANCE_LOCAL_DB = path.join(__dirname, 'web', 'attendance_db.json');
+const ATTENDANCE_DB_FILE = path.join(__dirname, '..', 'data', 'attendance_db.json');
+const ATTENDANCE_LOCAL_DB = path.join(__dirname, '..', 'web', 'attendance_db.json');
 
 function getAttendanceData() {
   const candidates = [ATTENDANCE_DB_FILE, ATTENDANCE_LOCAL_DB];
@@ -211,7 +211,7 @@ async function processAttendancePhoto({
   let rawImageUrl = null;
   const ext = mimeType.includes('png') ? 'png' : 'jpg';
   const filename = `attendance_${shiftInfo.code}_${Date.now()}.${ext}`;
-  const uploadDir = path.join(__dirname, 'web', 'public', 'uploads');
+  const uploadDir = path.join(__dirname, '..', 'web', 'public', 'uploads');
   try {
     if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
     fs.writeFileSync(path.join(uploadDir, filename), imageBuffer);
@@ -313,7 +313,39 @@ async function processAttendancePhoto({
     created_at: new Date().toISOString()
   };
 
-  // 8. บันทึกลง Persistent Cache (attendance_db.json)
+  // 8. บันทึกและซิงค์ลง Supabase Database (attendance_scan_sessions & attendance_records)
+  if (supabase) {
+    try {
+      await supabase.from('attendance_scan_sessions').upsert({
+        shift_code: sessionData.shift_code,
+        duty_date: sessionData.duty_date,
+        quarter_number: sessionData.quarter_number,
+        week_column_index: sessionData.week_index,
+        raw_image_url: sessionData.raw_image_url,
+        total_roster: total,
+        present_count: present,
+        late_count: late,
+        leave_count: leave,
+        absent_count: absent,
+        attendance_rate,
+        scanned_by: sessionData.scanned_by
+      }, { onConflict: 'shift_code,duty_date' });
+
+      const upsertRows = records.map(r => ({
+        duty_id: r.duty_id,
+        member_name: r.name,
+        shift_code: shiftInfo.code,
+        duty_date: sessionData.duty_date,
+        status: r.status,
+        confidence: 0.95
+      }));
+      await supabase.from('attendance_records').upsert(upsertRows, { onConflict: 'duty_id,duty_date' });
+    } catch (dbErr) {
+      console.warn('[ATTENDANCE-SUPABASE-SYNC-WARNING]', dbErr.message);
+    }
+  }
+
+  // 9. บันทึกลง Persistent Cache สำรอง (attendance_db.json)
   const db = getAttendanceData();
   db.sessions.unshift(sessionData);
   records.forEach(r => {
