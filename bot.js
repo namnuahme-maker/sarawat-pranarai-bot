@@ -11854,7 +11854,7 @@ function generateAttendanceSheetHTML(dayCode, dayName, members, leadershipAssign
     `).join('');
   }
 
-  const qrPayload = `${getWebDashboardUrl()}/attendance-sheet?shift=${dayCode}&q=${period.quarter}&year=${period.academicYear}`;
+  const qrPayload = `${getWebDashboardUrl()}/attendance-scan?shift=${dayCode}`;
   const qrSvg = generateQRCodeSVG(qrPayload, 20);
 
   return `<!DOCTYPE html>
@@ -12158,7 +12158,8 @@ function generateAttendanceSheetHTML(dayCode, dayName, members, leadershipAssign
 
         <!-- Machine QR Session Anchor (Offline Embedded SVG 20mm) -->
         <div style="display: flex; align-items: center; gap: 8px;">
-          <div style="font-size: 7.5pt; text-align: right; line-height: 1.2; color: #475569;">
+          <div style="font-size: 7.5pt; text-align: right; line-height: 1.25; color: #475569;">
+            <span style="font-weight: 700; color: #047857;">📷 สแกนส่งตรวจ AI</span><br>
             <span style="font-weight: 700; color: #0f172a;">FORM: ATT-Q${period.quarter}-${dayCode}</span><br>
             <span>REV: ${period.academicYear} • 12 WEEKS</span>
           </div>
@@ -12310,7 +12311,7 @@ function generateCombinedAttendanceSheetHTML(allMembers, leadershipAssignments =
       `).join('');
     }
 
-    const qrPayload = `${getWebDashboardUrl()}/attendance-sheet?shift=${shift.code}&q=${period.quarter}&year=${period.academicYear}`;
+    const qrPayload = `${getWebDashboardUrl()}/attendance-scan?shift=${shift.code}`;
     const qrSvg = generateQRCodeSVG(qrPayload, 20);
 
     return `
@@ -12363,7 +12364,8 @@ function generateCombinedAttendanceSheetHTML(allMembers, leadershipAssignments =
 
             <!-- Machine QR Session Anchor (Offline Embedded SVG 20mm) -->
             <div style="display: flex; align-items: center; gap: 8px;">
-              <div style="font-size: 7.5pt; text-align: right; line-height: 1.2; color: #475569;">
+              <div style="font-size: 7.5pt; text-align: right; line-height: 1.25; color: #475569;">
+                <span style="font-weight: 700; color: #047857;">📷 สแกนส่งตรวจ AI</span><br>
                 <span style="font-weight: 700; color: #0f172a;">FORM: ATT-Q${period.quarter}-${shift.code}</span><br>
                 <span>REV: ${period.academicYear} • 12 WEEKS</span>
               </div>

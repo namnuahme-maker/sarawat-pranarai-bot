@@ -445,10 +445,6 @@ function buildAttendanceDiscordCard({ session, summary, records, shiftInfo, webU
       .setStyle(ButtonStyle.Link)
       .setURL(rootUrl),
     new ButtonBuilder()
-      .setLabel('📄 แบบฟอร์ม A4')
-      .setStyle(ButtonStyle.Link)
-      .setURL(`${rootUrl}/attendance-sheet?shift=${session.shift_code}`),
-    new ButtonBuilder()
       .setLabel('📱 แอพสแกนเช็คชื่อ')
       .setStyle(ButtonStyle.Link)
       .setURL(`${rootUrl}/attendance-scan?shift=${session.shift_code}`)
