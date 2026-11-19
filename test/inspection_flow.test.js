@@ -111,3 +111,22 @@ test('refreshAllChannelsAndPanels is exported and safe (zero data wipe)', () => 
   const { refreshAllChannelsAndPanels } = require('../bot.js');
   assert.equal(typeof refreshAllChannelsAndPanels, 'function', 'function must be exported');
 });
+
+test('Attendance Sheet date headers format accurately for AI scan step 2', () => {
+  const { getAttendanceDates } = require('../bot.js');
+  if (typeof getAttendanceDates === 'function') {
+    const shifts = ['M', 'T', 'W', 'Th', 'F', 'S'];
+    shifts.forEach(s => {
+      const dates = getAttendanceDates(s, 12);
+      assert.equal(dates.length, 12, `Shift ${s} must have 12 date columns`);
+      dates.forEach((dStr, idx) => {
+        const [m, d] = dStr.split('/');
+        assert.ok(!isNaN(parseInt(m)) && !isNaN(parseInt(d)), `Valid month/day in ${dStr}`);
+        const label = `สัปดาห์ที่ ${idx + 1} (${d}/${m} • ${m}/${d})`;
+        assert.ok(label.includes('สัปดาห์ที่'), 'Label has week prefix');
+        assert.ok(label.includes(`${d}/${m}`), 'Label has day/month');
+        assert.ok(label.includes(`${m}/${d}`), 'Label has month/day');
+      });
+    });
+  }
+});

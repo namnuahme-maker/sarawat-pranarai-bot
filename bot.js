@@ -1006,18 +1006,16 @@ async function sendAttendancePanel(channel) {
   }
 
   const embed = new EmbedBuilder()
-    .setTitle('📋 ศูนย์บริการสารวัตรนักเรียน (SARAWAT SERVICE HUB)')
+    .setTitle('📑 ระบบเช็คชื่อและใบลงเวลาปฏิบัติหน้าที่ (ATTENDANCE & ROSTER)')
     .setDescription(
-      'ยินดีต้อนรับสู่ศูนย์บริการสารวัตรนักเรียน โรงเรียนพระนารายณ์\n\n' +
+      'ยินดีต้อนรับสู่ระบบเช็คชื่อและงานเอกสารสารวัตรนักเรียน โรงเรียนพระนารายณ์\n\n' +
       '━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n' +
-      '📄 **1. งานเอกสารและการลงเวลา**\n' +
-      'ขอใบตารางเช็คชื่อลงเวลาประจำเวร ขนาดกระดาษ A4 มาตรฐาน พร้อมพิมพ์ใช้งานได้ทันที\n\n' +
-      '📝 **2. การแจ้งลาเวรปฏิบัติหน้าที่**\n' +
-      'แจ้งขอลาเวรด่วน พร้อมระบุผู้ปฏิบัติหน้าที่แทน ระบบจะส่งข้อความแจ้งเตือนหาหัวหน้าเวรทันที\n\n' +
-      '🚨 **3. การขออนุมัติออกปฏิบัติหน้าที่**\n' +
-      'ยื่นขออนุมัติตรวจพื้นที่เป้าหมาย / เข้าระงับเหตุด่วน เพื่อเปิดเคสส่งคณะผู้บริหาร\n\n' +
-      '🌐 **4. ระบบสารสนเทศและแดชบอร์ด**\n' +
-      'เข้าสู่ระบบเว็บศูนย์บัญชาการสารวัตรนักเรียน เพื่อดูสถิติ, คดี, และทำเนียบสารวัตร\n' +
+      '⚡ **1. เช็คชื่อด้วยภาพถ่าย AI (OMR Scanner)**\n' +
+      'สแกนภาพถ่ายใบเช็คชื่อประจำเวร ตรวจจับจุดฝน OMR อัตโนมัติ รวดเร็วและแม่นยำ\n\n' +
+      '📄 **2. ขอใบเช็คชื่อ A4 มาตรฐาน**\n' +
+      'ขอใบตารางเช็คชื่อลงเวลาประจำเวร 12 สัปดาห์ ขนาดกระดาษ A4 พร้อมสั่งพิมพ์ใช้งานได้ทันที\n\n' +
+      '📝 **3. แจ้งขอลาเวรปฏิบัติหน้าที่**\n' +
+      'แจ้งขอลาเวรด่วน พร้อมระบุผู้ปฏิบัติหน้าที่แทน ระบบจะส่งข้อความแจ้งเตือนหาหัวหน้าเวรทันที\n' +
       '━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
     )
     .setColor('#1ABC9C')
@@ -1042,15 +1040,7 @@ async function sendAttendancePanel(channel) {
     new ButtonBuilder()
       .setCustomId('btn_request_leave')
       .setLabel('📝 แจ้งขอลาเวร')
-      .setStyle(ButtonStyle.Danger),
-    new ButtonBuilder()
-      .setCustomId('btn_request_inspection')
-      .setLabel('🚨 ขอออกปฏิบัติหน้าที่')
-      .setStyle(ButtonStyle.Primary),
-    new ButtonBuilder()
-      .setLabel('🌐 เว็บไซต์ระบบ')
-      .setStyle(ButtonStyle.Link)
-      .setURL(getWebDashboardUrl())
+      .setStyle(ButtonStyle.Danger)
   );
 
   return await channel.send({ embeds: [embed], components: [row], files });
@@ -1065,14 +1055,16 @@ async function sendInspectorServicePanel(channel) {
       'ยินดีต้อนรับสู่ศูนย์บริการสารวัตรนักเรียน โรงเรียนพระนารายณ์\n' +
       'กรุณากดเลือกบริการที่ต้องการทำรายการด้านล่างนี้:\n\n' +
       '━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n' +
-      '🔍 **+ ขออนุญาตออกตรวจ (Patrol Ticket)**\n' +
-      'เปิดเคสขออนุญาตออกตรวจพื้นที่, ส่งรูปภาพหลักฐานยืนยันตัวตน และบันทึกรายงานผลตรวจ\n' +
-      '*(ระบบจะเปิดห้องเคส Ticket ย่อย พร้อมระบบสัญญาณอนุญาตอัตโนมัติ)*\n\n' +
-      '📁 **+ ส่งหลักฐานคดี (Incident & Evidence)**\n' +
-      'ส่งรายงานเหตุการณ์, บันทึกการตรวจพบสิ่งผิดระเบียบ หรือแนบภาพ/คลิป Bodycam หลักฐานคดี\n' +
-      '*(ระบบจะออกรหัส CASE-XXXX และเปิดเธรดสำหรับอัปโหลดหลักฐานทันที)*\n\n' +
-      '✏️ **แก้ไขข้อมูลส่วนตัว (Edit Profile)**\n' +
-      'เปลี่ยนรูปถ่ายหน้าตรง 1 นิ้ว (อัปเดตบัตรทันที) หรือยื่นแก้ไขข้อมูลตัวอักษรเพื่อส่งผู้บริหารอนุมัติ\n' +
+      '🚨 **1. ขอออกปฏิบัติหน้าที่ (Emergency Incident Dispatch)**\n' +
+      'เปิดคดีฉุกเฉินทันที (ก่อวิวาท / เหตุน่าสงสัย) พร้อมแจ้งเตือนประธาน คุณครู และหัวหน้าเวรวันนั้น\n\n' +
+      '🔍 **2. ขออนุญาตออกตรวจ (Patrol Ticket)**\n' +
+      'เปิดเคสขออนุญาตออกตรวจพื้นที่ตามรอบเวร ส่งรูปภาพหลักฐานยืนยันตัวตน และบันทึกรายงานผลตรวจ\n\n' +
+      '📁 **3. ส่งหลักฐานคดี (Incident & Evidence)**\n' +
+      'ส่งรายงานเหตุการณ์ บันทึกการตรวจพบสิ่งผิดระเบียบ หรือแนบภาพ/คลิป Bodycam หลักฐานคดี\n\n' +
+      '✏️ **4. แก้ไขข้อมูลส่วนตัว (Edit Profile)**\n' +
+      'เปลี่ยนรูปถ่ายหน้าตรง 1 นิ้ว (อัปเดตบัตรทันที) หรือยื่นแก้ไขข้อมูลตัวอักษรเพื่อส่งผู้บริหารอนุมัติ\n\n' +
+      '🌐 **5. เว็บไซต์ศูนย์บัญชาการ (Web Command Center)**\n' +
+      'เข้าสู่ระบบเว็บศูนย์บัญชาการสารวัตรนักเรียน เพื่อดูสถิติ, คดี, และทำเนียบสารวัตรแบบ Real-time\n' +
       '━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
     )
     .setColor('#0EA5E9')
@@ -1085,24 +1077,33 @@ async function sendInspectorServicePanel(channel) {
     embed.setImage('attachment://panel_service.jpg');
   }
 
-  const row = new ActionRowBuilder().addComponents(
+  const row1 = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId('btn_request_inspection')
+      .setLabel('🚨 ขอออกปฏิบัติหน้าที่')
+      .setStyle(ButtonStyle.Danger),
     new ButtonBuilder()
       .setCustomId('btn_service_request_inspection')
-      .setLabel('+ขออนุญาตออกตรวจ')
-      .setStyle(ButtonStyle.Primary)
-      .setEmoji('🔍'),
+      .setLabel('🔍 ขออนุญาตออกตรวจ')
+      .setStyle(ButtonStyle.Primary),
     new ButtonBuilder()
       .setCustomId('btn_service_submit_evidence')
-      .setLabel('+ส่งหลักฐานคดี')
-      .setStyle(ButtonStyle.Danger)
-      .setEmoji('📁'),
+      .setLabel('📁 ส่งหลักฐานคดี')
+      .setStyle(ButtonStyle.Secondary),
     new ButtonBuilder()
       .setCustomId('btn_service_edit_profile')
       .setLabel('✏️ แก้ไขข้อมูลตัวเอง')
       .setStyle(ButtonStyle.Success)
   );
 
-  return await channel.send({ embeds: [embed], components: [row], files });
+  const row2 = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setLabel('🌐 เว็บไซต์ระบบ')
+      .setStyle(ButtonStyle.Link)
+      .setURL(getWebDashboardUrl())
+  );
+
+  return await channel.send({ embeds: [embed], components: [row1, row2], files });
 }
 
 async function sendAppointPanel(channel) {
@@ -7718,18 +7719,36 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
       const shiftNames = { M: 'วันจันทร์', T: 'วันอังคาร', W: 'วันพุธ', Th: 'วันพฤหัสบดี', F: 'วันศุกร์', S: 'เวรพิเศษทุกวัน' };
       const shiftName = shiftNames[shift] || shift;
 
-      // วันที่ปัจจุบัน (เช่น 11/14)
+      const dates = getAttendanceDates(shift, 12);
+      const TH_MONTHS = ['', 'ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'];
+
       const now = new Date();
-      const mmdd = `${now.getMonth() + 1}/${now.getDate()}`;
+      const nowM = now.getMonth() + 1;
+      const nowD = now.getDate();
+      const nowThM = TH_MONTHS[nowM] || nowM;
+      const nowMD = `${nowM}/${nowD}`;
+      const nowDM = `${nowD}/${nowM}`;
+
       const dateOptions = [
-        { label: `วันนี้ (${mmdd})`, value: `${shift}|${mmdd}`, description: `ระบุวันที่ประจำวันนี้ (${mmdd})`, emoji: '📅' }
+        {
+          label: `วันนี้ (${nowDM} • ${nowMD})`,
+          value: `${shift}|วันนี้ (${nowMD})`,
+          description: `ระบุวันที่ประจำวันนี้: ${nowD} ${nowThM} (เดือน/วัน: ${nowMD})`,
+          emoji: '📅'
+        }
       ];
 
       for (let w = 1; w <= 12; w++) {
+        const dateStr = dates[w - 1] || `${nowM}/${nowD}`;
+        const [m, d] = dateStr.split('/');
+        const thMonth = TH_MONTHS[parseInt(m)] || m;
+        const monthDay = `${m}/${d}`; // เดือน/วัน เช่น 11/9 ตรงหัวตาราง A4
+        const dayMonth = `${d}/${m}`; // วัน/เดือน เช่น 9/11 รูปแบบไทย
+
         dateOptions.push({
-          label: `สัปดาห์ที่ ${w}`,
-          value: `${shift}|สัปดาห์ที่ ${w}`,
-          description: `ตารางช่องสัปดาห์ที่ ${w} (12 สัปดาห์)`,
+          label: `สัปดาห์ที่ ${w} (${dayMonth} • ${monthDay})`,
+          value: `${shift}|สัปดาห์ที่ ${w} (${monthDay})`,
+          description: `ตารางช่องสัปดาห์ที่ ${w}: วันที่ ${d} ${thMonth} (ตรงหัวตาราง A4: ${monthDay})`,
           emoji: '🗓️'
         });
       }
@@ -7741,7 +7760,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
 
       const row = new ActionRowBuilder().addComponents(dateMenu);
       await interaction.update({
-        content: `🤖 **ขั้นตอนที่ 2/2:** เลือกเวร **${shiftName}** แล้ว 👉 กรุณาเลือก **วันที่หรือสัปดาห์**:`,
+        content: `🤖 **ขั้นตอนที่ 2/2:** เลือกเวร **${shiftName}** แล้ว 👉 กรุณาเลือก **สัปดาห์และวันที่ให้ตรงกับตาราง A4**:`,
         components: [row]
       });
       return;
