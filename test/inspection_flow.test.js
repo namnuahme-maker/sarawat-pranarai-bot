@@ -79,6 +79,24 @@ test('Inspection Modals comply with Discord string length limits (<= 45)', () =>
     .setLabel('ไฟล์หลักฐาน / ลิงก์ไดรฟ์ (ถ้ามี)')
     .setStyle(TextInputStyle.Short);
   assert.ok(evInput.data.label.length <= 45, 'evInput label <= 45');
+
+  // 4. Complete Duty Modal (Instant Incident Dispatch flow)
+  const modalComplete = new ModalBuilder()
+    .setCustomId('modal_complete_duty_CASE-9999')
+    .setTitle('เสร็จสิ้นภารกิจ CASE-9999');
+  assert.ok(modalComplete.data.title.length <= 45, 'complete duty modal title <= 45');
+
+  const topicInput = new TextInputBuilder()
+    .setCustomId('input_duty_topic')
+    .setLabel('หัวข้อเรื่อง / สรุปเหตุการณ์')
+    .setStyle(TextInputStyle.Short);
+  assert.ok(topicInput.data.label.length <= 45, 'topicInput label <= 45');
+
+  const detailsInput = new TextInputBuilder()
+    .setCustomId('input_duty_details')
+    .setLabel('รายละเอียดผลการปฏิบัติหน้าที่')
+    .setStyle(TextInputStyle.Paragraph);
+  assert.ok(detailsInput.data.label.length <= 45, 'detailsInput label <= 45');
 });
 
 test('Channel name check logic handles บริการ and บริการเวรและใบเช็คชื่อ', () => {

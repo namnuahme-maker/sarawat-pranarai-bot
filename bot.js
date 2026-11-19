@@ -3081,16 +3081,52 @@ client.on('messageCreate', async (message) => {
     }
     if (match) {
       const caseId = match[0].toUpperCase();
-      const urls = message.attachments.map(att => att.url);
+      const urls = [];
+      const driveLabels = [];
+
+      for (const att of message.attachments.values()) {
+        let finalUrl = att.url;
+        let isGdrive = false;
+        try {
+          const res = await fetch(att.url);
+          if (res.ok) {
+            const arrayBuf = await res.arrayBuffer();
+            const buf = Buffer.from(arrayBuf);
+            const mime = att.contentType || (att.name.endsWith('.mp4') ? 'video/mp4' : (att.name.endsWith('.mov') ? 'video/quicktime' : (att.name.endsWith('.webm') ? 'video/webm' : (att.name.endsWith('.png') ? 'image/png' : 'image/jpeg'))));
+            const safeName = `${caseId}_${Date.now()}_${att.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+
+            const gRes = await uploadToGoogleDrive(buf, safeName, {
+              caseId,
+              category: 'evidence',
+              mimeType: mime,
+              uploader: message.author.username
+            });
+
+            if (gRes && gRes.success && gRes.webViewLink) {
+              finalUrl = gRes.webViewLink;
+              isGdrive = true;
+            }
+          }
+        } catch (uploadErr) {
+          console.warn('[ATTACHMENT GDRIVE UPLOAD WARN]:', uploadErr.message);
+        }
+        urls.push(finalUrl);
+        driveLabels.push(`${att.name}${isGdrive ? ' (Google Drive)' : ''}`);
+      }
+
       const { data: c } = await supabase.from('cases').select('*').eq('case_id', caseId).maybeSingle();
       if (c) {
         const merged = [...(c.evidence_urls || []), ...urls];
         const isFirstPatrolPhoto = (c.status === 'PATROL_WAITING_PHOTO');
 
+        const now = new Date();
+        const timeStr = now.toLocaleTimeString('th-TH', { timeZone: 'Asia/Bangkok', hour: '2-digit', minute: '2-digit' });
+        const timelineLog = `• ${timeStr} น. - 📸 แนบไฟล์หลักฐานโดย ${message.author.username}: ${driveLabels.join(', ')}`;
+
         await supabase.from('cases').update({
           evidence_urls: merged,
           status: isFirstPatrolPhoto ? 'PATROL_WAITING_APPROVAL' : c.status,
-          resolution_notes: (c.resolution_notes ? c.resolution_notes + '\n' : '') + `[แนบไฟล์หลักฐานโดย ${message.author.username}]: ${urls.join(' , ')}`
+          resolution_notes: (c.resolution_notes ? c.resolution_notes + '\n' : '') + timelineLog
         }).eq('case_id', caseId);
 
         if (isFirstPatrolPhoto) {
@@ -3174,7 +3210,13 @@ client.on('messageCreate', async (message) => {
             leaderMsgId: leaderApprovalMsg?.id
           });
         } else {
-          await message.reply({ content: `✅ บันทึกไฟล์หลักฐาน/คลิป Bodycam จำนวน ${urls.length} ไฟล์ เข้าเคส **${caseId}** สำเร็จแล้ว!` }).catch(() => {});
+          await message.react('📸').catch(() => {});
+          await message.react('✅').catch(() => {});
+          await message.reply({
+            content: `📸 **บันทึกหลักฐาน (ภาพ/คลิป) เข้าเคส ${caseId} เรียบร้อยแล้ว!**\n` +
+                     `• ไฟล์: ${driveLabels.join(', ')}\n` +
+                     `• บันทึกลงใน **Google Drive** และซิงค์แสดงผลบน Web Dashboard แบบ Real-time เรียบร้อยครับ`
+          }).catch(() => {});
         }
       }
     }
@@ -9350,7 +9392,7 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
       );
 
       await interaction.reply({
-        content: '🎯 **กรุณาเลือกประเภทการขออนุมัติปฏิบัติหน้าที่:**\nเลือกลักษณะเหตุการณ์เพื่อเปิดแบบฟอร์มขออนุมัติไปยังผู้บังคับบัญชาและสร้างคดีในห้อง `#แจ้งเหตุใหม่`',
+        content: '🎯 **กรุณาเลือกลักษณะเหตุการณ์ที่ต้องการขอออกปฏิบัติหน้าที่:**\nเมื่อกดเลือก ระบบจะเปิดคดีฉุกเฉินทันที แจ้งเตือนผู้บังคับบัญชา และสร้างเธรดสำหรับส่งรูป/คลิปหลักฐานโดยไม่ต้องรอกรอกข้อมูล!',
         components: [row],
         ephemeral: true
       });
@@ -9358,54 +9400,305 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
     }
 
     if (interaction.isButton() && interaction.customId.startsWith('btn_insp_cat_')) {
+      await interaction.deferReply({ ephemeral: true });
+
       const catKey = interaction.customId.replace('btn_insp_cat_', '');
       const catMap = {
-        brawl: { name: 'เกิดเหตุก่อวิวาท', urgency: 'ด่วนมาก', placeholder: 'เช่น กลุ่มนักเรียนเตรียมชกต่อยบริเวณหลังอาคาร 3' },
-        suspicious: { name: 'เหตุน่าสงสัย', urgency: 'ด่วน', placeholder: 'เช่น พบกลุ่มบุคคลพฤติกรรมเสี่ยง มั่วสุม พกพาสิ่งผิดระเบียบ' },
-        other: { name: 'เหตุผลอื่นๆ', urgency: 'ปกติ', placeholder: 'เช่น ตรวจตราพื้นที่พิเศษ ตรวจตราค้นหาสิ่งผิดระเบียบ' }
+        brawl: { name: '💥 เกิดเหตุก่อวิวาท', urgency: 'ด่วนมาก', color: '#E74C3C' },
+        suspicious: { name: '👁️ เหตุน่าสงสัย', urgency: 'ด่วน', color: '#E67E22' },
+        other: { name: '📌 เหตุผลอื่นๆ', urgency: 'ปกติ', color: '#3498DB' }
       };
       const catInfo = catMap[catKey] || catMap.other;
 
-      const modal = new ModalBuilder()
-        .setCustomId(`modal_request_insp_${catKey}`)
-        .setTitle(`ขออนุมัติปฏิบัติ: ${catInfo.name}`.slice(0, 45));
+      const { data: member } = await supabase
+        .from('members')
+        .select('*')
+        .eq('discord_id', interaction.user.id)
+        .maybeSingle();
 
-      const targetInput = new TextInputBuilder()
-        .setCustomId('input_insp_target')
-        .setLabel('สถานที่ / จุดเกิดเหตุ')
-        .setPlaceholder('เช่น หลังอาคาร 3, ห้องน้ำชาย, โรงอาหาร, สวนหย่อม')
+      const caseId = 'CASE-' + Math.floor(1000 + Math.random() * 9000);
+      const officerName = member
+        ? `[${member.duty_id || 'สารวัตร'}] คุณ${member.nickname || member.first_name} (${member.first_name} ${member.last_name || ''})`.trim()
+        : (interaction.member?.displayName || interaction.user.username);
+
+      const now = new Date();
+      const thaiTimeStr = now.toLocaleTimeString('th-TH', { timeZone: 'Asia/Bangkok', hour: '2-digit', minute: '2-digit' });
+      const thaiDateStr = now.toLocaleDateString('th-TH', { timeZone: 'Asia/Bangkok', day: 'numeric', month: 'short', year: 'numeric' });
+      const nowThaiStr = `${thaiDateStr} เวลา ${thaiTimeStr} น.`;
+
+      // ค้นหาหัวหน้าเวรวันนั้น (Shift Head of Today)
+      const dayOfWeek = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Bangkok' })).getDay();
+      const dayMap = { 1: 'M', 2: 'T', 3: 'W', 4: 'Th', 5: 'F', 6: 'S', 0: 'S' };
+      const baseDay = dayMap[dayOfWeek] || 'M';
+      const targetLeadershipShifts = baseDay === 'S' ? ['S'] : [baseDay, 'S'];
+
+      let heads = [];
+      try {
+        const { data: lAssignments } = await supabase
+          .from('shift_leadership')
+          .select('member_id')
+          .in('shift_code', expandShiftCodeAliases(targetLeadershipShifts));
+        const headIds = [...new Set((lAssignments || []).map(a => a.member_id).filter(Boolean))];
+        if (headIds.length) {
+          const { data: hList } = await supabase
+            .from('members')
+            .select('*')
+            .in('id', headIds)
+            .not('discord_id', 'is', null)
+            .eq('status', 'ACTIVE');
+          if (Array.isArray(hList)) heads = hList;
+        }
+      } catch (e) {
+        console.warn('[EMERGENCY DISPATCH] Shift head lookup error:', e.message);
+      }
+
+      const pingTargets = [
+        ROLE_IDS.PRESIDENT ? `<@&${ROLE_IDS.PRESIDENT}>` : null,
+        ROLE_IDS.TEACHER ? `<@&${ROLE_IDS.TEACHER}>` : null,
+        (ROLE_IDS.HEADS && ROLE_IDS.HEADS[baseDay]) ? `<@&${ROLE_IDS.HEADS[baseDay]}>` : null,
+        ...heads.map(h => `<@${h.discord_id}>`)
+      ].filter(Boolean);
+
+      const pingContent = pingTargets.length > 0
+        ? `${[...new Set(pingTargets)].join(' ')} 📢 **มีเหตุฉุกเฉิน / สารวัตรขอออกปฏิบัติหน้าที่ใหม่! (${caseId})**`
+        : `@here 📢 **มีเหตุฉุกเฉิน / สารวัตรขอออกปฏิบัติหน้าที่ใหม่! (${caseId})**`;
+
+      const initialTimeline = `• ${nowThaiStr} - 🚨 ${officerName} (<@${interaction.user.id}>) กดขอออกปฏิบัติหน้าที่ (${catInfo.name})`;
+
+      // 1. บันทึกลง Supabase cases table ทันที (สถานะ IN_PROGRESS)
+      await supabase.from('cases').insert({
+        case_id: caseId,
+        reporter_email: member?.email || `${interaction.user.id}@discord.local`,
+        reporter_name: officerName,
+        incident_date_time: now.toISOString(),
+        location: 'กำลังเข้าตรวจสอบพื้นที่',
+        category: catInfo.name,
+        description: `[🚨 ปฏิบัติหน้าที่ฉุกเฉิน]\nประเภทเหตุ: ${catInfo.name}\nสารวัตรผู้เปิดคดี: ${officerName} (<@${interaction.user.id}>)\nวัน-เวลาเริ่ม: ${nowThaiStr}\nระดับความเร่งด่วน: ${catInfo.urgency}`,
+        status: 'IN_PROGRESS',
+        assigned_duty_day: member?.duty_day || baseDay,
+        assigned_officer_id: member?.id || null,
+        evidence_urls: [],
+        resolution_notes: `[Timeline การปฏิบัติหน้าที่]\n${initialTimeline}`
+      });
+
+      // 2. ส่งคดีเข้าห้อง "แจ้งเหตุใหม่"
+      const guild = interaction.guild;
+      const chIncident = findChannel(guild, '🚨│แจ้งเหตุใหม่') ||
+                         findChannel(guild, 'แจ้งเหตุใหม่') ||
+                         findChannel(guild, '🚨│แจ้งเหตุใหม่-google-form') ||
+                         (process.env.INCIDENT_CHANNEL_ID ? guild.channels.cache.get(process.env.INCIDENT_CHANNEL_ID) : null) ||
+                         interaction.channel;
+
+      const webBaseUrl = getWebDashboardUrl();
+      const bodycamLink = `${webBaseUrl}/bodycam-upload.html?caseId=${caseId}`;
+
+      let incidentMsg = null;
+      let thread = null;
+
+      if (chIncident && chIncident.isTextBased()) {
+        const incidentEmbed = new EmbedBuilder()
+          .setTitle(`🚨 [เปิดคดีปฏิบัติหน้าที่ฉุกเฉิน] รหัสคดี: ${caseId}`)
+          .setDescription(
+            `📌 **ประเภทเหตุ:** **${catInfo.name}**\n` +
+            `👤 **สารวัตรผู้เปิดคดี:** ${officerName} (<@${interaction.user.id}>)\n` +
+            `📅 **วัน-เวลา:** ${nowThaiStr}\n` +
+            `⚡ **ความเร่งด่วน:** ${catInfo.urgency}\n` +
+            `📍 **สถานที่:** กำลังเข้าตรวจสอบพื้นที่\n` +
+            `📊 **สถานะ:** 🚨 **กำลังปฏิบัติหน้าที่ (IN_PROGRESS)**\n\n` +
+            `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+            `🔔 **แจ้งเตือน:** ประธาน, คุณครูที่ปรึกษา และหัวหน้าเวรวัน${DAY_NAMES[baseDay] || baseDay}\n` +
+            `👉 ดูรายละเอียด สั่งการ หรือติดตามการส่งหลักฐานสดได้ในเธรดด้านล่าง`
+          )
+          .setColor(catInfo.color)
+          .setFooter({ text: `SARAWAT EMERGENCY DISPATCH • ${caseId}` })
+          .setTimestamp();
+
+        incidentMsg = await chIncident.send({
+          content: pingContent,
+          embeds: [incidentEmbed]
+        }).catch(() => null);
+
+        if (incidentMsg && incidentMsg.startThread) {
+          thread = await incidentMsg.startThread({
+            name: `ปฏิบัติหน้าที่ [${caseId}] - ${catInfo.name}`.slice(0, 100),
+            autoArchiveDuration: 1440
+          }).catch(() => null);
+
+          if (thread) {
+            const prominentBannerEmbed = new EmbedBuilder()
+              .setTitle(`📸 กรุณาส่งรูปถ่ายหรือคลิปวิดีโอหลักฐานเบื้องต้นเข้ามาก่อน!`)
+              .setDescription(
+                `# ⚠️ ข้อความสำคัญจากศูนย์บัญชาการ\n\n` +
+                `📸 **กรุณาส่งรูปถ่ายหรือคลิปวิดีโอหลักฐานเบื้องต้นเข้ามาก่อน!**\n` +
+                `• รองรับทั้ง **รูปภาพ (JPG/PNG)** และ **คลิปวิดีโอ (MP4/MOV)**\n` +
+                `• สามารถแนบไฟล์ส่งเข้ามาในเธรดนี้ได้ทันที หรืออัปโหลดผ่านเว็บ\n` +
+                `• ไฟล์ทั้งหมดจะถูกบันทึกลงใน **Google Drive** และซิงค์แสดงผลบน **Web Dashboard** แบบ Real-time\n\n` +
+                `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                `🏁 **เมื่อปฏิบัติหน้าที่เสร็จสิ้นแล้ว:**\n` +
+                `ให้กดปุ่ม **"✅ ทำการปฏิบัติเสร็จสิ้น"** ด้านล่าง เพื่อกรอกสรุปหัวข้อเรื่องและรายละเอียดผลการปฏิบัติหน้าที่\n` +
+                `*(สามารถส่งไฟล์หลักฐานเพิ่มเติมในเธรดนี้ได้ตลอดเวลา)*`
+              )
+              .setColor('#E67E22')
+              .setFooter({ text: `SARAWAT-BOT • ระบบรายงานเหตุฉุกเฉิน • ${caseId}` });
+
+            const threadActionRow = new ActionRowBuilder().addComponents(
+              new ButtonBuilder()
+                .setCustomId(`btn_complete_duty_${caseId}`)
+                .setLabel('✅ ทำการปฏิบัติเสร็จสิ้น')
+                .setStyle(ButtonStyle.Success),
+              new ButtonBuilder()
+                .setStyle(ButtonStyle.Link)
+                .setURL(bodycamLink)
+                .setLabel('📹 อัปโหลดหลักฐาน/คลิปผ่านเว็บ')
+            );
+
+            await thread.send({
+              content: `🚨 <@${interaction.user.id}> **เริ่มเปิดคดีปฏิบัติหน้าที่แล้ว! โปรดส่งหลักฐานและรายงานสถานะด้านล่าง:**`,
+              embeds: [prominentBannerEmbed],
+              components: [threadActionRow]
+            }).catch(() => {});
+          }
+        }
+      }
+
+      // 3. แจ้งเตือนสารวัตรผู้ขอ พร้อมส่งลิงก์เธรด
+      const threadUrl = (thread && guild) ? `https://discord.com/channels/${guild.id}/${thread.id}` : null;
+      const chName = chIncident ? chIncident.name : 'แจ้งเหตุใหม่';
+
+      const replyEmbed = new EmbedBuilder()
+        .setTitle(`🚨 เปิดคดีปฏิบัติหน้าที่ [${caseId}] สำเร็จ`)
+        .setDescription(
+          `📌 **ประเภทเหตุ:** ${catInfo.name}\n` +
+          `⏰ **วัน-เวลา:** ${nowThaiStr}\n` +
+          `🏢 ระบบได้นำเรื่องสร้างคดีในห้อง **#${chName}** เรียบร้อยแล้ว\n` +
+          `🔔 ส่งการแจ้งเตือนไปยังประธาน คุณครูที่ปรึกษา และหัวหน้าเวรวัน${DAY_NAMES[baseDay] || baseDay} แล้ว\n\n` +
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+          `📸 **ขั้นตอนสำคัญ: กรุณาส่งรูปถ่ายหรือคลิปวิดีโอหลักฐานเบื้องต้นเข้ามาก่อน!**\n` +
+          (threadUrl ? `• ส่งรูปภาพหรือคลิปวิดีโอใน [เธรดปฏิบัติหน้าที่ ${caseId}](${threadUrl})\n` : '') +
+          `• หรือกดปุ่มอัปโหลดไฟล์หลักฐาน/คลิปเข้าสู่ Google Drive ด้านล่าง\n` +
+          `• เมื่อเสร็จสิ้นภารกิจ ให้กดปุ่ม **"✅ ทำการปฏิบัติเสร็จสิ้น"** ในเธรดเพื่อกรอกหัวข้อและรายละเอียดสรุปผล`
+        )
+        .setColor(catInfo.color)
+        .setFooter({ text: `SARAWAT-BOT • ระบบปฏิบัติการฉุกเฉิน • ${caseId}` });
+
+      const replyRow = new ActionRowBuilder();
+      if (threadUrl) {
+        replyRow.addComponents(
+          new ButtonBuilder()
+            .setStyle(ButtonStyle.Link)
+            .setURL(threadUrl)
+            .setLabel('💬 ไปยังเธรดส่งหลักฐาน')
+        );
+      }
+      replyRow.addComponents(
+        new ButtonBuilder()
+          .setStyle(ButtonStyle.Link)
+          .setURL(bodycamLink)
+          .setLabel('📹 อัปโหลดหลักฐาน/คลิปผ่านเว็บ')
+      );
+
+      await interaction.editReply({
+        embeds: [replyEmbed],
+        components: [replyRow]
+      });
+
+      return;
+    }
+
+    // -------------------------------------------------------------
+    // 5.1.1 เมื่อสารวัตรกดปุ่ม "✅ ทำการปฏิบัติเสร็จสิ้น"
+    // -------------------------------------------------------------
+    if (interaction.isButton() && interaction.customId.startsWith('btn_complete_duty_')) {
+      const caseId = interaction.customId.replace('btn_complete_duty_', '');
+
+      const modal = new ModalBuilder()
+        .setCustomId(`modal_complete_duty_${caseId}`)
+        .setTitle(`เสร็จสิ้นภารกิจ ${caseId}`.slice(0, 45));
+
+      const topicInput = new TextInputBuilder()
+        .setCustomId('input_duty_topic')
+        .setLabel('หัวข้อเรื่อง / สรุปเหตุการณ์')
+        .setPlaceholder('เช่น ระงับเหตุนักเรียนมีปากเสียงหลังอาคาร 3')
         .setStyle(TextInputStyle.Short)
         .setRequired(true);
 
-      const reasonInput = new TextInputBuilder()
-        .setCustomId('input_insp_reason')
-        .setLabel('รายละเอียด / พฤติการณ์เหตุการณ์')
-        .setPlaceholder(catInfo.placeholder)
+      const detailsInput = new TextInputBuilder()
+        .setCustomId('input_duty_details')
+        .setLabel('รายละเอียดผลการปฏิบัติหน้าที่')
+        .setPlaceholder('ระบุสิ่งที่พบ การว่ากล่าวตักเตือน ของกลาง หรือผลการดำเนินการ...')
         .setStyle(TextInputStyle.Paragraph)
         .setRequired(true);
 
-      const officersInput = new TextInputBuilder()
-        .setCustomId('input_insp_officers')
-        .setLabel('สารวัตรผู้ร่วมปฏิบัติ (รหัสเวร/ชื่อ)')
-        .setPlaceholder('เช่น [TS1] ปัน, [TS2] กาย (หรือระบุเดี่ยว)')
-        .setStyle(TextInputStyle.Short)
-        .setRequired(false);
-
-      const urgencyInput = new TextInputBuilder()
-        .setCustomId('input_insp_urgency')
-        .setLabel('ระดับความเร่งด่วน (ปกติ/ด่วน/ด่วนมาก)')
-        .setValue(catInfo.urgency)
-        .setStyle(TextInputStyle.Short)
-        .setRequired(false);
-
       modal.addComponents(
-        new ActionRowBuilder().addComponents(targetInput),
-        new ActionRowBuilder().addComponents(reasonInput),
-        new ActionRowBuilder().addComponents(officersInput),
-        new ActionRowBuilder().addComponents(urgencyInput)
+        new ActionRowBuilder().addComponents(topicInput),
+        new ActionRowBuilder().addComponents(detailsInput)
       );
 
       await interaction.showModal(modal);
+      return;
+    }
+
+    // -------------------------------------------------------------
+    // 5.1.2 เมื่อส่งแบบฟอร์ม "เสร็จสิ้นภารกิจ" (บันทึกผลการปฏิบัติ)
+    // -------------------------------------------------------------
+    if (interaction.isModalSubmit() && interaction.customId.startsWith('modal_complete_duty_')) {
+      await interaction.deferReply({ ephemeral: false });
+      const caseId = interaction.customId.replace('modal_complete_duty_', '');
+      const topic = interaction.fields.getTextInputValue('input_duty_topic').trim();
+      const details = interaction.fields.getTextInputValue('input_duty_details').trim();
+
+      const { data: currentCase } = await supabase.from('cases').select('*').eq('case_id', caseId).maybeSingle();
+      const { data: member } = await supabase.from('members').select('*').eq('discord_id', interaction.user.id).maybeSingle();
+      const officerName = member ? `[${member.duty_id || 'สารวัตร'}] คุณ${member.nickname || member.first_name} (${member.first_name} ${member.last_name || ''})`.trim() : (interaction.member?.displayName || interaction.user.username);
+
+      const now = new Date();
+      const thaiTimeStr = now.toLocaleTimeString('th-TH', { timeZone: 'Asia/Bangkok', hour: '2-digit', minute: '2-digit' });
+      const thaiDateStr = now.toLocaleDateString('th-TH', { timeZone: 'Asia/Bangkok', day: 'numeric', month: 'short', year: 'numeric' });
+      const nowThaiStr = `${thaiDateStr} เวลา ${thaiTimeStr} น.`;
+
+      const completionTimeline = `• ${nowThaiStr} - ✅ ${officerName} (<@${interaction.user.id}>) บันทึกผลการปฏิบัติหน้าที่เสร็จสิ้น\n` +
+        `  - หัวข้อเรื่อง: ${topic}\n` +
+        `  - รายละเอียดผล: ${details}`;
+
+      const updatedNotes = (currentCase?.resolution_notes ? currentCase.resolution_notes + '\n' : '') + completionTimeline;
+
+      await supabase.from('cases').update({
+        status: 'RESOLVED',
+        description: `${currentCase?.description || ''}\n\n📋 **สรุปเรื่อง:** ${topic}\n📝 **รายละเอียด:** ${details}`,
+        resolution_notes: updatedNotes
+      }).eq('case_id', caseId);
+
+      const finishEmbed = new EmbedBuilder()
+        .setTitle(`🏁 [บันทึกผลการปฏิบัติหน้าที่เสร็จสิ้น] คดี: ${caseId}`)
+        .setDescription(
+          `📋 **หัวข้อเรื่อง:** **${topic}**\n\n` +
+          `📝 **รายละเอียดผลการปฏิบัติหน้าที่:**\n${details}\n\n` +
+          `👤 **ผู้บันทึก:** ${officerName} (<@${interaction.user.id}>)\n` +
+          `⏰ **เวลาเสร็จสิ้น:** ${nowThaiStr}\n` +
+          `📊 **สถานะคดี:** ✅ **เสร็จสิ้น (RESOLVED)**\n\n` +
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+          `📁 *ข้อมูลผลการปฏิบัติและไฟล์หลักฐานทั้งหมด ถูกบันทึกเข้าสารบบคดีและซิงค์ไปยัง Web Dashboard และ Google Drive เรียบร้อยแล้ว*\n` +
+          `*(ท่านยังสามารถส่งภาพถ่าย/คลิปเพิ่มเติมในเธรดนี้ได้เสมอ หากมีหลักฐานเพิ่มเติม)*`
+        )
+        .setColor('#2ECC71')
+        .setFooter({ text: `SARAWAT CASE RESOLVED • ${caseId}` })
+        .setTimestamp();
+
+      const finishRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setStyle(ButtonStyle.Link)
+          .setURL(`${getWebDashboardUrl()}/`)
+          .setLabel('🌐 ดูคดีใน Web Dashboard'),
+        new ButtonBuilder()
+          .setStyle(ButtonStyle.Link)
+          .setURL(`${getWebDashboardUrl()}/bodycam-upload.html?caseId=${caseId}`)
+          .setLabel('📹 เพิ่มหลักฐาน/คลิป Bodycam')
+      );
+
+      await interaction.editReply({
+        embeds: [finishEmbed],
+        components: [finishRow]
+      });
       return;
     }
 
