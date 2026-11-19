@@ -130,3 +130,47 @@ test('Attendance Sheet date headers format accurately for AI scan step 2', () =>
     });
   }
 });
+
+test('sortMembersByGradeRoomNumber sorts members accurately by Grade -> Room -> Student Number', () => {
+  const { sortMembersByGradeRoomNumber, getMemberSortKey } = require('../bot.js');
+  assert.equal(typeof sortMembersByGradeRoomNumber, 'function', 'sortMembersByGradeRoomNumber must be exported');
+  assert.equal(typeof getMemberSortKey, 'function', 'getMemberSortKey must be exported');
+
+  // Sample data mimicking real members from the user's attendance sheet
+  const inputMembers = [
+    { duty_id: 'FS1', name: 'นายภัทรพล บุญวิเศษ', class_room: '5/7 (4)', student_no: 4 },
+    { duty_id: 'FS2', name: 'นางสาวปรีณาพรรณ ขันศิริ', class_room: '6/4 (36)', student_no: 36 },
+    { duty_id: 'FS3', name: 'นายจาตุพัฒน์ ขอนแก่น', class_room: '4/1 (19)', student_no: 19 },
+    { duty_id: 'MS1', name: 'นางสาวมัลลิกา เลื่อนลอย', class_room: '5/7 (14)', student_no: 14 },
+    { duty_id: 'MS2', name: 'นายศรัณยพงศ์ วงศ์สุวรรณ', class_room: '5/7 (33)', student_no: 33 },
+    { duty_id: 'MS3', name: 'นางสาวพรนัชชา ประสมพงค์', class_room: '5/5 (3)', student_no: 3 },
+    { duty_id: 'TS2', name: 'นายคณิศร ตะพานแก้ว', class_room: '5/8 (5)', student_no: 5 },
+    { duty_id: 'TS6', name: 'นางสาวกันติชา ชอบธรรมดี', class_room: '6/10 (9)', student_no: 9 },
+    { duty_id: 'WS1', name: 'นางสาวภีรดา ภาณุมาศ', class_room: '6/2 (34)', student_no: 34 },
+    { duty_id: 'WS2', name: 'นายพชรพล กระดุมผล', class_room: '4/9 (4)', student_no: 4 },
+    { duty_id: 'WS3', name: 'นางสาวยุพิน บุญวัง', class_room: '6/9 (7)', student_no: 7 }
+  ];
+
+  const sorted = sortMembersByGradeRoomNumber(inputMembers);
+  const resultOrder = sorted.map(m => `${m.class_room}`);
+
+  // Expected sequence:
+  // ม.4: 4/1 (19), 4/9 (4)
+  // ม.5: 5/5 (3), 5/7 (4), 5/7 (14), 5/7 (33), 5/8 (5)
+  // ม.6: 6/2 (34), 6/4 (36), 6/9 (7), 6/10 (9)
+  const expectedOrder = [
+    '4/1 (19)',
+    '4/9 (4)',
+    '5/5 (3)',
+    '5/7 (4)',
+    '5/7 (14)',
+    '5/7 (33)',
+    '5/8 (5)',
+    '6/2 (34)',
+    '6/4 (36)',
+    '6/9 (7)',
+    '6/10 (9)'
+  ];
+
+  assert.deepEqual(resultOrder, expectedOrder, 'Roster must be strictly ordered by Grade -> Room -> Student Number');
+});

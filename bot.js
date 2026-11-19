@@ -11741,6 +11741,46 @@ function generateAttendanceCoverPageHTML(options) {
   `;
 }
 
+/**
+ * 🔢 ดึงข้อมูลสำหรับจัดเรียงสารวัตรตาม ระดับชั้น (ม.4 -> ม.5 -> ม.6) -> ห้อง (1 -> เรื่อยๆ) -> เลขที่ (1 -> เรื่อยๆ)
+ */
+function getMemberSortKey(member) {
+  if (!member) return { grade: 99, room: 99, studentNo: 999 };
+  const rawGc = String(member.grade_class || member.class_room || '').trim();
+  const gcMatch = rawGc.match(/(?:ม\.?\s*)?(\d+)\s*[/.-]\s*(\d+)/i);
+  const grade = gcMatch ? parseInt(gcMatch[1], 10) : 99;
+  const room = gcMatch ? parseInt(gcMatch[2], 10) : 99;
+
+  let studentNo = 999;
+  if (member.student_no !== null && member.student_no !== undefined && member.student_no !== '') {
+    const parsedNo = parseInt(String(member.student_no).replace(/\D/g, ''), 10);
+    if (!isNaN(parsedNo)) studentNo = parsedNo;
+  }
+  if (studentNo === 999) {
+    const noMatch = rawGc.match(/\((\d+)\)/);
+    if (noMatch) studentNo = parseInt(noMatch[1], 10);
+  }
+  return { grade, room, studentNo };
+}
+
+/**
+ * 📋 จัดเรียงรายชื่อสารวัตรในตารางเช็คชื่อให้เป็นระเบียบสวยงาม:
+ * 1. ระดับชั้น (ม.4 -> ม.5 -> ม.6)
+ * 2. ห้อง (1, 2, 3...)
+ * 3. เลขที่ (1, 2, 3...)
+ */
+function sortMembersByGradeRoomNumber(members) {
+  if (!Array.isArray(members)) return [];
+  return [...members].sort((a, b) => {
+    const keyA = getMemberSortKey(a);
+    const keyB = getMemberSortKey(b);
+    if (keyA.grade !== keyB.grade) return keyA.grade - keyB.grade;
+    if (keyA.room !== keyB.room) return keyA.room - keyB.room;
+    if (keyA.studentNo !== keyB.studentNo) return keyA.studentNo - keyB.studentNo;
+    return String(a.duty_id || '').localeCompare(String(b.duty_id || ''));
+  });
+}
+
 // ฟังก์ชันสร้างหน้าเว็บใบเช็คชื่อ A4 มาตรฐาน พร้อมระบุชื่อหัวหน้า/รองหัวหน้าบนหัวกระดาษ (OMR + Vision Anchor ฉบับปรับปรุง 11 ข้อ)
 function generateAttendanceSheetHTML(dayCode, dayName, members, leadershipAssignments = []) {
   const period = getAcademicPeriod();
@@ -11772,7 +11812,8 @@ function generateAttendanceSheetHTML(dayCode, dayName, members, leadershipAssign
 
   let rows = '';
   if (members.length > 0) {
-    rows = members.map(m => {
+    const sortedMembers = sortMembersByGradeRoomNumber(members);
+    rows = sortedMembers.map(m => {
       const assignment = (leadershipAssignments || []).find(a => a.member_id === m.id && canonicalShiftCode(a.shift_code) === dayCode);
       const roleTag = assignment?.position === 'HEAD'
         ? ' <span style="color: #b91c1c; font-weight: bold; font-size: 7.5pt;">(หัวหน้า)</span>' 
@@ -12227,7 +12268,8 @@ function generateCombinedAttendanceSheetHTML(allMembers, leadershipAssignments =
 
     let rows = '';
     if (shiftMembers.length > 0) {
-      rows = shiftMembers.map(m => {
+      const sortedShiftMembers = sortMembersByGradeRoomNumber(shiftMembers);
+      rows = sortedShiftMembers.map(m => {
         const assignment = (leadershipAssignments || []).find(a => a.member_id === m.id && canonicalShiftCode(a.shift_code) === shift.code);
         const roleTag = assignment?.position === 'HEAD'
           ? ' <span style="color: #b91c1c; font-weight: bold; font-size: 7.5pt;">(หัวหน้า)</span>' 
@@ -13173,6 +13215,8 @@ module.exports = {
   buildRegistrationEditModal,
   pendingPromptMessages,
   deleteRegistrationPromptMessage,
+  getMemberSortKey,
+  sortMembersByGradeRoomNumber,
   logError,
   logWarn
 };
