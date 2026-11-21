@@ -358,8 +358,11 @@ function generateCardHTML(member) {
         elementsHtml += `
           <div style="position: absolute; left: ${left}px; top: ${top}px; width: ${width}; height: ${height}; display: flex; align-items: center; justify-content: center; z-index: 5; pointer-events: none;">
             ${photoUrl 
-              ? `<img src="${photoUrl}" style="width: 100%; height: 100%; object-fit: cover; object-position: top center;" crossorigin="anonymous" alt="Photo">` 
-              : `<span style="font-size: 80px; color: #94a3b8;">👤</span>`
+              ? `<img src="${photoUrl}" style="width: 100%; height: 100%; object-fit: cover; object-position: top center; border: 1.5px solid #000000; box-sizing: border-box;" crossorigin="anonymous" alt="Photo">` 
+              : `<div style="width: 100%; height: 100%; border: 2px solid #000000; box-sizing: border-box; background: #f8fafc; display: flex; flex-direction: column; align-items: center; justify-content: center;">
+                   <span style="font-size: 72px; line-height: 1;">👤</span>
+                   <span style="font-size: 12px; font-weight: bold; color: #000000; margin-top: 6px; font-family: 'Prompt', sans-serif;">ขนาดรูปสูงสุด</span>
+                 </div>`
             }
           </div>
         `;
@@ -393,7 +396,25 @@ function generateCardHTML(member) {
       }
     }
 
+    let bgHtml = '';
+    const bgConfig = (customConfig && customConfig.canvas && customConfig.canvas.backgroundImage) || '';
+    let resolvedBgSrc = '';
+    if (bgConfig.startsWith('data:image')) {
+      resolvedBgSrc = bgConfig;
+    } else if (bgConfig.startsWith('http://') || bgConfig.startsWith('https://')) {
+      resolvedBgSrc = bgConfig;
+    } else if (bgConfig) {
+      const cleanName = bgConfig.replace(/^\/?assets\//, '');
+      resolvedBgSrc = getAssetBase64(cleanName) || getAssetBase64('card-templates/default_card_bg.png') || getAssetBase64('default_card_bg.png');
+    } else {
+      resolvedBgSrc = getAssetBase64('card-templates/default_card_bg.png') || getAssetBase64('default_card_bg.png');
+    }
+    if (resolvedBgSrc) {
+      bgHtml = `<img src="${resolvedBgSrc}" style="position: absolute; left: 0; top: 0; width: 100%; height: 100%; object-fit: fill; z-index: 1; pointer-events: none;" alt="Background">`;
+    }
+
     cardInnerHtml = `
+      ${bgHtml}
       <!-- Ambient Glow Fades (Over photo & background, strictly below all text) -->
       <div class="glow-fade-blue"></div>
       <div class="glow-fade-red"></div>
@@ -415,8 +436,11 @@ function generateCardHTML(member) {
       <!-- Center Photo with Solid Rectangle (Original Crisp) -->
       <div class="photo-center-area">
         ${photoUrl 
-          ? `<img src="${photoUrl}" class="photo-fade-img" crossorigin="anonymous" alt="Photo">` 
-          : `<span class="photo-fallback">👤</span>`
+          ? `<img src="${photoUrl}" class="photo-fade-img" style="border: 1.5px solid #000000; box-sizing: border-box;" crossorigin="anonymous" alt="Photo">` 
+          : `<div style="width: 100%; height: 100%; border: 2px solid #000000; box-sizing: border-box; background: #f8fafc; display: flex; flex-direction: column; align-items: center; justify-content: center;">
+               <span style="font-size: 72px; line-height: 1;">👤</span>
+               <span style="font-size: 12px; font-weight: bold; color: #000000; margin-top: 6px; font-family: 'Prompt', sans-serif;">ขนาดรูปสูงสุด</span>
+             </div>`
         }
       </div>
 

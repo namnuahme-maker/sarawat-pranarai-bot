@@ -2,7 +2,8 @@
   "canvas": {
     "width": 430,
     "height": 680,
-    "backgroundColor": "#ffffff"
+    "backgroundColor": "#ffffff",
+    "backgroundImage": "/assets/card-templates/default_card_bg.png"
   },
   "elements": {
     "stripeBlue": {
