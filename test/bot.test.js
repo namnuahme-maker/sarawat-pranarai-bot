@@ -293,14 +293,14 @@ describe('SARAWAT-BOT New Shift & Combined Duty ID Verification', () => {
   test('Slash Commands list must contain all 17 commands and valid Discord naming conventions', () => {
     const { slashCommands } = require('../bot.js');
     assert.equal(Array.isArray(slashCommands), true);
-    assert.equal(slashCommands.length, 19);
+    assert.equal(slashCommands.length, 20);
 
     const commandNames = slashCommands.map(c => c.name);
     const expected = [
       'status', 'my-card', 'sync-roles', 'semester',
       'setup-verify', 'setup-leave', 'setup-attendance',
       'setup-photo', 'setup-appoint', 'setup-all', 'setup-service', 'setup-lost-found', 'd-day', 'killfile', 'purge-system-data', 'demote', 'test-duty',
-      'send', 'update'
+      'send', 'update', 'data-manager'
     ];
 
     for (const exp of expected) {
@@ -487,6 +487,48 @@ describe('SARAWAT-BOT New Shift & Combined Duty ID Verification', () => {
     assert.equal(q4.quarter, 4);
     assert.equal(q4.semester, 1);
     assert.equal(q4.academicYear, 2570);
+  });
+
+  test('data-manager slash command and UI builder components verification', () => {
+    const {
+      DATA_CATEGORIES,
+      buildDataManagerPanelEmbed,
+      buildDataManagerComponents,
+      buildDataManagerConfirmEmbed,
+      buildDataManagerConfirmButtons
+    } = require('../bot.js');
+
+    // 1. DATA_CATEGORIES must contain all 8 categories
+    const requiredKeys = ['leaves', 'att_present', 'att_late', 'att_absent', 'att_all', 'cases', 'lost_found', 'duty_logs'];
+    for (const key of requiredKeys) {
+      assert.ok(DATA_CATEGORIES[key], `DATA_CATEGORIES must have key: ${key}`);
+      assert.ok(DATA_CATEGORIES[key].title, `${key} must have a title`);
+      assert.ok(DATA_CATEGORIES[key].emoji, `${key} must have an emoji`);
+    }
+
+    // 2. Panel Embed Verification
+    const panelEmbed = buildDataManagerPanelEmbed();
+    assert.equal(panelEmbed.data.title.includes('ศูนย์จัดการและเลือกลบข้อมูลระบบ'), true);
+    assert.equal(panelEmbed.data.color, 0xE74C3C);
+
+    // 3. Components Verification (Select Menu with 8 options + Close Button)
+    const components = buildDataManagerComponents();
+    assert.equal(components.length, 2);
+    const selectMenu = components[0].components[0];
+    assert.equal(selectMenu.data.custom_id, 'select_data_manager_category');
+    assert.equal(selectMenu.options.length, 8);
+    const closeBtn = components[1].components[0];
+    assert.equal(closeBtn.data.custom_id, 'btn_datamgr_close');
+
+    // 4. Confirm Embed & Buttons Verification
+    const confirmEmbed = buildDataManagerConfirmEmbed(DATA_CATEGORIES['cases'], 15);
+    assert.equal(confirmEmbed.data.title.includes('ยืนยันการล้างข้อมูล: ข้อมูลคดีและเหตุการณ์'), true);
+    assert.equal(confirmEmbed.data.description.includes('`15` รายการ'), true);
+
+    const confirmButtons = buildDataManagerConfirmButtons('cases');
+    assert.equal(confirmButtons.components.length, 2);
+    assert.equal(confirmButtons.components[0].data.custom_id, 'btn_datamgr_confirm_cases');
+    assert.equal(confirmButtons.components[1].data.custom_id, 'btn_datamgr_back');
   });
 
 });

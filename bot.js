@@ -960,7 +960,10 @@ const slashCommands = [
     ),
   new SlashCommandBuilder()
     .setName('update')
-    .setDescription('🔄 กู้คืนรูปลิงก์หมดอายุ ซิงค์ยศ และสำรองสื่อทั้งหมดเข้า Google Drive (Admin)')
+    .setDescription('🔄 กู้คืนรูปลิงก์หมดอายุ ซิงค์ยศ และสำรองสื่อทั้งหมดเข้า Google Drive (Admin)'),
+  new SlashCommandBuilder()
+    .setName('data-manager')
+    .setDescription('🗑️ ศูนย์จัดการและเลือกลบข้อมูลระบบแยกตามหมวดหมู่ (Admin/ผู้บริหาร)')
 ];
 
 // 📦 ที่เก็บสถานะชั่วคราวสำหรับการแจ้งพบของหายผ่านรูปภาพใน Discord
@@ -2696,6 +2699,287 @@ async function executePurgeSystemData(guild, executorUser) {
 
   console.log(`[PURGE] 🚨 ล้างข้อมูลระบบสำเร็จโดย ${executorUser?.tag || 'Admin'}: คดี ${result.deletedCases}, การลา/คำขอ ${result.deletedLeaves}, ของหาย ${result.deletedLostItems}, คำร้อง ${result.deletedLostClaims}, การลงเวลา ${result.deletedAttendance}`);
   return result;
+}
+
+// ==========================================================
+// 🗑️ DATA MANAGER: เลือกลบข้อมูลระบบแยกตามหมวดหมู่ (/data-manager)
+// ==========================================================
+const DATA_CATEGORIES = {
+  leaves: {
+    id: 'leaves',
+    title: 'ข้อมูลการลาเวร (Leave Requests)',
+    table: 'leave_requests',
+    emoji: '📝',
+    description: 'คำขอลาเวรปฏิบัติหน้าที่ทั้งหมด'
+  },
+  att_present: {
+    id: 'att_present',
+    title: 'ข้อมูลการมาเวรตรงเวลา (Present Attendance)',
+    table: 'attendance_records',
+    status: 'PRESENT',
+    emoji: '🟢',
+    description: 'ประวัติการเช็คชื่อมาตรงเวลา'
+  },
+  att_late: {
+    id: 'att_late',
+    title: 'ข้อมูลการมาสาย (Late Attendance)',
+    table: 'attendance_records',
+    status: 'LATE',
+    emoji: '🟡',
+    description: 'ประวัติการเช็คชื่อมาสาย'
+  },
+  att_absent: {
+    id: 'att_absent',
+    title: 'ข้อมูลการขาดเวร (Absent / Unexcused)',
+    table: 'attendance_records',
+    status: ['ABSENT', 'UNEXCUSED'],
+    emoji: '🔴',
+    description: 'ประวัติการขาดเวรและไม่ลงเวลา'
+  },
+  att_all: {
+    id: 'att_all',
+    title: 'ข้อมูลการลงเวลาเวรทั้งหมด (All Attendance Records)',
+    table: 'attendance_records',
+    emoji: '⏱️',
+    description: 'ประวัติการลงเวลาเวรทุกสถานะ (มา/สาย/ขาด)'
+  },
+  cases: {
+    id: 'cases',
+    title: 'ข้อมูลคดีและเหตุการณ์ (Cases & Incidents)',
+    table: 'cases',
+    emoji: '🚨',
+    description: 'สารบบคดี บันทึกเหตุการณ์ และข้อร้องเรียน'
+  },
+  lost_found: {
+    id: 'lost_found',
+    title: 'ข้อมูลของหายและคำร้อง (Lost & Found)',
+    table: 'lost_items',
+    emoji: '📦',
+    description: 'คลังสิ่งของที่พบเจอ และคำร้องขอรับของคืน'
+  },
+  duty_logs: {
+    id: 'duty_logs',
+    title: 'ข้อมูลการปฏิบัติหน้าที่ (Duty Logs)',
+    table: 'duty_logs',
+    emoji: '📋',
+    description: 'บันทึกการตรวจเวรและสรุปการปฏิบัติหน้าที่ประจำวัน'
+  }
+};
+
+function purgeAttendanceLocalDb(targetStatus) {
+  const candidateFiles = [
+    path.join(__dirname, '..', 'data', 'attendance_db.json'),
+    path.join(__dirname, 'attendance_db.json'),
+    path.join(process.cwd(), 'data', 'attendance_db.json'),
+    path.join(process.cwd(), 'web', 'attendance_db.json')
+  ];
+  for (const f of candidateFiles) {
+    if (fs.existsSync(f)) {
+      try {
+        const data = JSON.parse(fs.readFileSync(f, 'utf8'));
+        if (Array.isArray(data.records)) {
+          if (targetStatus === 'ALL') {
+            data.records = [];
+          } else if (Array.isArray(targetStatus)) {
+            data.records = data.records.filter(r => !targetStatus.includes(r.status));
+          } else {
+            data.records = data.records.filter(r => r.status !== targetStatus);
+          }
+          fs.writeFileSync(f, JSON.stringify(data, null, 2), 'utf8');
+        }
+      } catch (e) {}
+    }
+  }
+}
+
+function purgeCasesLocalCache() {
+  const candidateFiles = [
+    path.join(__dirname, '..', 'web', 'cases_cache.json'),
+    path.join(__dirname, 'cases_cache.json'),
+    path.join(process.cwd(), 'web', 'cases_cache.json'),
+    path.join(process.cwd(), 'cases_cache.json')
+  ];
+  for (const f of candidateFiles) {
+    if (fs.existsSync(f)) {
+      try {
+        fs.writeFileSync(f, JSON.stringify([], null, 2), 'utf8');
+      } catch (e) {}
+    }
+  }
+}
+
+async function getCategoryCount(catKey) {
+  const cat = DATA_CATEGORIES[catKey];
+  if (!cat) return 0;
+
+  try {
+    if (catKey === 'leaves') {
+      const { count } = await supabase.from('leave_requests').select('*', { count: 'exact', head: true });
+      return count || 0;
+    }
+    if (catKey === 'att_present') {
+      const { count } = await supabase.from('attendance_records').select('*', { count: 'exact', head: true }).eq('status', 'PRESENT');
+      return count || 0;
+    }
+    if (catKey === 'att_late') {
+      const { count } = await supabase.from('attendance_records').select('*', { count: 'exact', head: true }).eq('status', 'LATE');
+      return count || 0;
+    }
+    if (catKey === 'att_absent') {
+      const { count } = await supabase.from('attendance_records').select('*', { count: 'exact', head: true }).in('status', ['ABSENT', 'UNEXCUSED']);
+      return count || 0;
+    }
+    if (catKey === 'att_all') {
+      const { count } = await supabase.from('attendance_records').select('*', { count: 'exact', head: true });
+      return count || 0;
+    }
+    if (catKey === 'cases') {
+      const { count } = await supabase.from('cases').select('*', { count: 'exact', head: true });
+      return count || 0;
+    }
+    if (catKey === 'lost_found') {
+      const { count: cItems } = await supabase.from('lost_items').select('*', { count: 'exact', head: true });
+      const { count: cClaims } = await supabase.from('lost_claims').select('*', { count: 'exact', head: true });
+      return (cItems || 0) + (cClaims || 0);
+    }
+    if (catKey === 'duty_logs') {
+      const { count } = await supabase.from('duty_logs').select('*', { count: 'exact', head: true });
+      return count || 0;
+    }
+  } catch (err) {
+    console.warn(`[DATA_MANAGER] Error counting ${catKey}:`, err.message);
+  }
+  return 0;
+}
+
+async function executeDeleteCategory(catKey, guild, executorUser) {
+  const cat = DATA_CATEGORIES[catKey];
+  if (!cat) throw new Error('ไม่พบหมวดหมู่ข้อมูลที่ระบุ');
+
+  let deletedCount = 0;
+
+  if (catKey === 'leaves') {
+    const { count } = await supabase.from('leave_requests').select('*', { count: 'exact', head: true });
+    deletedCount = count || 0;
+    await supabase.from('leave_requests').delete().gte('created_at', '1970-01-01');
+  } else if (catKey === 'att_present') {
+    const { count } = await supabase.from('attendance_records').select('*', { count: 'exact', head: true }).eq('status', 'PRESENT');
+    deletedCount = count || 0;
+    await supabase.from('attendance_records').delete().eq('status', 'PRESENT');
+    purgeAttendanceLocalDb('PRESENT');
+  } else if (catKey === 'att_late') {
+    const { count } = await supabase.from('attendance_records').select('*', { count: 'exact', head: true }).eq('status', 'LATE');
+    deletedCount = count || 0;
+    await supabase.from('attendance_records').delete().eq('status', 'LATE');
+    purgeAttendanceLocalDb('LATE');
+  } else if (catKey === 'att_absent') {
+    const { count } = await supabase.from('attendance_records').select('*', { count: 'exact', head: true }).in('status', ['ABSENT', 'UNEXCUSED']);
+    deletedCount = count || 0;
+    await supabase.from('attendance_records').delete().in('status', ['ABSENT', 'UNEXCUSED']);
+    purgeAttendanceLocalDb(['ABSENT', 'UNEXCUSED']);
+  } else if (catKey === 'att_all') {
+    const { count } = await supabase.from('attendance_records').select('*', { count: 'exact', head: true });
+    deletedCount = count || 0;
+    await supabase.from('attendance_records').delete().gte('created_at', '1970-01-01');
+    purgeAttendanceLocalDb('ALL');
+  } else if (catKey === 'cases') {
+    const { count } = await supabase.from('cases').select('*', { count: 'exact', head: true });
+    deletedCount = count || 0;
+    await supabase.from('cases').delete().gte('created_at', '1970-01-01');
+    purgeCasesLocalCache();
+  } else if (catKey === 'lost_found') {
+    const res = await executeKillFile(guild, executorUser);
+    deletedCount = (res.deletedItems || 0) + (res.deletedClaims || 0);
+  } else if (catKey === 'duty_logs') {
+    const { count } = await supabase.from('duty_logs').select('*', { count: 'exact', head: true });
+    deletedCount = count || 0;
+    await supabase.from('duty_logs').delete().gte('created_at', '1970-01-01');
+  }
+
+  console.log(`[DATA_MANAGER] 🗑️ ลบหมวด ${catKey} (${cat.title}) จำนวน ${deletedCount} รายการ โดย ${executorUser?.tag || 'Admin'}`);
+  return { deletedCount, category: cat };
+}
+
+function buildDataManagerPanelEmbed() {
+  return new EmbedBuilder()
+    .setTitle('🗑️ ศูนย์จัดการและเลือกลบข้อมูลระบบ (Data Management Panel)')
+    .setDescription(
+      `ยินดีต้อนรับสู่ศูนย์ควบคุมการลบข้อมูลระบบแบบเฉพาะเจาะจง\n` +
+      `กรุณาเลือกหมวดหมู่ที่ต้องการลบจากเมนูด้านล่าง:\n\n` +
+      `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+      `📝 **ข้อมูลการลาเวร:** คำขอลาเวรปฏิบัติหน้าที่ทั้งหมด\n` +
+      `🟢 **ข้อมูลการมาเวรตรงเวลา:** ประวัติการเช็คชื่อมาตรงเวลา (PRESENT)\n` +
+      `🟡 **ข้อมูลการมาสาย:** ประวัติการเช็คชื่อมาสาย (LATE)\n` +
+      `🔴 **ข้อมูลการขาดเวร:** ประวัติการขาดเวร (ABSENT / UNEXCUSED)\n` +
+      `⏱️ **ข้อมูลการลงเวลาเวรทั้งหมด:** ล้างประวัติเช็คชื่อทุกสถานะ\n` +
+      `🚨 **ข้อมูลคดีและเหตุการณ์:** บันทึกสารบบคดีและข้อร้องเรียน\n` +
+      `📦 **ข้อมูลของหายและคำร้อง:** คลังสิ่งของและคำร้องรับของ\n` +
+      `📋 **ข้อมูลการปฏิบัติหน้าที่:** บันทึกการตรวจเวร (Duty Logs)\n` +
+      `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+      `⚠️ **ข้อควรระวัง:** การลบจะเป็นการล้างข้อมูลทั้งหมดในหมวดที่เลือกแบบถาวร (All-time wipe)\n` +
+      `ระบบจะมีหน้าต่างสรุปยอดและปุ่มยืนยันก่อนลบจริงเสมอ`
+    )
+    .setColor('#E74C3C')
+    .setFooter({ text: 'SARAWAT SECURE DATA MANAGEMENT • เฉพาะผู้ดูแลระบบ' })
+    .setTimestamp();
+}
+
+function buildDataManagerComponents() {
+  const selectMenu = new StringSelectMenuBuilder()
+    .setCustomId('select_data_manager_category')
+    .setPlaceholder('🔽 เลือกหมวดหมู่ข้อมูลที่ต้องการลบ...')
+    .addOptions([
+      { label: 'ข้อมูลการลาเวร (Leave Requests)', value: 'leaves', description: 'ลบประวัติการขอลาเวรปฏิบัติหน้าที่ทั้งหมด', emoji: '📝' },
+      { label: 'ข้อมูลการมาเวรตรงเวลา (Present Attendance)', value: 'att_present', description: 'ลบประวัติการมาเวรตรงเวลาทั้งหมด', emoji: '🟢' },
+      { label: 'ข้อมูลการมาสาย (Late Attendance)', value: 'att_late', description: 'ลบประวัติการมาสายทั้งหมด', emoji: '🟡' },
+      { label: 'ข้อมูลการขาดเวร (Absent Attendance)', value: 'att_absent', description: 'ลบประวัติการขาดเวรทั้งหมด', emoji: '🔴' },
+      { label: 'ข้อมูลการลงเวลาเวรทั้งหมด (All Attendance)', value: 'att_all', description: 'ลบประวัติการลงเวลาเวรทุกสถานะทั้งหมด', emoji: '⏱️' },
+      { label: 'ข้อมูลคดีและเหตุการณ์ (Cases & Incidents)', value: 'cases', description: 'ลบสารบบคดีและเรื่องร้องเรียนทั้งหมด', emoji: '🚨' },
+      { label: 'ข้อมูลของหายและคำร้อง (Lost & Found)', value: 'lost_found', description: 'ลบรายการสิ่งของในคลังของหายและคำร้องทั้งหมด', emoji: '📦' },
+      { label: 'ข้อมูลการปฏิบัติหน้าที่ (Duty Logs)', value: 'duty_logs', description: 'ลบบันทึกการตรวจเวรประจำวันทั้งหมด', emoji: '📋' }
+    ]);
+
+  const row1 = new ActionRowBuilder().addComponents(selectMenu);
+  const row2 = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId('btn_datamgr_close')
+      .setLabel('❌ ปิดแผงควบคุม')
+      .setStyle(ButtonStyle.Secondary)
+  );
+
+  return [row1, row2];
+}
+
+function buildDataManagerConfirmEmbed(cat, count) {
+  return new EmbedBuilder()
+    .setTitle(`🚨 ยืนยันการล้างข้อมูล: ${cat.title}`)
+    .setDescription(
+      `คุณได้เลือกที่จะลบ **${cat.title}** (${cat.description})\n\n` +
+      `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+      `📊 **จำนวนข้อมูลทั้งหมดที่จะถูกลบ:** **\`${count}\` รายการ**\n` +
+      `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+      `⚠️ **คำเตือนความปลอดภัย (DESTRUCTIVE ACTION)**\n` +
+      `• การกระทำนี้จะล้างข้อมูลทั้งหมดในหมวดนี้ออกจากระบบ Supabase และ Local Cache อย่างถาวร\n` +
+      `• ข้อมูลสมาชิกสารวัตรและหมวดหมู่อื่นๆ จะไม่ได้รับผลกระทบ\n` +
+      `• **ไม่สามารถย้อนกลับหรือกู้คืนได้!**\n\n` +
+      `หากแน่ใจแล้ว ให้กดปุ่ม **[🚨 ยืนยันลบข้อมูลทั้งหมด]** ด้านล่าง`
+    )
+    .setColor('#C0392B')
+    .setFooter({ text: 'SARAWAT DATA MANAGER • Confirmation Stage' })
+    .setTimestamp();
+}
+
+function buildDataManagerConfirmButtons(catKey) {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`btn_datamgr_confirm_${catKey}`)
+      .setLabel('🚨 ยืนยันลบข้อมูลทั้งหมดในหมวดนี้')
+      .setStyle(ButtonStyle.Danger),
+    new ButtonBuilder()
+      .setCustomId('btn_datamgr_back')
+      .setLabel('❌ ยกเลิก / กลับหน้าหลัก')
+      .setStyle(ButtonStyle.Secondary)
+  );
 }
 
 /**
@@ -5642,6 +5926,24 @@ client.on('interactionCreate', async (interaction) => {
         return;
       }
 
+      if (commandName === 'data-manager') {
+        const isAdmin = interaction.member?.permissions.has(PermissionsBitField.Flags.Administrator) ||
+                        (ROLE_IDS.ADMIN && interaction.member?.roles.cache.has(ROLE_IDS.ADMIN)) ||
+                        interaction.guild?.ownerId === interaction.user.id;
+        if (!isAdmin) {
+          await interaction.reply({
+            content: '⛔ สงวนสิทธิ์เฉพาะผู้ดูแลระบบ (Admin) หรือเจ้าของเซิร์ฟเวอร์เท่านั้นในการเข้าถึงศูนย์จัดการข้อมูล',
+            ephemeral: true
+          });
+          return;
+        }
+
+        const panelEmbed = buildDataManagerPanelEmbed();
+        const components = buildDataManagerComponents();
+        await interaction.reply({ embeds: [panelEmbed], components, ephemeral: true });
+        return;
+      }
+
       if (commandName === 'demote') {
         const isLeadership = interaction.member?.permissions.has(PermissionsBitField.Flags.Administrator) ||
                              (ROLE_IDS.ADMIN && interaction.member?.roles.cache.has(ROLE_IDS.ADMIN)) ||
@@ -5870,6 +6172,102 @@ client.on('interactionCreate', async (interaction) => {
       await interaction.editReply({
         content: '',
         embeds: [embedDone],
+        components: []
+      });
+      return;
+    }
+
+    // ==========================================================
+    // 🗑️ DATA MANAGER INTERACTIONS HANDLING (/data-manager)
+    // ==========================================================
+    if (interaction.isStringSelectMenu() && interaction.customId === 'select_data_manager_category') {
+      const selectedKey = interaction.values[0];
+      const cat = DATA_CATEGORIES[selectedKey];
+      if (!cat) {
+        await interaction.reply({ content: '⚠️ ไม่พบหมวดหมู่ที่เลือก', ephemeral: true });
+        return;
+      }
+
+      await interaction.deferUpdate();
+      const count = await getCategoryCount(selectedKey);
+      const confirmEmbed = buildDataManagerConfirmEmbed(cat, count);
+      const confirmButtons = buildDataManagerConfirmButtons(selectedKey);
+
+      await interaction.editReply({ embeds: [confirmEmbed], components: [confirmButtons] });
+      return;
+    }
+
+    if (interaction.isButton() && interaction.customId.startsWith('btn_datamgr_confirm_')) {
+      const isAdmin = interaction.member?.permissions.has(PermissionsBitField.Flags.Administrator) ||
+                      (ROLE_IDS.ADMIN && interaction.member?.roles.cache.has(ROLE_IDS.ADMIN)) ||
+                      interaction.guild?.ownerId === interaction.user.id;
+      if (!isAdmin) {
+        await interaction.reply({
+          content: '⛔ สงวนสิทธิ์เฉพาะผู้ดูแลระบบ (Admin) เท่านั้นในการสั่งการลบข้อมูล',
+          ephemeral: true
+        });
+        return;
+      }
+
+      const catKey = interaction.customId.replace('btn_datamgr_confirm_', '');
+      await interaction.deferUpdate();
+
+      try {
+        const result = await executeDeleteCategory(catKey, interaction.guild, interaction.user);
+        const doneEmbed = new EmbedBuilder()
+          .setTitle('✅ ดำเนินการลบข้อมูลสำเร็จ')
+          .setDescription(
+            `ระบบได้ล้างข้อมูลเรียบร้อยแล้ว:\n\n` +
+            `• 📂 **หมวดหมู่ที่ดำเนินการ:** ${result.category.title}\n` +
+            `• 🗑️ **จำนวนที่ถูกลบถาวร:** \`${result.deletedCount}\` รายการ\n` +
+            `• 🛡️ **สถานะระบบ:** ฐานข้อมูล Supabase และ Local Cache ถูกอัปเดตแล้ว\n\n` +
+            `*(ข้อมูลสมาชิกและหมวดหมู่อื่นๆ ยังคงปลอดภัย 100%)*`
+          )
+          .setColor('#2ECC71')
+          .setFooter({ text: 'SARAWAT DATA MANAGER • Success' })
+          .setTimestamp();
+
+        const doneRow = new ActionRowBuilder().addComponents(
+          new ButtonBuilder()
+            .setCustomId('btn_datamgr_back')
+            .setLabel('🔄 จัดการหมวดอื่นต่อ')
+            .setStyle(ButtonStyle.Primary),
+          new ButtonBuilder()
+            .setCustomId('btn_datamgr_close')
+            .setLabel('❌ เสร็จสิ้น / ปิดหน้าต่าง')
+            .setStyle(ButtonStyle.Secondary)
+        );
+
+        await interaction.editReply({ embeds: [doneEmbed], components: [doneRow] });
+      } catch (err) {
+        console.error('[DATA_MANAGER ERROR]:', err);
+        await interaction.editReply({
+          content: `⚠️ เกิดข้อผิดพลาดในการลบข้อมูล: ${err.message}`,
+          embeds: [],
+          components: [
+            new ActionRowBuilder().addComponents(
+              new ButtonBuilder()
+                .setCustomId('btn_datamgr_back')
+                .setLabel('🔄 กลับหน้าหลัก')
+                .setStyle(ButtonStyle.Secondary)
+            )
+          ]
+        });
+      }
+      return;
+    }
+
+    if (interaction.isButton() && interaction.customId === 'btn_datamgr_back') {
+      const panelEmbed = buildDataManagerPanelEmbed();
+      const components = buildDataManagerComponents();
+      await interaction.update({ embeds: [panelEmbed], components });
+      return;
+    }
+
+    if (interaction.isButton() && interaction.customId === 'btn_datamgr_close') {
+      await interaction.update({
+        content: '🔒 **ปิดแผงจัดการข้อมูลเรียบร้อยแล้ว** คุณสามารถเรียกใช้ใหม่ได้เสมอด้วยคำสั่ง `/data-manager`',
+        embeds: [],
         components: []
       });
       return;
@@ -13910,6 +14308,15 @@ module.exports = {
   getMemberSortKey,
   sortMembersByGradeRoomNumber,
   generateAttendanceSheetHTML,
+  DATA_CATEGORIES,
+  getCategoryCount,
+  executeDeleteCategory,
+  buildDataManagerPanelEmbed,
+  buildDataManagerComponents,
+  buildDataManagerConfirmEmbed,
+  buildDataManagerConfirmButtons,
+  purgeAttendanceLocalDb,
+  purgeCasesLocalCache,
   logError,
   logWarn
 };
