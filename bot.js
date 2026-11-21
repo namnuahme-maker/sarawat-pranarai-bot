@@ -375,6 +375,14 @@ function getWebDashboardUrl() {
   return 'http://localhost:10001';
 }
 
+// 🔐 สร้าง Signature Token สำหรับเชื่อมต่อเว็บแดชบอร์ดอย่างปลอดภัย (Web Profile Link)
+function signAuthToken(payload) {
+  const secret = process.env.WEBHOOK_SECRET || 'pranarai_secret_sarawat_2026';
+  const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const sig = crypto.createHmac('sha256', secret).update(body).digest('base64url');
+  return `${body}.${sig}`;
+}
+
 function createSafeSupabaseClient(url, key, context = 'BOT') {
   if (url && key) {
     try {
@@ -9577,9 +9585,10 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
         .setTitle('✏️ ศูนย์แก้ไขข้อมูลสารวัตรนักเรียน')
         .setDescription(
           `สวัสดีครับคุณ **${member.first_name} ${member.last_name} (${member.nickname})**\n` +
-          `กรุณาเลือกประเภทข้อมูลที่ต้องการแก้ไขด้านล่างนี้:\n\n` +
-          `• 📸 **เปลี่ยนรูปถ่ายหน้าตรง:** ตัดรูปขนาด 1 นิ้ว (3:4) บนเว็บ **อัปเดตบัตรทันทีโดยไม่ต้องรออนุมัติ**\n` +
-          `• 📝 **แก้ไขข้อมูลตัวอักษร:** แก้ไขชื่อ-สกุล, ชื่อเล่น, ชั้น/เลขที่, หรือเบอร์โทร **(ต้องส่งคำขอให้ผู้บริหารอนุมัติ)**`
+          `กรุณาเลือกช่องทางดำเนินการแก้ไขข้อมูลของคุณด้านล่างนี้:\n\n` +
+          `• 🌐 **เปิดหน้าโปรไฟล์และแก้ไขบนเว็บ (แนะนำ):** ดูบัตร 3D ครอปรูปถ่าย และแก้ไขข้อมูลส่วนตัวครบจบในที่เดียว\n` +
+          `• 📸 **เปลี่ยนรูปถ่ายหน้าตรง:** ตัดรูปขนาด 1 นิ้ว (3:4) บนเว็บ อัปเดตบัตรทันที\n` +
+          `• 📝 **แก้ไขข้อมูลตัวอักษรใน Discord:** กรอกฟอร์ม Modal เพื่อส่งคำขอแก้ไข`
         )
         .addFields(
           { name: '👤 ชื่อ-นามสกุล', value: `\`${member.first_name} ${member.last_name}\``, inline: true },
@@ -9596,15 +9605,31 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
         profileEmbed.setThumbnail(member.profile_image_url);
       }
 
+      // สร้าง Secure Token สำหรับเปิดหน้าโปรไฟล์บนเว็บโดยตรง
+      const authPayload = {
+        id: interaction.user.id,
+        username: interaction.user.username,
+        memberId: member.id,
+        dutyId: member.duty_id,
+        role: member.role || 'MEMBER',
+        exp: Date.now() + 60 * 60 * 1000 // หมดอายุใน 1 ชั่วโมง
+      };
+      const authToken = signAuthToken(authPayload);
+      const webProfileUrl = `${getWebDashboardUrl()}/?auth=${authToken}&edit=self`;
+
       const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
+          .setLabel('🌐 เปิดโปรไฟล์ & แก้ไขบนเว็บ')
+          .setStyle(ButtonStyle.Link)
+          .setURL(webProfileUrl),
+        new ButtonBuilder()
           .setCustomId(`btn_edit_choice_photo_${member.id}`)
-          .setLabel('📸 เปลี่ยนรูปถ่าย (อัปเดตทันที)')
+          .setLabel('📸 ครอปรูป 1 นิ้ว')
           .setStyle(ButtonStyle.Success),
         new ButtonBuilder()
           .setCustomId(`btn_edit_choice_text_${member.id}`)
-          .setLabel('📝 แก้ไขข้อมูลตัวอักษร (ส่งผู้บริหารอนุมัติ)')
-          .setStyle(ButtonStyle.Primary)
+          .setLabel('📝 แก้ไขใน Discord')
+          .setStyle(ButtonStyle.Secondary)
       );
 
       await interaction.editReply({
