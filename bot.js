@@ -3198,6 +3198,273 @@ client.once(Events.ClientReady || 'ready', async () => {
 });
 
 // ==========================================================
+// 📦 HELPER FUNCTIONS: LOST & FOUND DRAFT CARD & PERSISTENCE
+// ==========================================================
+function buildLostDraftEmbed(report, statusNote = '') {
+  const titleDisplay = report.title ? `**${report.title}**` : '_รอระบุชื่อสิ่งของ_';
+  const catDisplay = report.category ? `\`${report.category}\`` : '_สิ่งของทั่วไป / อื่นๆ_';
+  const charDisplay = report.characteristics ? report.characteristics : '_ยังไม่ระบุลักษณะเด่น_';
+  const secretDisplay = report.secretTraits ? `||${report.secretTraits}|| (ซ่อนเพื่อความปลอดภัย)` : '_ไม่มี_';
+
+  const embed = new EmbedBuilder()
+    .setTitle('📦 ร่างรายการสิ่งของที่พบเจอ (Draft)')
+    .setDescription(
+      `ตรวจพบรูปภาพจาก **<@${report.userId}>** เรียบร้อยแล้ว!\n\n` +
+      `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+      `🏷️ **ชื่อสิ่งของ:** ${titleDisplay}\n` +
+      `📂 **หมวดหมู่:** ${catDisplay}\n` +
+      `🔍 **ลักษณะเด่น:** ${charDisplay}\n` +
+      `🔒 **จุดสังเกตลับ:** ${secretDisplay}\n` +
+      `📍 **สถานที่พบ:** ${report.locationFound || 'บริเวณโรงเรียน'}\n` +
+      `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+      (statusNote ? `${statusNote}\n\n` : '') +
+      `💡 **วิธีดำเนินการ:**\n` +
+      `• กดปุ่ม **[✨ ให้ AI ช่วยวิเคราะห์]** เพื่อให้ AI อ่านภาพเติมข้อมูลอัตโนมัติ (ประหยัด Token)\n` +
+      `• หรือพิมพ์ข้อความในห้องนี้เพื่อระบุ/เปลี่ยนชื่อหัวข้อได้ทันที\n` +
+      `• หรือกดปุ่ม **[✏️ กรอก/แก้ไขข้อมูล]** เพื่อเปิดแบบฟอร์มแก้ไข\n` +
+      `• เมื่อข้อมูลครบถ้วนแล้ว ให้กด **[✅ ยืนยันบันทึกคลัง]**`
+    )
+    .setImage(report.attachmentUrl)
+    .setColor('#3498DB')
+    .setFooter({ text: 'SARAWAT LOST & FOUND • ร่างรายการ (หมดอายุใน 10 นาที)' })
+    .setTimestamp();
+
+  return embed;
+}
+
+function buildLostDraftButtons(reportId) {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`btn_lost_ai_${reportId}`)
+      .setLabel('✨ ให้ AI ช่วยวิเคราะห์')
+      .setStyle(ButtonStyle.Primary),
+    new ButtonBuilder()
+      .setCustomId(`btn_lost_edit_${reportId}`)
+      .setLabel('✏️ กรอก/แก้ไขข้อมูล')
+      .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId(`btn_lost_save_${reportId}`)
+      .setLabel('✅ ยืนยันบันทึกคลัง')
+      .setStyle(ButtonStyle.Success),
+    new ButtonBuilder()
+      .setCustomId(`btn_lost_cancel_${reportId}`)
+      .setLabel('❌ ยกเลิก')
+      .setStyle(ButtonStyle.Danger)
+  );
+}
+
+// 📦 บันทึกของหายเข้า Google Drive, Supabase และ Local Cache
+async function finalizeAndSaveLostItem(report, interaction) {
+  await interaction.deferUpdate();
+
+  // แสดงสถานะกำลังบันทึก
+  const savingEmbed = buildLostDraftEmbed(report, '⏳ *กำลังบันทึกข้อมูลและอัปโหลดรูปภาพเข้า Google Drive โฟลเดอร์ 03_สิ่งของที่พบเจอ...*');
+  await interaction.editReply({ embeds: [savingEmbed], components: [] }).catch(() => {});
+
+  let finderName = interaction.member?.displayName || interaction.user.username;
+  let finderDutyId = '-';
+  let finderAvatar = interaction.user.displayAvatarURL();
+
+  try {
+    const { data: member } = await supabase
+      .from('members')
+      .select('*')
+      .eq('discord_id', interaction.user.id)
+      .maybeSingle();
+
+    if (member) {
+      const fn = member.full_name || `${member.first_name || ''} ${member.last_name || ''}`.trim();
+      finderName = member.nickname ? `${fn} (${member.nickname})` : fn;
+      finderDutyId = member.duty_id || '-';
+      if (member.photo_url) finderAvatar = member.photo_url;
+    }
+  } catch (e) {}
+
+  const now = new Date();
+  const timeStr = now.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }) + ' น.';
+  const dateStr = now.toISOString().slice(0, 10);
+  const itemCode = `LF-${now.getFullYear()}-${String(Date.now()).slice(-4)}`;
+
+  let finalImageUrl = report.attachmentUrl;
+  let gdriveFileId = null;
+  let gdriveUrl = null;
+
+  // จัดเก็บรูปถ่าย (Supabase Storage ถาวร + Google Drive 03_สิ่งของที่พบเจอ)
+  if (report.attachmentUrl && report.attachmentUrl.startsWith('http')) {
+    try {
+      const imgRes = await fetch(report.attachmentUrl);
+      if (imgRes.ok) {
+        const buf = Buffer.from(await imgRes.arrayBuffer());
+        const filename = `${itemCode}.jpg`;
+
+        // 1. จัดเก็บลง Supabase Storage sarawat-photos ถาวร
+        try {
+          const storagePath = `lost-items/${filename}`;
+          const { error: sErr } = await supabase.storage
+            .from('sarawat-photos')
+            .upload(storagePath, buf, { contentType: 'image/jpeg', upsert: true });
+          if (!sErr) {
+            const { data: pubData } = supabase.storage.from('sarawat-photos').getPublicUrl(storagePath);
+            if (pubData && pubData.publicUrl) {
+              finalImageUrl = pubData.publicUrl;
+              console.log(`[LOST ITEM STORAGE] ✅ จัดเก็บถาวรใน Supabase: ${finalImageUrl}`);
+            }
+          }
+        } catch (sErr) {
+          console.warn('[LOST ITEM STORAGE WARN]:', sErr.message);
+        }
+
+        // 2. สำรองข้อมูลเข้า Google Drive โฟลเดอร์ 03_สิ่งของที่พบเจอ (1que123Zlr8ewcC5KD4Gx5DLZSbyJeapQ)
+        try {
+          const gRes = await uploadToGoogleDrive(buf, filename, {
+            category: 'lost_found',
+            folderId: process.env.GDRIVE_LOST_FOLDER_ID || '1que123Zlr8ewcC5KD4Gx5DLZSbyJeapQ',
+            itemCode: itemCode,
+            title: report.title,
+            description: `สิ่งของที่พบเจอ: ${report.title} (${itemCode}) สถานที่พบ: ${report.locationFound || '-'}`
+          });
+          if (gRes && gRes.success && gRes.fileId) {
+            gdriveFileId = gRes.fileId;
+            gdriveUrl = gRes.webViewLink || `https://drive.google.com/file/d/${gRes.fileId}/view`;
+            finalImageUrl = `/api/drive-proxy/${gRes.fileId}`;
+            console.log(`[LOST ITEM GDRIVE] ✅ สำรองเข้า Google Drive สำเร็จ: ${gRes.fileId}`);
+          }
+        } catch (gErr) {
+          console.warn('[LOST ITEM GDRIVE WARN]:', gErr.message);
+        }
+      }
+    } catch (fetchErr) {
+      console.warn('[LOST ITEM ATTACHMENT FETCH WARN]:', fetchErr.message);
+    }
+  }
+
+  const newItem = {
+    item_code: itemCode,
+    title: report.title,
+    category: report.category || 'สิ่งของทั่วไป / อื่นๆ',
+    characteristics: report.characteristics || report.title,
+    secret_traits: report.secretTraits || null,
+    location_found: report.locationFound || 'บริเวณโรงเรียน',
+    found_date: dateStr,
+    found_time: timeStr,
+    status: 'WAITING_OWNER',
+    storage_location: 'ห้องสารวัตรนักเรียน',
+    image_url: finalImageUrl,
+    gdrive_file_id: gdriveFileId,
+    gdrive_url: gdriveUrl,
+    finder_name: finderName,
+    finder_duty_id: finderDutyId,
+    finder_avatar_url: finderAvatar,
+    created_at: now.toISOString(),
+    updated_at: now.toISOString()
+  };
+
+  // 1. ซิงค์ลง Supabase Database
+  try {
+    await supabase.from('lost_items').insert(newItem);
+  } catch (e) {
+    console.error('[SUPABASE INSERT LOST ITEM ERROR]:', e?.message || e);
+  }
+
+  // 2. ซิงค์ยิงตรงเข้า Web Dashboard API ผ่าน HTTP POST
+  const webTargets = [
+    getWebDashboardUrl(),
+    'https://sarawat-pranarai-web.onrender.com',
+    'http://localhost:10001'
+  ];
+  for (const targetUrl of [...new Set(webTargets.filter(Boolean))]) {
+    try {
+      const controller = new AbortController();
+      const tId = setTimeout(() => controller.abort(), 3500);
+      await fetch(`${targetUrl.replace(/\/$/, '')}/api/lost-found/items`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newItem),
+        signal: controller.signal
+      });
+      clearTimeout(tId);
+    } catch (postErr) {}
+  }
+
+  // 3. ซิงค์ลงแคชไฟล์ Local
+  try {
+    const cacheTargets = [
+      path.join(__dirname, '..', 'data', 'lost_found_db.json'),
+      path.join(__dirname, '..', 'web', 'lost_items_cache.json'),
+      path.join(__dirname, 'lost_items_cache.json')
+    ];
+    for (const cp of cacheTargets) {
+      try {
+        if (fs.existsSync(path.dirname(cp))) {
+          let parsed = null;
+          if (fs.existsSync(cp)) parsed = JSON.parse(fs.readFileSync(cp, 'utf8') || 'null');
+          if (Array.isArray(parsed)) {
+            parsed.unshift({ id: `lf-${Date.now()}`, ...newItem });
+            fs.writeFileSync(cp, JSON.stringify(parsed, null, 2), 'utf8');
+          } else if (parsed && typeof parsed === 'object') {
+            parsed.items = parsed.items || [];
+            parsed.items.unshift({ id: `lf-${Date.now()}`, ...newItem });
+            fs.writeFileSync(cp, JSON.stringify(parsed, null, 2), 'utf8');
+          }
+        }
+      } catch (e) {}
+    }
+  } catch (e) {}
+
+  pendingLostReports.delete(report.reportId);
+
+  const gdriveLine = gdriveFileId
+    ? `📁 **Google Drive:** [ดูไฟล์ในไดรฟ์](https://drive.google.com/file/d/${gdriveFileId}/view) • [โฟลเดอร์ 03_สิ่งของที่พบเจอ](https://drive.google.com/drive/folders/1que123Zlr8ewcC5KD4Gx5DLZSbyJeapQ)\n`
+    : `📁 **Google Drive:** [โฟลเดอร์ 03_สิ่งของที่พบเจอ](https://drive.google.com/drive/folders/1que123Zlr8ewcC5KD4Gx5DLZSbyJeapQ)\n`;
+
+  const successEmbed = new EmbedBuilder()
+    .setTitle(`📦 บันทึกข้อมูลของหายสำเร็จ! [${itemCode}]`)
+    .setDescription(
+      `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+      `🏷️ **สิ่งของ:** ${report.title}\n` +
+      `📂 **หมวดหมู่:** ${report.category}\n` +
+      `🔍 **ลักษณะเด่น:** ${report.characteristics || '-'}\n` +
+      `📍 **สถานที่พบ:** ${report.locationFound}\n` +
+      `📅 **วันเวลา:** ${dateStr} (${timeStr})\n` +
+      `🛡️ **ผู้บันทึก:** ${finderName} \`[${finderDutyId}]\`\n` +
+      gdriveLine +
+      `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+      `*🌐 บันทึกเข้า Google Drive และซิงค์ขึ้นศูนย์บัญชาการสารวัตรบนหน้าเว็บแล้ว*`
+    )
+    .setImage(report.attachmentUrl)
+    .setThumbnail(finderAvatar)
+    .setColor('#2ECC71')
+    .setFooter({ text: 'SARAWAT LOST & FOUND • โรงเรียนพระนารายณ์' })
+    .setTimestamp();
+
+  const btnRowComponents = [
+    new ButtonBuilder()
+      .setLabel('🌐 เปิดดูบนหน้าเว็บ (Web)')
+      .setStyle(ButtonStyle.Link)
+      .setURL(`${getWebDashboardUrl()}/lost-found`)
+  ];
+
+  if (gdriveUrl || gdriveFileId) {
+    btnRowComponents.push(
+      new ButtonBuilder()
+        .setLabel('📁 เปิดใน Google Drive')
+        .setStyle(ButtonStyle.Link)
+        .setURL(gdriveUrl || `https://drive.google.com/file/d/${gdriveFileId}/view`)
+    );
+  } else {
+    btnRowComponents.push(
+      new ButtonBuilder()
+        .setLabel('📁 โฟลเดอร์ของหาย Drive')
+        .setStyle(ButtonStyle.Link)
+        .setURL('https://drive.google.com/drive/folders/1que123Zlr8ewcC5KD4Gx5DLZSbyJeapQ')
+    );
+  }
+
+  const btnRow = new ActionRowBuilder().addComponents(btnRowComponents);
+  await interaction.editReply({ embeds: [successEmbed], components: [btnRow] });
+}
+
+// ==========================================================
 // 📌 คำสั่งตั้งค่าปุ่มเริ่มต้นในห้องต่างๆ
 // ==========================================================
 client.on('messageCreate', async (message) => {
@@ -3567,62 +3834,6 @@ client.on('messageCreate', async (message) => {
 
     await message.reply({ embeds: [ddayEmbed], components: [ddayRow] });
     return;
-  }
-
-  // ==========================================================
-  // 📦 HELPER: สร้างการ์ดร่างสิ่งของที่พบเจอ (Lost & Found Draft Card)
-  // ==========================================================
-  function buildLostDraftEmbed(report, statusNote = '') {
-    const titleDisplay = report.title ? `**${report.title}**` : '_รอระบุชื่อสิ่งของ_';
-    const catDisplay = report.category ? `\`${report.category}\`` : '_สิ่งของทั่วไป / อื่นๆ_';
-    const charDisplay = report.characteristics ? report.characteristics : '_ยังไม่ระบุลักษณะเด่น_';
-    const secretDisplay = report.secretTraits ? `||${report.secretTraits}|| (ซ่อนเพื่อความปลอดภัย)` : '_ไม่มี_';
-
-    const embed = new EmbedBuilder()
-      .setTitle('📦 ร่างรายการสิ่งของที่พบเจอ (Draft)')
-      .setDescription(
-        `ตรวจพบรูปภาพจาก **<@${report.userId}>** เรียบร้อยแล้ว!\n\n` +
-        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-        `🏷️ **ชื่อสิ่งของ:** ${titleDisplay}\n` +
-        `📂 **หมวดหมู่:** ${catDisplay}\n` +
-        `🔍 **ลักษณะเด่น:** ${charDisplay}\n` +
-        `🔒 **จุดสังเกตลับ:** ${secretDisplay}\n` +
-        `📍 **สถานที่พบ:** ${report.locationFound || 'บริเวณโรงเรียน'}\n` +
-        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-        (statusNote ? `${statusNote}\n\n` : '') +
-        `💡 **วิธีดำเนินการ:**\n` +
-        `• กดปุ่ม **[✨ ให้ AI ช่วยวิเคราะห์]** เพื่อให้ AI อ่านภาพเติมข้อมูลอัตโนมัติ (ประหยัด Token)\n` +
-        `• หรือพิมพ์ข้อความในห้องนี้เพื่อระบุ/เปลี่ยนชื่อหัวข้อได้ทันที\n` +
-        `• หรือกดปุ่ม **[✏️ กรอก/แก้ไขข้อมูล]** เพื่อเปิดแบบฟอร์มแก้ไข\n` +
-        `• เมื่อข้อมูลครบถ้วนแล้ว ให้กด **[✅ ยืนยันบันทึกคลัง]**`
-      )
-      .setImage(report.attachmentUrl)
-      .setColor('#3498DB')
-      .setFooter({ text: 'SARAWAT LOST & FOUND • ร่างรายการ (หมดอายุใน 10 นาที)' })
-      .setTimestamp();
-
-    return embed;
-  }
-
-  function buildLostDraftButtons(reportId) {
-    return new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setCustomId(`btn_lost_ai_${reportId}`)
-        .setLabel('✨ ให้ AI ช่วยวิเคราะห์')
-        .setStyle(ButtonStyle.Primary),
-      new ButtonBuilder()
-        .setCustomId(`btn_lost_edit_${reportId}`)
-        .setLabel('✏️ กรอก/แก้ไขข้อมูล')
-        .setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder()
-        .setCustomId(`btn_lost_save_${reportId}`)
-        .setLabel('✅ ยืนยันบันทึกคลัง')
-        .setStyle(ButtonStyle.Success),
-      new ButtonBuilder()
-        .setCustomId(`btn_lost_cancel_${reportId}`)
-        .setLabel('❌ ยกเลิก')
-        .setStyle(ButtonStyle.Danger)
-    );
   }
 
   // 📦 ฟังก์ชันดักรับรูปถ่ายสิ่งของที่พบในห้อง #📦│แจ้งพบของหาย
@@ -6176,217 +6387,6 @@ client.on('interactionCreate', async (interaction) => {
       await interaction.message.delete().catch(() => {});
       await interaction.reply({ content: '🗑️ ยกเลิกรายการแจ้งพบของหายเรียบร้อยแล้ว', ephemeral: true });
       return;
-    }
-
-    // 📦 HELPER: บันทึกของหายเข้า Google Drive, Supabase และ Local Cache
-    async function finalizeAndSaveLostItem(report, interaction) {
-      await interaction.deferUpdate();
-
-      // แสดงสถานะกำลังบันทึก
-      const savingEmbed = buildLostDraftEmbed(report, '⏳ *กำลังบันทึกข้อมูลและอัปโหลดรูปภาพเข้า Google Drive โฟลเดอร์ 03_สิ่งของที่พบเจอ...*');
-      await interaction.editReply({ embeds: [savingEmbed], components: [] }).catch(() => {});
-
-      let finderName = interaction.member?.displayName || interaction.user.username;
-      let finderDutyId = '-';
-      let finderAvatar = interaction.user.displayAvatarURL();
-
-      try {
-        const { data: member } = await supabase
-          .from('members')
-          .select('*')
-          .eq('discord_id', interaction.user.id)
-          .maybeSingle();
-
-        if (member) {
-          const fn = member.full_name || `${member.first_name || ''} ${member.last_name || ''}`.trim();
-          finderName = member.nickname ? `${fn} (${member.nickname})` : fn;
-          finderDutyId = member.duty_id || '-';
-          if (member.photo_url) finderAvatar = member.photo_url;
-        }
-      } catch (e) {}
-
-      const now = new Date();
-      const timeStr = now.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }) + ' น.';
-      const dateStr = now.toISOString().slice(0, 10);
-      const itemCode = `LF-${now.getFullYear()}-${String(Date.now()).slice(-4)}`;
-
-      let finalImageUrl = report.attachmentUrl;
-      let gdriveFileId = null;
-      let gdriveUrl = null;
-
-      // จัดเก็บรูปถ่าย (Supabase Storage ถาวร + Google Drive 03_สิ่งของที่พบเจอ)
-      if (report.attachmentUrl && report.attachmentUrl.startsWith('http')) {
-        try {
-          const imgRes = await fetch(report.attachmentUrl);
-          if (imgRes.ok) {
-            const buf = Buffer.from(await imgRes.arrayBuffer());
-            const filename = `${itemCode}.jpg`;
-
-            // 1. จัดเก็บลง Supabase Storage sarawat-photos ถาวร
-            try {
-              const storagePath = `lost-items/${filename}`;
-              const { error: sErr } = await supabase.storage
-                .from('sarawat-photos')
-                .upload(storagePath, buf, { contentType: 'image/jpeg', upsert: true });
-              if (!sErr) {
-                const { data: pubData } = supabase.storage.from('sarawat-photos').getPublicUrl(storagePath);
-                if (pubData && pubData.publicUrl) {
-                  finalImageUrl = pubData.publicUrl;
-                  console.log(`[LOST ITEM STORAGE] ✅ จัดเก็บถาวรใน Supabase: ${finalImageUrl}`);
-                }
-              }
-            } catch (sErr) {
-              console.warn('[LOST ITEM STORAGE WARN]:', sErr.message);
-            }
-
-            // 2. สำรองข้อมูลเข้า Google Drive โฟลเดอร์ 03_สิ่งของที่พบเจอ (1que123Zlr8ewcC5KD4Gx5DLZSbyJeapQ)
-            try {
-              const gRes = await uploadToGoogleDrive(buf, filename, {
-                category: 'lost_found',
-                folderId: process.env.GDRIVE_LOST_FOLDER_ID || '1que123Zlr8ewcC5KD4Gx5DLZSbyJeapQ',
-                itemCode: itemCode,
-                title: report.title,
-                description: `สิ่งของที่พบเจอ: ${report.title} (${itemCode}) สถานที่พบ: ${report.locationFound || '-'}`
-              });
-              if (gRes && gRes.success && gRes.fileId) {
-                gdriveFileId = gRes.fileId;
-                gdriveUrl = gRes.webViewLink || `https://drive.google.com/file/d/${gRes.fileId}/view`;
-                finalImageUrl = `/api/drive-proxy/${gRes.fileId}`;
-                console.log(`[LOST ITEM GDRIVE] ✅ สำรองเข้า Google Drive สำเร็จ: ${gRes.fileId}`);
-              }
-            } catch (gErr) {
-              console.warn('[LOST ITEM GDRIVE WARN]:', gErr.message);
-            }
-          }
-        } catch (fetchErr) {
-          console.warn('[LOST ITEM ATTACHMENT FETCH WARN]:', fetchErr.message);
-        }
-      }
-
-      const newItem = {
-        item_code: itemCode,
-        title: report.title,
-        category: report.category || 'สิ่งของทั่วไป / อื่นๆ',
-        characteristics: report.characteristics || report.title,
-        secret_traits: report.secretTraits || null,
-        location_found: report.locationFound || 'บริเวณโรงเรียน',
-        found_date: dateStr,
-        found_time: timeStr,
-        status: 'WAITING_OWNER',
-        storage_location: 'ห้องสารวัตรนักเรียน',
-        image_url: finalImageUrl,
-        gdrive_file_id: gdriveFileId,
-        gdrive_url: gdriveUrl,
-        finder_name: finderName,
-        finder_duty_id: finderDutyId,
-        finder_avatar_url: finderAvatar,
-        created_at: now.toISOString(),
-        updated_at: now.toISOString()
-      };
-
-      // 1. ซิงค์ลง Supabase Database
-      try {
-        await supabase.from('lost_items').insert(newItem);
-      } catch (e) {
-        console.error('[SUPABASE INSERT LOST ITEM ERROR]:', e?.message || e);
-      }
-
-      // 2. ซิงค์ยิงตรงเข้า Web Dashboard API ผ่าน HTTP POST
-      const webTargets = [
-        getWebDashboardUrl(),
-        'https://sarawat-pranarai-web.onrender.com',
-        'http://localhost:10001'
-      ];
-      for (const targetUrl of [...new Set(webTargets.filter(Boolean))]) {
-        try {
-          const controller = new AbortController();
-          const tId = setTimeout(() => controller.abort(), 3500);
-          await fetch(`${targetUrl.replace(/\/$/, '')}/api/lost-found/items`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(newItem),
-            signal: controller.signal
-          });
-          clearTimeout(tId);
-        } catch (postErr) {}
-      }
-
-      // 3. ซิงค์ลงแคชไฟล์ Local
-      try {
-        const cacheTargets = [
-          path.join(__dirname, '..', 'data', 'lost_found_db.json'),
-          path.join(__dirname, '..', 'web', 'lost_items_cache.json'),
-          path.join(__dirname, 'lost_items_cache.json')
-        ];
-        for (const cp of cacheTargets) {
-          try {
-            if (fs.existsSync(path.dirname(cp))) {
-              let parsed = null;
-              if (fs.existsSync(cp)) parsed = JSON.parse(fs.readFileSync(cp, 'utf8') || 'null');
-              if (Array.isArray(parsed)) {
-                parsed.unshift({ id: `lf-${Date.now()}`, ...newItem });
-                fs.writeFileSync(cp, JSON.stringify(parsed, null, 2), 'utf8');
-              } else if (parsed && typeof parsed === 'object') {
-                parsed.items = parsed.items || [];
-                parsed.items.unshift({ id: `lf-${Date.now()}`, ...newItem });
-                fs.writeFileSync(cp, JSON.stringify(parsed, null, 2), 'utf8');
-              }
-            }
-          } catch (e) {}
-        }
-      } catch (e) {}
-
-      pendingLostReports.delete(report.reportId);
-
-      const gdriveLine = gdriveFileId
-        ? `📁 **Google Drive:** [ดูไฟล์ในไดรฟ์](https://drive.google.com/file/d/${gdriveFileId}/view) • [โฟลเดอร์ 03_สิ่งของที่พบเจอ](https://drive.google.com/drive/folders/1que123Zlr8ewcC5KD4Gx5DLZSbyJeapQ)\n`
-        : `📁 **Google Drive:** [โฟลเดอร์ 03_สิ่งของที่พบเจอ](https://drive.google.com/drive/folders/1que123Zlr8ewcC5KD4Gx5DLZSbyJeapQ)\n`;
-
-      const successEmbed = new EmbedBuilder()
-        .setTitle(`📦 บันทึกข้อมูลของหายสำเร็จ! [${itemCode}]`)
-        .setDescription(
-          `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-          `🏷️ **สิ่งของ:** ${report.title}\n` +
-          `📂 **หมวดหมู่:** ${report.category}\n` +
-          `🔍 **ลักษณะเด่น:** ${report.characteristics || '-'}\n` +
-          `📍 **สถานที่พบ:** ${report.locationFound}\n` +
-          `📅 **วันเวลา:** ${dateStr} (${timeStr})\n` +
-          `🛡️ **ผู้บันทึก:** ${finderName} \`[${finderDutyId}]\`\n` +
-          gdriveLine +
-          `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-          `*🌐 บันทึกเข้า Google Drive และซิงค์ขึ้นศูนย์บัญชาการสารวัตรบนหน้าเว็บแล้ว*`
-        )
-        .setImage(report.attachmentUrl)
-        .setThumbnail(finderAvatar)
-        .setColor('#2ECC71')
-        .setFooter({ text: 'SARAWAT LOST & FOUND • โรงเรียนพระนารายณ์' })
-        .setTimestamp();
-
-      const btnRowComponents = [
-        new ButtonBuilder()
-          .setLabel('🌐 เปิดดูบนหน้าเว็บ (Web)')
-          .setStyle(ButtonStyle.Link)
-          .setURL(`${getWebDashboardUrl()}/lost-found`)
-      ];
-
-      if (gdriveUrl || gdriveFileId) {
-        btnRowComponents.push(
-          new ButtonBuilder()
-            .setLabel('📁 เปิดใน Google Drive')
-            .setStyle(ButtonStyle.Link)
-            .setURL(gdriveUrl || `https://drive.google.com/file/d/${gdriveFileId}/view`)
-        );
-      } else {
-        btnRowComponents.push(
-          new ButtonBuilder()
-            .setLabel('📁 โฟลเดอร์ของหาย Drive')
-            .setStyle(ButtonStyle.Link)
-            .setURL('https://drive.google.com/drive/folders/1que123Zlr8ewcC5KD4Gx5DLZSbyJeapQ')
-        );
-      }
-
-      const btnRow = new ActionRowBuilder().addComponents(btnRowComponents);
-      await interaction.editReply({ embeds: [successEmbed], components: [btnRow] });
     }
 
     // 📦 (Legacy Fallback) เมื่อผู้ใช้เลือกหมวดหมู่สิ่งของที่พบ
