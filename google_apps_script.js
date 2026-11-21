@@ -239,24 +239,38 @@ function doPost(e) {
 
     var data = JSON.parse(e.postData.contents);
 
-    // 1. ตรวจสอบหรือสร้างโฟลเดอร์สำหรับเก็บไฟล์ Bodycam ใน Google Drive อัตโนมัติ
-    var folderName = "📹 คลังคลิป Bodycam สารวัตรนักเรียน โรงเรียนพระนารายณ์";
-    var folders = DriveApp.getFoldersByName(folderName);
-    var folder = folders.hasNext() ? folders.next() : DriveApp.createFolder(folderName);
+    // 1. ตรวจสอบหรือสร้างโฟลเดอร์สำหรับเก็บไฟล์ใน Google Drive อัตโนมัติ
+    var folder;
+    if (data.folderId) {
+      try {
+        folder = DriveApp.getFolderById(data.folderId);
+      } catch (fErr) {}
+    }
+    if (!folder && data.category === 'lost_found') {
+      try {
+        folder = DriveApp.getFolderById('1que123Zlr8ewcC5KD4Gx5DLZSbyJeapQ');
+      } catch (fErr) {}
+    }
+    if (!folder) {
+      var folderName = data.category === 'lost_found' ? "03_สิ่งของที่พบเจอ" : "📹 คลังคลิป Bodycam สารวัตรนักเรียน โรงเรียนพระนารายณ์";
+      var folders = DriveApp.getFoldersByName(folderName);
+      folder = folders.hasNext() ? folders.next() : DriveApp.createFolder(folderName);
+    }
 
     // 2. แปลง Base64 เป็นไฟล์และบันทึกลง Google Drive
     var decodedBytes = Utilities.base64Decode(data.base64Data);
-    var filename = "[" + (data.caseId || "GENERAL") + "] " + (data.filename || "bodycam.mp4");
-    var blob = Utilities.newBlob(decodedBytes, data.mimeType || "video/mp4", filename);
+    var filename = data.filename || ("[" + (data.caseId || "GENERAL") + "] " + (data.filename || "file.jpg"));
+    var blob = Utilities.newBlob(decodedBytes, data.mimeType || "image/jpeg", filename);
 
     var file = folder.createFile(blob);
-    // กำหนดสิทธิ์ให้ผู้มีลิงก์สามารถเปิดดูคลิปได้
+    // กำหนดสิทธิ์ให้ผู้มีลิงก์สามารถเปิดดูได้
     file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
 
     return ContentService.createTextOutput(JSON.stringify({
       success: true,
       fileId: file.getId(),
       fileUrl: file.getUrl(),
+      webViewLink: file.getUrl(),
       filename: filename
     })).setMimeType(ContentService.MimeType.JSON);
 

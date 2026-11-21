@@ -1459,6 +1459,41 @@ async function syncAllMediaToGoogleDrive() {
           }
         }
       }
+
+      // 3.1 ซิงค์รูปสิ่งของที่พบเจอ (lost_items) เข้า Google Drive 03_สิ่งของที่พบเจอ
+      const { data: lostItems } = await supabase
+        .from('lost_items')
+        .select('id, item_code, title, image_url, gdrive_file_id')
+        .is('gdrive_file_id', null)
+        .not('image_url', 'is', null);
+
+      if (lostItems && lostItems.length > 0) {
+        for (const item of lostItems) {
+          if (!item.image_url || !item.image_url.startsWith('http')) continue;
+          try {
+            const res = await fetch(item.image_url);
+            if (res.ok) {
+              const buf = Buffer.from(await res.arrayBuffer());
+              const filename = `${item.item_code || item.id}.jpg`;
+              const gRes = await uploadToGoogleDrive(buf, filename, {
+                category: 'lost_found',
+                folderId: process.env.GDRIVE_LOST_FOLDER_ID || '1que123Zlr8ewcC5KD4Gx5DLZSbyJeapQ',
+                itemCode: item.item_code,
+                title: item.title
+              });
+              if (gRes && gRes.success) {
+                await supabase.from('lost_items').update({
+                  gdrive_file_id: gRes.fileId,
+                  gdrive_url: gRes.webViewLink
+                }).eq('id', item.id);
+                result.lostCount++;
+              }
+            }
+          } catch (lErr) {
+            result.errors.push(`LostItem ${item.item_code}: ${lErr.message}`);
+          }
+        }
+      }
     } catch (e) {}
 
   } catch (err) {
@@ -6052,6 +6087,59 @@ client.on('interactionCreate', async (interaction) => {
       const dateStr = now.toISOString().slice(0, 10);
       const itemCode = `LF-${now.getFullYear()}-${String(Date.now()).slice(-4)}`;
 
+      let finalImageUrl = report.attachmentUrl;
+      let gdriveFileId = null;
+      let gdriveUrl = null;
+
+      // จัดเก็บรูปถ่ายอย่างถาวร (Supabase Storage ถาวร 1-2+ ปี + Google Drive 03_สิ่งของที่พบเจอ)
+      if (report.attachmentUrl && report.attachmentUrl.startsWith('http')) {
+        try {
+          const imgRes = await fetch(report.attachmentUrl);
+          if (imgRes.ok) {
+            const buf = Buffer.from(await imgRes.arrayBuffer());
+            const filename = `${itemCode}.jpg`;
+
+            // 1. จัดเก็บลง Supabase Storage sarawat-photos ถาวร (ไม่หมดอายุเหมือน Discord CDN)
+            try {
+              const storagePath = `lost-items/${filename}`;
+              const { error: sErr } = await supabase.storage
+                .from('sarawat-photos')
+                .upload(storagePath, buf, { contentType: 'image/jpeg', upsert: true });
+              if (!sErr) {
+                const { data: pubData } = supabase.storage.from('sarawat-photos').getPublicUrl(storagePath);
+                if (pubData && pubData.publicUrl) {
+                  finalImageUrl = pubData.publicUrl;
+                  console.log(`[LOST ITEM STORAGE] ✅ จัดเก็บถาวรใน Supabase: ${finalImageUrl}`);
+                }
+              }
+            } catch (sErr) {
+              console.warn('[LOST ITEM STORAGE WARN]:', sErr.message);
+            }
+
+            // 2. สำรองข้อมูลเข้า Google Drive โฟลเดอร์ 03_สิ่งของที่พบเจอ (1que123Zlr8ewcC5KD4Gx5DLZSbyJeapQ)
+            try {
+              const gRes = await uploadToGoogleDrive(buf, filename, {
+                category: 'lost_found',
+                folderId: process.env.GDRIVE_LOST_FOLDER_ID || '1que123Zlr8ewcC5KD4Gx5DLZSbyJeapQ',
+                itemCode: itemCode,
+                title: itemTitle,
+                description: `สิ่งของที่พบเจอ: ${itemTitle} (${itemCode}) สถานที่พบ: ${locationFound}`
+              });
+              if (gRes && gRes.success) {
+                gdriveFileId = gRes.fileId;
+                gdriveUrl = gRes.webViewLink;
+                if (!finalImageUrl) finalImageUrl = gRes.webViewLink;
+                console.log(`[LOST ITEM GDRIVE] ✅ สำรองเข้า Google Drive สำเร็จ: ${gRes.fileId}`);
+              }
+            } catch (gErr) {
+              console.warn('[LOST ITEM GDRIVE WARN]:', gErr.message);
+            }
+          }
+        } catch (fetchErr) {
+          console.warn('[LOST ITEM ATTACHMENT FETCH WARN]:', fetchErr.message);
+        }
+      }
+
       const newItem = {
         item_code: itemCode,
         title: itemTitle,
@@ -6062,7 +6150,9 @@ client.on('interactionCreate', async (interaction) => {
         found_time: timeStr,
         status: 'WAITING_OWNER',
         storage_location: 'ห้องสารวัตรนักเรียน',
-        image_url: report.attachmentUrl,
+        image_url: finalImageUrl,
+        gdrive_file_id: gdriveFileId,
+        gdrive_url: gdriveUrl,
         finder_name: finderName,
         finder_duty_id: finderDutyId,
         finder_avatar_url: finderAvatar,

@@ -403,11 +403,15 @@ function generateCardHTML(member) {
       resolvedBgSrc = bgConfig;
     } else if (bgConfig.startsWith('http://') || bgConfig.startsWith('https://')) {
       resolvedBgSrc = bgConfig;
+    } else if (bgConfig.startsWith('/api/drive-proxy') || bgConfig.startsWith('/api/')) {
+      resolvedBgSrc = `${getWebDashboardUrl()}${bgConfig}`;
+    } else if (customConfig && customConfig.canvas && customConfig.canvas.supabase_url) {
+      resolvedBgSrc = customConfig.canvas.supabase_url;
     } else if (bgConfig) {
       const cleanName = bgConfig.replace(/^\/?assets\//, '');
-      resolvedBgSrc = getAssetBase64(cleanName) || getAssetBase64('card-templates/default_card_bg.png') || getAssetBase64('default_card_bg.png');
+      resolvedBgSrc = getAssetBase64(cleanName) || getAssetBase64('card-templates/custom_card_bg.png') || getAssetBase64('card-templates/default_card_bg.png') || getAssetBase64('default_card_bg.png');
     } else {
-      resolvedBgSrc = getAssetBase64('card-templates/default_card_bg.png') || getAssetBase64('default_card_bg.png');
+      resolvedBgSrc = getAssetBase64('card-templates/custom_card_bg.png') || getAssetBase64('card-templates/default_card_bg.png') || getAssetBase64('default_card_bg.png');
     }
     if (resolvedBgSrc) {
       bgHtml = `<img src="${resolvedBgSrc}" style="position: absolute; left: 0; top: 0; width: 100%; height: 100%; object-fit: fill; z-index: 1; pointer-events: none;" alt="Background">`;

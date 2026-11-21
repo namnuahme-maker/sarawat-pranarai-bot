@@ -3,101 +3,35 @@
     "width": 430,
     "height": 680,
     "backgroundColor": "#ffffff",
-    "backgroundImage": "/assets/card-templates/default_card_bg.png"
+    "backgroundImage": "/assets/card-templates/custom_card_bg.png",
+    "supabase_url": "https://cxrakrsyxvsrbpgphgtt.supabase.co/storage/v1/object/public/sarawat-photos/card-templates/untitled_design.png"
   },
   "elements": {
-    "stripeBlue": {
-      "id": "stripeBlue",
-      "name": "แถบซ้าย (น้ำเงิน)",
-      "type": "rect",
-      "left": 0,
-      "top": 0,
-      "width": 13,
-      "height": 680,
-      "fill": "#002b80",
-      "selectable": false
-    },
-    "stripeRed": {
-      "id": "stripeRed",
-      "name": "แถบขวา (แดง)",
-      "type": "rect",
-      "left": 417,
-      "top": 0,
-      "width": 13,
-      "height": 680,
-      "fill": "#b91c1c",
-      "selectable": false
-    },
-    "verticalSchoolText": {
-      "id": "verticalSchoolText",
-      "name": "ข้อความแนวตั้ง PRANARAI",
-      "type": "text",
-      "text": "PRANARAI SCHOOL",
-      "left": 423,
-      "top": 121,
-      "fontSize": 31,
-      "fontFamily": "Syncopate",
-      "fontWeight": "bold",
-      "fill": "#050505",
-      "angle": 90,
-      "charSpacing": -160,
-      "opacity": 1
-    },
     "watermark": {
       "id": "watermark",
       "name": "ลายน้ำตราสารวัตร (เอียง)",
       "type": "image",
       "src": "/assets/logo.png",
-      "left": 350,
-      "top": 8,
+      "left": 11,
+      "top": 601,
       "width": 59,
       "height": 59,
       "opacity": 1,
-      "angle": 360
+      "angle": 360,
+      "fill": "rgb(0,0,0)"
     },
     "photo": {
       "id": "photo",
-      "name": "รูปถ่ายสารวัตรนักเรียน (สี่เหลี่ยมคมชัดแบบดั้งเดิม)",
+      "name": "รูปถ่ายสารวัตรนักเรียน (ภาพจำลองเต็มขนาด)",
       "type": "photo",
-      "left": 35,
-      "top": 125,
-      "width": 350,
-      "height": 360
-    },
-    "headerSarawat": {
-      "id": "headerSarawat",
-      "name": "หัวข้อ SARAWAT",
-      "type": "text",
-      "text": "SARAWAT",
-      "left": 215,
-      "top": -4,
-      "originX": "center",
-      "fontSize": 47,
-      "fontFamily": "Syncopate",
-      "fontWeight": "bold",
-      "fill": "#050505",
-      "charSpacing": -180,
-      "scaleY": 1.05,
+      "left": 64,
+      "top": 96,
+      "width": 298,
+      "height": 397,
+      "selectable": true,
       "angle": 0,
-      "opacity": 1
-    },
-    "headerInspector": {
-      "id": "headerInspector",
-      "name": "หัวข้อ INSPECTOR (กลวง)",
-      "type": "text",
-      "text": "INSPECTOR",
-      "left": 216,
-      "top": 38,
-      "originX": "center",
-      "fontSize": 26,
-      "fontFamily": "Syncopate",
-      "fontWeight": "bold",
-      "fill": "transparent",
-      "stroke": "#94a3b8",
-      "strokeWidth": 1.2,
-      "charSpacing": -20,
-      "angle": 0,
-      "opacity": 1
+      "opacity": 1,
+      "fill": "rgb(0,0,0)"
     },
     "nickname": {
       "id": "nickname",
@@ -130,7 +64,8 @@
       "fill": "#050505",
       "charSpacing": 0,
       "angle": 0,
-      "opacity": 1
+      "opacity": 1,
+      "scaleY": 1
     },
     "thaiNickname": {
       "id": "thaiNickname",
@@ -146,7 +81,8 @@
       "fill": "#050505",
       "angle": 0,
       "opacity": 1,
-      "charSpacing": 0
+      "charSpacing": 0,
+      "scaleY": 1
     },
     "thaiFullname": {
       "id": "thaiFullname",
@@ -162,7 +98,8 @@
       "fill": "#050505",
       "angle": 0,
       "opacity": 1,
-      "charSpacing": 0
+      "charSpacing": 0,
+      "scaleY": 1
     },
     "barcode": {
       "id": "barcode",
@@ -173,7 +110,8 @@
       "width": 251,
       "height": 51,
       "angle": 0,
-      "opacity": 1
+      "opacity": 1,
+      "fill": "rgb(0,0,0)"
     },
     "custom_1793895500222": {
       "id": "custom_1793895500222",
@@ -185,8 +123,14 @@
       "width": 68,
       "height": 68,
       "opacity": 1,
-      "angle": 0
+      "angle": 0,
+      "fill": "rgb(0,0,0)"
     }
   },
-  "updated_at": "2026-11-05T17:40:30.749Z"
+  "updated_at": "2026-11-17T16:24:10.488Z",
+  "customFonts": [
+    "https://fonts.google.com/selection?preview.layout=grid&preview.script=Latn",
+    "Chakra Petch",
+    "Redaction 50"
+  ]
 }
