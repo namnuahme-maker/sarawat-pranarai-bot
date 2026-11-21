@@ -44,6 +44,7 @@ const QRCode = require('qrcode');
 const { generateCardHTML } = require('./card_template');
 const { processAttendancePhoto, buildAttendanceDiscordCard } = require('./attendance_manager');
 const { uploadToGoogleDrive } = require('./services/gdrive_service');
+const { analyzeLostItemImage } = require('./services/lost_ai_service');
 const { initLogger, logError, logWarn } = require('./services/logger');
 const rateLimiterPath = fs.existsSync(path.join(__dirname, 'services', 'rateLimiter.js'))
   ? path.join(__dirname, 'services', 'rateLimiter')
@@ -3568,6 +3569,62 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
+  // ==========================================================
+  // 📦 HELPER: สร้างการ์ดร่างสิ่งของที่พบเจอ (Lost & Found Draft Card)
+  // ==========================================================
+  function buildLostDraftEmbed(report, statusNote = '') {
+    const titleDisplay = report.title ? `**${report.title}**` : '_รอระบุชื่อสิ่งของ_';
+    const catDisplay = report.category ? `\`${report.category}\`` : '_สิ่งของทั่วไป / อื่นๆ_';
+    const charDisplay = report.characteristics ? report.characteristics : '_ยังไม่ระบุลักษณะเด่น_';
+    const secretDisplay = report.secretTraits ? `||${report.secretTraits}|| (ซ่อนเพื่อความปลอดภัย)` : '_ไม่มี_';
+
+    const embed = new EmbedBuilder()
+      .setTitle('📦 ร่างรายการสิ่งของที่พบเจอ (Draft)')
+      .setDescription(
+        `ตรวจพบรูปภาพจาก **<@${report.userId}>** เรียบร้อยแล้ว!\n\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `🏷️ **ชื่อสิ่งของ:** ${titleDisplay}\n` +
+        `📂 **หมวดหมู่:** ${catDisplay}\n` +
+        `🔍 **ลักษณะเด่น:** ${charDisplay}\n` +
+        `🔒 **จุดสังเกตลับ:** ${secretDisplay}\n` +
+        `📍 **สถานที่พบ:** ${report.locationFound || 'บริเวณโรงเรียน'}\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        (statusNote ? `${statusNote}\n\n` : '') +
+        `💡 **วิธีดำเนินการ:**\n` +
+        `• กดปุ่ม **[✨ ให้ AI ช่วยวิเคราะห์]** เพื่อให้ AI อ่านภาพเติมข้อมูลอัตโนมัติ (ประหยัด Token)\n` +
+        `• หรือพิมพ์ข้อความในห้องนี้เพื่อระบุ/เปลี่ยนชื่อหัวข้อได้ทันที\n` +
+        `• หรือกดปุ่ม **[✏️ กรอก/แก้ไขข้อมูล]** เพื่อเปิดแบบฟอร์มแก้ไข\n` +
+        `• เมื่อข้อมูลครบถ้วนแล้ว ให้กด **[✅ ยืนยันบันทึกคลัง]**`
+      )
+      .setImage(report.attachmentUrl)
+      .setColor('#3498DB')
+      .setFooter({ text: 'SARAWAT LOST & FOUND • ร่างรายการ (หมดอายุใน 10 นาที)' })
+      .setTimestamp();
+
+    return embed;
+  }
+
+  function buildLostDraftButtons(reportId) {
+    return new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`btn_lost_ai_${reportId}`)
+        .setLabel('✨ ให้ AI ช่วยวิเคราะห์')
+        .setStyle(ButtonStyle.Primary),
+      new ButtonBuilder()
+        .setCustomId(`btn_lost_edit_${reportId}`)
+        .setLabel('✏️ กรอก/แก้ไขข้อมูล')
+        .setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder()
+        .setCustomId(`btn_lost_save_${reportId}`)
+        .setLabel('✅ ยืนยันบันทึกคลัง')
+        .setStyle(ButtonStyle.Success),
+      new ButtonBuilder()
+        .setCustomId(`btn_lost_cancel_${reportId}`)
+        .setLabel('❌ ยกเลิก')
+        .setStyle(ButtonStyle.Danger)
+    );
+  }
+
   // 📦 ฟังก์ชันดักรับรูปถ่ายสิ่งของที่พบในห้อง #📦│แจ้งพบของหาย
   const isLostFoundChannel = message.channel && message.channel.name && message.channel.name.includes('ของหาย');
   if (isLostFoundChannel && !message.author.bot && message.attachments.size > 0) {
@@ -3577,73 +3634,35 @@ client.on('messageCreate', async (message) => {
     if (isImage) {
       try {
         const reportId = `rep_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+        const initialText = message.content.trim();
 
-        // รายการหมวดหมู่เริ่มต้น
-        let categories = [
-          { label: 'กระเป๋า / กระเป๋าสตางค์', value: 'กระเป๋า / กระเป๋าสตางค์', emoji: '👛' },
-          { label: 'อุปกรณ์ไอที / มือถือ', value: 'อุปกรณ์ไอที / มือถือ', emoji: '📱' },
-          { label: 'กุญแจ / ยานพาหนะ', value: 'กุญแจ / ยานพาหนะ', emoji: '🔑' },
-          { label: 'เครื่องแต่งกาย / หมวก', value: 'เครื่องแต่งกาย / หมวก', emoji: '👕' },
-          { label: 'เครื่องเขียน / หนังสือ', value: 'เครื่องเขียน / หนังสือ', emoji: '📚' },
-          { label: 'สิ่งของทั่วไป / อื่นๆ', value: 'สิ่งของทั่วไป / อื่นๆ', emoji: '📦' }
-        ];
-
-        try {
-          const { data: dbCats } = await supabase.from('lost_categories').select('name, icon').order('name');
-          if (dbCats && dbCats.length > 0) {
-            categories = dbCats.map(c => ({
-              label: c.name.slice(0, 50),
-              value: c.name.slice(0, 50),
-              emoji: c.icon || '📦'
-            }));
-          }
-        } catch (e) {}
-
-        const selectOptions = [
-          ...categories.slice(0, 24).map(c => ({
-            label: c.label,
-            value: c.value,
-            emoji: c.emoji || '📦'
-          })),
-          {
-            label: '➕ เพิ่มหมวดหมู่ใหม่...',
-            value: '__NEW_CATEGORY__',
-            description: 'พิมพ์ระบุชื่อหมวดหมู่ใหม่ด้วยตนเอง',
-            emoji: '✨'
-          }
-        ];
-
-        const row = new ActionRowBuilder().addComponents(
-          new StringSelectMenuBuilder()
-            .setCustomId(`select_lost_cat_${reportId}`)
-            .setPlaceholder('📂 โปรดเลือกหมวดหมู่สิ่งของ...')
-            .addOptions(selectOptions)
-        );
-
-        const replyEmbed = new EmbedBuilder()
-          .setTitle('📦 บันทึกข้อมูลสิ่งของที่พบ')
-          .setDescription(
-            `ตรวจพบรูปภาพจาก **<@${message.author.id}>** เรียบร้อยแล้ว!\n\n` +
-            `👉 **ขั้นตอนถัดไป:** โปรดเลือก **หมวดหมู่** จากเมนูด้านล่าง เพื่อเปิดกล่องระบุชื่อสิ่งของและสถานที่พบ`
-          )
-          .setThumbnail(attachment.url)
-          .setColor('#3498DB')
-          .setFooter({ text: 'กรุณาเลือกหมวดหมู่ภายใน 5 นาที' });
-
-        const promptReplyMsg = await message.reply({ embeds: [replyEmbed], components: [row] });
-
-        pendingLostReports.set(reportId, {
+        const report = {
+          reportId,
           userId: message.author.id,
+          userName: message.member?.displayName || message.author.username,
+          title: initialText || '',
+          category: 'สิ่งของทั่วไป / อื่นๆ',
+          locationFound: 'บริเวณโรงเรียน',
+          characteristics: '',
+          secretTraits: '',
           attachmentUrl: attachment.url,
           proxyUrl: attachment.proxyURL || attachment.url,
           attachmentName: attachment.name || 'lost_item.jpg',
           channelId: message.channel.id,
           messageId: message.id,
-          promptMessageId: promptReplyMsg.id,
+          promptMessageId: null,
           timestamp: Date.now()
-        });
+        };
 
-        // ล้างข้อความ prompt ตัวเลือกหมวดหมู่ออกอัตโนมัติเมื่อหมดเวลา 5 นาที (หากไม่ได้ทำรายการ)
+        const draftEmbed = buildLostDraftEmbed(report);
+        const draftRow = buildLostDraftButtons(reportId);
+
+        const promptReplyMsg = await message.reply({ embeds: [draftEmbed], components: [draftRow] });
+        report.promptMessageId = promptReplyMsg.id;
+
+        pendingLostReports.set(reportId, report);
+
+        // ล้างข้อความร่างอัตโนมัติเมื่อหมดเวลา 10 นาที (หากไม่ได้บันทึก)
         setTimeout(async () => {
           if (pendingLostReports.has(reportId)) {
             pendingLostReports.delete(reportId);
@@ -3653,11 +3672,40 @@ client.on('messageCreate', async (message) => {
               }
             } catch (e) {}
           }
-        }, 5 * 60 * 1000);
+        }, 10 * 60 * 1000);
 
         return;
       } catch (err) {
         console.error('[LOST-FOUND ERROR]', err);
+      }
+    }
+  }
+
+  // 📦 ดักรับข้อความแชทเพื่ออัปเดตชื่อสิ่งของในการ์ดร่างที่รออยู่
+  if (isLostFoundChannel && !message.author.bot && message.attachments.size === 0) {
+    const text = message.content.trim();
+    if (text) {
+      let userReport = null;
+      for (const rep of pendingLostReports.values()) {
+        if (rep.userId === message.author.id && rep.channelId === message.channel.id) {
+          userReport = rep;
+          break;
+        }
+      }
+
+      if (userReport && userReport.promptMessageId) {
+        userReport.title = text;
+        try {
+          const promptMsg = await message.channel.messages.fetch(userReport.promptMessageId).catch(() => null);
+          if (promptMsg) {
+            const updatedEmbed = buildLostDraftEmbed(userReport, `✏️ *อัปเดตชื่อสิ่งของเป็น **"${text}"** ตามข้อความของคุณแล้ว!*`);
+            await promptMsg.edit({ embeds: [updatedEmbed], components: [buildLostDraftButtons(userReport.reportId)] });
+            await message.react('✅').catch(() => {});
+          }
+        } catch (e) {
+          console.warn('[LOST-FOUND MSG UPDATE WARN]:', e.message);
+        }
+        return;
       }
     }
   }
@@ -5953,7 +6001,395 @@ client.on('interactionCreate', async (interaction) => {
       }
     }
 
-    // 📦 เมื่อผู้ใช้เลือกหมวดหมู่สิ่งของที่พบ
+    // ==========================================================
+    // 📦 LOST & FOUND AI & DRAFT INTERACTIONS
+    // ==========================================================
+
+    // 1. ✨ เมื่อกดปุ่มให้ AI ช่วยวิเคราะห์รูปภาพสิ่งของที่พบ
+    if (interaction.isButton() && interaction.customId.startsWith('btn_lost_ai_')) {
+      const reportId = interaction.customId.replace('btn_lost_ai_', '');
+      const report = pendingLostReports.get(reportId);
+      if (!report) {
+        await interaction.reply({ content: '⚠️ รายการร่างนี้หมดอายุแล้ว กรุณาส่งรูปภาพใหม่อีกครั้งครับ', ephemeral: true });
+        return;
+      }
+      if (report.userId !== interaction.user.id) {
+        await interaction.reply({ content: '❌ สิทธิ์นี้เฉพาะผู้ที่ส่งรูปภาพเข้ามาเท่านั้นครับ', ephemeral: true });
+        return;
+      }
+
+      await interaction.deferUpdate();
+
+      // แสดงสถานะกำลังประมวลผล
+      const loadingEmbed = buildLostDraftEmbed(report, '⏳ *กำลังส่งภาพให้ AI (Gemini Flash) สแกนวิเคราะห์ลักษณะเด่นและหมวดหมู่ (ใช้เพียง ~250 tokens)...*');
+      await interaction.editReply({ embeds: [loadingEmbed], components: [buildLostDraftButtons(reportId)] }).catch(() => {});
+
+      try {
+        const imgRes = await fetch(report.attachmentUrl);
+        if (!imgRes.ok) throw new Error('ไม่สามารถดาวน์โหลดรูปภาพจาก Discord เพื่อส่งให้ AI ได้');
+        const buf = Buffer.from(await imgRes.arrayBuffer());
+
+        const aiResult = await analyzeLostItemImage({
+          imageBuffer: buf,
+          mimeType: 'image/jpeg',
+          userHint: report.title
+        });
+
+        if (aiResult.title) report.title = aiResult.title;
+        if (aiResult.category) report.category = aiResult.category;
+        if (aiResult.characteristics) report.characteristics = aiResult.characteristics;
+        if (aiResult.secret_traits) report.secretTraits = aiResult.secret_traits;
+
+        const successNote = `✨ **AI วิเคราะห์ข้อมูลสำเร็จแล้ว!** (จัดเข้าหมวด: \`${report.category}\`)\n*ตรวจสอบข้อมูล หากถูกต้องให้กด [✅ ยืนยันบันทึกคลัง] หรือกด [✏️ กรอก/แก้ไขข้อมูล] ได้เลย*`;
+        const doneEmbed = buildLostDraftEmbed(report, successNote);
+        await interaction.editReply({ embeds: [doneEmbed], components: [buildLostDraftButtons(reportId)] }).catch(() => {});
+      } catch (aiErr) {
+        console.error('[LOST AI ERROR]:', aiErr);
+        const errNote = `⚠️ *AI วิเคราะห์ภาพไม่สำเร็จ: ${aiErr.message} (คุณสามารถกด [✏️ กรอก/แก้ไขข้อมูล] เพื่อระบุเองได้ครับ)*`;
+        const errEmbed = buildLostDraftEmbed(report, errNote);
+        await interaction.editReply({ embeds: [errEmbed], components: [buildLostDraftButtons(reportId)] }).catch(() => {});
+      }
+      return;
+    }
+
+    // 2. ✏️ เมื่อกดปุ่มกรอก/แก้ไขข้อมูลสิ่งของ
+    if (interaction.isButton() && interaction.customId.startsWith('btn_lost_edit_')) {
+      const reportId = interaction.customId.replace('btn_lost_edit_', '');
+      const report = pendingLostReports.get(reportId);
+      if (!report) {
+        await interaction.reply({ content: '⚠️ รายการร่างนี้หมดอายุแล้ว กรุณาส่งรูปภาพใหม่อีกครั้งครับ', ephemeral: true });
+        return;
+      }
+      if (report.userId !== interaction.user.id) {
+        await interaction.reply({ content: '❌ สิทธิ์นี้เฉพาะผู้ที่ส่งรูปภาพเข้ามาเท่านั้นครับ', ephemeral: true });
+        return;
+      }
+
+      const modal = new ModalBuilder()
+        .setCustomId(`modal_lost_edit_${reportId}`)
+        .setTitle('✏️ กรอก/แก้ไขรายละเอียดสิ่งของ');
+
+      const titleInput = new TextInputBuilder()
+        .setCustomId('input_edit_title')
+        .setLabel('ชื่อสิ่งของ / หัวข้อ')
+        .setValue(report.title || '')
+        .setPlaceholder('เช่น หมวกแก๊ปสีดำ ลายปัก NY, กระเป๋าสตางค์หนัง')
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true);
+
+      const catInput = new TextInputBuilder()
+        .setCustomId('input_edit_category')
+        .setLabel('หมวดหมู่')
+        .setValue(report.category || 'สิ่งของทั่วไป / อื่นๆ')
+        .setPlaceholder('เช่น เครื่องแต่งกาย / หมวก, กระเป๋า, ไอที')
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true);
+
+      const locInput = new TextInputBuilder()
+        .setCustomId('input_edit_location')
+        .setLabel('สถานที่พบ (ระบุให้ชัดเจน)')
+        .setValue(report.locationFound || 'บริเวณโรงเรียน')
+        .setPlaceholder('เช่น หน้าห้องสมุด, โดมกิจกรรม, โต๊ะม้าหิน')
+        .setStyle(TextInputStyle.Short)
+        .setRequired(false);
+
+      const charInput = new TextInputBuilder()
+        .setCustomId('input_edit_characteristics')
+        .setLabel('ลักษณะเด่นภายนอก')
+        .setValue(report.characteristics || '')
+        .setPlaceholder('เช่น สีดำ สภาพดี มีรอยเปื้อนสีขาวเล็กน้อย')
+        .setStyle(TextInputStyle.Paragraph)
+        .setRequired(false);
+
+      const secretInput = new TextInputBuilder()
+        .setCustomId('input_edit_secret')
+        .setLabel('จุดสังเกตลับ (สำหรับถามพิสูจน์เจ้าของ)')
+        .setValue(report.secretTraits || '')
+        .setPlaceholder('เช่น มีชื่อเขียนอยู่ด้านในปีกหมวก, พวงกุญแจย่อย')
+        .setStyle(TextInputStyle.Short)
+        .setRequired(false);
+
+      modal.addComponents(
+        new ActionRowBuilder().addComponents(titleInput),
+        new ActionRowBuilder().addComponents(catInput),
+        new ActionRowBuilder().addComponents(locInput),
+        new ActionRowBuilder().addComponents(charInput),
+        new ActionRowBuilder().addComponents(secretInput)
+      );
+
+      await interaction.showModal(modal);
+      return;
+    }
+
+    // 3. 📝 เมื่อส่งฟอร์ม Modal แก้ไขข้อมูลสิ่งของ
+    if (interaction.isModalSubmit() && interaction.customId.startsWith('modal_lost_edit_')) {
+      const reportId = interaction.customId.replace('modal_lost_edit_', '');
+      const report = pendingLostReports.get(reportId);
+      if (!report) {
+        await interaction.reply({ content: '⚠️ รายการร่างนี้หมดอายุแล้ว', ephemeral: true });
+        return;
+      }
+
+      report.title = interaction.fields.getTextInputValue('input_edit_title').trim();
+      report.category = interaction.fields.getTextInputValue('input_edit_category').trim();
+      report.locationFound = interaction.fields.getTextInputValue('input_edit_location')?.trim() || 'บริเวณโรงเรียน';
+      report.characteristics = interaction.fields.getTextInputValue('input_edit_characteristics')?.trim() || '';
+      report.secretTraits = interaction.fields.getTextInputValue('input_edit_secret')?.trim() || '';
+
+      const updatedEmbed = buildLostDraftEmbed(report, '✏️ *แก้ไขข้อมูลเรียบร้อยแล้ว! ตรวจสอบแล้วกด [✅ ยืนยันบันทึกคลัง] ได้เลย*');
+      await interaction.update({ embeds: [updatedEmbed], components: [buildLostDraftButtons(reportId)] });
+      return;
+    }
+
+    // 4. ✅ เมื่อกดยืนยันบันทึกเข้าคลังของหาย
+    if (interaction.isButton() && interaction.customId.startsWith('btn_lost_save_')) {
+      const reportId = interaction.customId.replace('btn_lost_save_', '');
+      const report = pendingLostReports.get(reportId);
+      if (!report) {
+        await interaction.reply({ content: '⚠️ รายการร่างนี้หมดอายุแล้ว กรุณาส่งรูปภาพใหม่อีกครั้งครับ', ephemeral: true });
+        return;
+      }
+      if (report.userId !== interaction.user.id) {
+        await interaction.reply({ content: '❌ สิทธิ์นี้เฉพาะผู้ที่ส่งรูปภาพเข้ามาเท่านั้นครับ', ephemeral: true });
+        return;
+      }
+
+      if (!report.title || report.title.trim() === '') {
+        await interaction.reply({ content: '⚠️ กรุณาระบุชื่อสิ่งของ หรือกดปุ่ม [✨ ให้ AI ช่วยวิเคราะห์] ก่อนกดยืนยันบันทึกครับ', ephemeral: true });
+        return;
+      }
+
+      await finalizeAndSaveLostItem(report, interaction);
+      return;
+    }
+
+    // 5. ❌ เมื่อกดยกเลิกรายการ
+    if (interaction.isButton() && interaction.customId.startsWith('btn_lost_cancel_')) {
+      const reportId = interaction.customId.replace('btn_lost_cancel_', '');
+      const report = pendingLostReports.get(reportId);
+      if (report && report.userId !== interaction.user.id) {
+        await interaction.reply({ content: '❌ สิทธิ์นี้เฉพาะผู้ที่ส่งรูปภาพเข้ามาเท่านั้นครับ', ephemeral: true });
+        return;
+      }
+
+      pendingLostReports.delete(reportId);
+      await interaction.message.delete().catch(() => {});
+      await interaction.reply({ content: '🗑️ ยกเลิกรายการแจ้งพบของหายเรียบร้อยแล้ว', ephemeral: true });
+      return;
+    }
+
+    // 📦 HELPER: บันทึกของหายเข้า Google Drive, Supabase และ Local Cache
+    async function finalizeAndSaveLostItem(report, interaction) {
+      await interaction.deferUpdate();
+
+      // แสดงสถานะกำลังบันทึก
+      const savingEmbed = buildLostDraftEmbed(report, '⏳ *กำลังบันทึกข้อมูลและอัปโหลดรูปภาพเข้า Google Drive โฟลเดอร์ 03_สิ่งของที่พบเจอ...*');
+      await interaction.editReply({ embeds: [savingEmbed], components: [] }).catch(() => {});
+
+      let finderName = interaction.member?.displayName || interaction.user.username;
+      let finderDutyId = '-';
+      let finderAvatar = interaction.user.displayAvatarURL();
+
+      try {
+        const { data: member } = await supabase
+          .from('members')
+          .select('*')
+          .eq('discord_id', interaction.user.id)
+          .maybeSingle();
+
+        if (member) {
+          const fn = member.full_name || `${member.first_name || ''} ${member.last_name || ''}`.trim();
+          finderName = member.nickname ? `${fn} (${member.nickname})` : fn;
+          finderDutyId = member.duty_id || '-';
+          if (member.photo_url) finderAvatar = member.photo_url;
+        }
+      } catch (e) {}
+
+      const now = new Date();
+      const timeStr = now.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }) + ' น.';
+      const dateStr = now.toISOString().slice(0, 10);
+      const itemCode = `LF-${now.getFullYear()}-${String(Date.now()).slice(-4)}`;
+
+      let finalImageUrl = report.attachmentUrl;
+      let gdriveFileId = null;
+      let gdriveUrl = null;
+
+      // จัดเก็บรูปถ่าย (Supabase Storage ถาวร + Google Drive 03_สิ่งของที่พบเจอ)
+      if (report.attachmentUrl && report.attachmentUrl.startsWith('http')) {
+        try {
+          const imgRes = await fetch(report.attachmentUrl);
+          if (imgRes.ok) {
+            const buf = Buffer.from(await imgRes.arrayBuffer());
+            const filename = `${itemCode}.jpg`;
+
+            // 1. จัดเก็บลง Supabase Storage sarawat-photos ถาวร
+            try {
+              const storagePath = `lost-items/${filename}`;
+              const { error: sErr } = await supabase.storage
+                .from('sarawat-photos')
+                .upload(storagePath, buf, { contentType: 'image/jpeg', upsert: true });
+              if (!sErr) {
+                const { data: pubData } = supabase.storage.from('sarawat-photos').getPublicUrl(storagePath);
+                if (pubData && pubData.publicUrl) {
+                  finalImageUrl = pubData.publicUrl;
+                  console.log(`[LOST ITEM STORAGE] ✅ จัดเก็บถาวรใน Supabase: ${finalImageUrl}`);
+                }
+              }
+            } catch (sErr) {
+              console.warn('[LOST ITEM STORAGE WARN]:', sErr.message);
+            }
+
+            // 2. สำรองข้อมูลเข้า Google Drive โฟลเดอร์ 03_สิ่งของที่พบเจอ (1que123Zlr8ewcC5KD4Gx5DLZSbyJeapQ)
+            try {
+              const gRes = await uploadToGoogleDrive(buf, filename, {
+                category: 'lost_found',
+                folderId: process.env.GDRIVE_LOST_FOLDER_ID || '1que123Zlr8ewcC5KD4Gx5DLZSbyJeapQ',
+                itemCode: itemCode,
+                title: report.title,
+                description: `สิ่งของที่พบเจอ: ${report.title} (${itemCode}) สถานที่พบ: ${report.locationFound || '-'}`
+              });
+              if (gRes && gRes.success && gRes.fileId) {
+                gdriveFileId = gRes.fileId;
+                gdriveUrl = gRes.webViewLink || `https://drive.google.com/file/d/${gRes.fileId}/view`;
+                finalImageUrl = `/api/drive-proxy/${gRes.fileId}`;
+                console.log(`[LOST ITEM GDRIVE] ✅ สำรองเข้า Google Drive สำเร็จ: ${gRes.fileId}`);
+              }
+            } catch (gErr) {
+              console.warn('[LOST ITEM GDRIVE WARN]:', gErr.message);
+            }
+          }
+        } catch (fetchErr) {
+          console.warn('[LOST ITEM ATTACHMENT FETCH WARN]:', fetchErr.message);
+        }
+      }
+
+      const newItem = {
+        item_code: itemCode,
+        title: report.title,
+        category: report.category || 'สิ่งของทั่วไป / อื่นๆ',
+        characteristics: report.characteristics || report.title,
+        secret_traits: report.secretTraits || null,
+        location_found: report.locationFound || 'บริเวณโรงเรียน',
+        found_date: dateStr,
+        found_time: timeStr,
+        status: 'WAITING_OWNER',
+        storage_location: 'ห้องสารวัตรนักเรียน',
+        image_url: finalImageUrl,
+        gdrive_file_id: gdriveFileId,
+        gdrive_url: gdriveUrl,
+        finder_name: finderName,
+        finder_duty_id: finderDutyId,
+        finder_avatar_url: finderAvatar,
+        created_at: now.toISOString(),
+        updated_at: now.toISOString()
+      };
+
+      // 1. ซิงค์ลง Supabase Database
+      try {
+        await supabase.from('lost_items').insert(newItem);
+      } catch (e) {
+        console.error('[SUPABASE INSERT LOST ITEM ERROR]:', e?.message || e);
+      }
+
+      // 2. ซิงค์ยิงตรงเข้า Web Dashboard API ผ่าน HTTP POST
+      const webTargets = [
+        getWebDashboardUrl(),
+        'https://sarawat-pranarai-web.onrender.com',
+        'http://localhost:10001'
+      ];
+      for (const targetUrl of [...new Set(webTargets.filter(Boolean))]) {
+        try {
+          const controller = new AbortController();
+          const tId = setTimeout(() => controller.abort(), 3500);
+          await fetch(`${targetUrl.replace(/\/$/, '')}/api/lost-found/items`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(newItem),
+            signal: controller.signal
+          });
+          clearTimeout(tId);
+        } catch (postErr) {}
+      }
+
+      // 3. ซิงค์ลงแคชไฟล์ Local
+      try {
+        const cacheTargets = [
+          path.join(__dirname, '..', 'data', 'lost_found_db.json'),
+          path.join(__dirname, '..', 'web', 'lost_items_cache.json'),
+          path.join(__dirname, 'lost_items_cache.json')
+        ];
+        for (const cp of cacheTargets) {
+          try {
+            if (fs.existsSync(path.dirname(cp))) {
+              let parsed = null;
+              if (fs.existsSync(cp)) parsed = JSON.parse(fs.readFileSync(cp, 'utf8') || 'null');
+              if (Array.isArray(parsed)) {
+                parsed.unshift({ id: `lf-${Date.now()}`, ...newItem });
+                fs.writeFileSync(cp, JSON.stringify(parsed, null, 2), 'utf8');
+              } else if (parsed && typeof parsed === 'object') {
+                parsed.items = parsed.items || [];
+                parsed.items.unshift({ id: `lf-${Date.now()}`, ...newItem });
+                fs.writeFileSync(cp, JSON.stringify(parsed, null, 2), 'utf8');
+              }
+            }
+          } catch (e) {}
+        }
+      } catch (e) {}
+
+      pendingLostReports.delete(report.reportId);
+
+      const gdriveLine = gdriveFileId
+        ? `📁 **Google Drive:** [ดูไฟล์ในไดรฟ์](https://drive.google.com/file/d/${gdriveFileId}/view) • [โฟลเดอร์ 03_สิ่งของที่พบเจอ](https://drive.google.com/drive/folders/1que123Zlr8ewcC5KD4Gx5DLZSbyJeapQ)\n`
+        : `📁 **Google Drive:** [โฟลเดอร์ 03_สิ่งของที่พบเจอ](https://drive.google.com/drive/folders/1que123Zlr8ewcC5KD4Gx5DLZSbyJeapQ)\n`;
+
+      const successEmbed = new EmbedBuilder()
+        .setTitle(`📦 บันทึกข้อมูลของหายสำเร็จ! [${itemCode}]`)
+        .setDescription(
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+          `🏷️ **สิ่งของ:** ${report.title}\n` +
+          `📂 **หมวดหมู่:** ${report.category}\n` +
+          `🔍 **ลักษณะเด่น:** ${report.characteristics || '-'}\n` +
+          `📍 **สถานที่พบ:** ${report.locationFound}\n` +
+          `📅 **วันเวลา:** ${dateStr} (${timeStr})\n` +
+          `🛡️ **ผู้บันทึก:** ${finderName} \`[${finderDutyId}]\`\n` +
+          gdriveLine +
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+          `*🌐 บันทึกเข้า Google Drive และซิงค์ขึ้นศูนย์บัญชาการสารวัตรบนหน้าเว็บแล้ว*`
+        )
+        .setImage(report.attachmentUrl)
+        .setThumbnail(finderAvatar)
+        .setColor('#2ECC71')
+        .setFooter({ text: 'SARAWAT LOST & FOUND • โรงเรียนพระนารายณ์' })
+        .setTimestamp();
+
+      const btnRowComponents = [
+        new ButtonBuilder()
+          .setLabel('🌐 เปิดดูบนหน้าเว็บ (Web)')
+          .setStyle(ButtonStyle.Link)
+          .setURL(`${getWebDashboardUrl()}/lost-found`)
+      ];
+
+      if (gdriveUrl || gdriveFileId) {
+        btnRowComponents.push(
+          new ButtonBuilder()
+            .setLabel('📁 เปิดใน Google Drive')
+            .setStyle(ButtonStyle.Link)
+            .setURL(gdriveUrl || `https://drive.google.com/file/d/${gdriveFileId}/view`)
+        );
+      } else {
+        btnRowComponents.push(
+          new ButtonBuilder()
+            .setLabel('📁 โฟลเดอร์ของหาย Drive')
+            .setStyle(ButtonStyle.Link)
+            .setURL('https://drive.google.com/drive/folders/1que123Zlr8ewcC5KD4Gx5DLZSbyJeapQ')
+        );
+      }
+
+      const btnRow = new ActionRowBuilder().addComponents(btnRowComponents);
+      await interaction.editReply({ embeds: [successEmbed], components: [btnRow] });
+    }
+
+    // 📦 (Legacy Fallback) เมื่อผู้ใช้เลือกหมวดหมู่สิ่งของที่พบ
     if (interaction.isStringSelectMenu() && interaction.customId.startsWith('select_lost_cat_')) {
       const reportId = interaction.customId.replace('select_lost_cat_', '');
       const report = pendingLostReports.get(reportId);
