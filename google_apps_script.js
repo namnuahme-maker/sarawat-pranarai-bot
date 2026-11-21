@@ -217,6 +217,20 @@ function testSendIncident() {
 }
 
 /**
+ * 🌐 Health Check & Webhook Test Endpoint
+ */
+function doGet(e) {
+  return ContentService.createTextOutput(JSON.stringify({
+    success: true,
+    status: "online",
+    service: "SARAWAT Google Drive Gateway",
+    lost_folder_id: "1que123Zlr8ewcC5KD4Gx5DLZSbyJeapQ",
+    bodycam_folder_id: "1lcAN_otZ7RPOax6J1oodV-LjQ4hou_ez",
+    timestamp: new Date().toISOString()
+  })).setMimeType(ContentService.MimeType.JSON);
+}
+
+/**
  * 📹 Web App Endpoint: รองรับการรับไฟล์ Bodycam จาก Web Dashboard เพื่อบันทึกลง Google Drive อัตโนมัติ
  * 
  * 📌 วิธีเปิดใช้งาน Web App ใน Google Apps Script:

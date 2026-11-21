@@ -6125,10 +6125,10 @@ client.on('interactionCreate', async (interaction) => {
                 title: itemTitle,
                 description: `สิ่งของที่พบเจอ: ${itemTitle} (${itemCode}) สถานที่พบ: ${locationFound}`
               });
-              if (gRes && gRes.success) {
+              if (gRes && gRes.success && gRes.fileId) {
                 gdriveFileId = gRes.fileId;
-                gdriveUrl = gRes.webViewLink;
-                if (!finalImageUrl) finalImageUrl = gRes.webViewLink;
+                gdriveUrl = gRes.webViewLink || `https://drive.google.com/file/d/${gRes.fileId}/view`;
+                finalImageUrl = `/api/drive-proxy/${gRes.fileId}`;
                 console.log(`[LOST ITEM GDRIVE] ✅ สำรองเข้า Google Drive สำเร็จ: ${gRes.fileId}`);
               }
             } catch (gErr) {
@@ -6235,6 +6235,10 @@ client.on('interactionCreate', async (interaction) => {
         console.error('[DELETE PROMPT MESSAGE ERROR]:', delErr?.message || delErr);
       }
 
+      const gdriveLine = gdriveFileId
+        ? `📁 **Google Drive:** [ดูไฟล์ในไดรฟ์](https://drive.google.com/file/d/${gdriveFileId}/view) • [โฟลเดอร์ 03_สิ่งของที่พบเจอ](https://drive.google.com/drive/folders/1que123Zlr8ewcC5KD4Gx5DLZSbyJeapQ)\n`
+        : `📁 **Google Drive:** [โฟลเดอร์ 03_สิ่งของที่พบเจอ](https://drive.google.com/drive/folders/1que123Zlr8ewcC5KD4Gx5DLZSbyJeapQ)\n`;
+
       const successEmbed = new EmbedBuilder()
         .setTitle(`📦 บันทึกข้อมูลของหายสำเร็จ! [${itemCode}]`)
         .setDescription(
@@ -6244,8 +6248,9 @@ client.on('interactionCreate', async (interaction) => {
           `📍 **สถานที่พบ:** ${locationFound}\n` +
           `📅 **วันเวลา:** ${dateStr} (${timeStr})\n` +
           `🛡️ **ผู้บันทึก:** ${finderName} \`[${finderDutyId}]\`\n` +
+          gdriveLine +
           `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-          `*🌐 ข้อมูลและรูปภาพ (Discord CDN) ซิงค์ขึ้นศูนย์บัญชาการสารวัตรบนหน้าเว็บแล้ว*`
+          `*🌐 บันทึกเข้า Google Drive และซิงค์ขึ้นศูนย์บัญชาการสารวัตรบนหน้าเว็บแล้ว*`
         )
         .setImage(report.attachmentUrl)
         .setThumbnail(finderAvatar)
@@ -6253,12 +6258,30 @@ client.on('interactionCreate', async (interaction) => {
         .setFooter({ text: 'SARAWAT LOST & FOUND • โรงเรียนพระนารายณ์' })
         .setTimestamp();
 
-      const btnRow = new ActionRowBuilder().addComponents(
+      const btnRowComponents = [
         new ButtonBuilder()
           .setLabel('🌐 เปิดดูบนหน้าเว็บ (Web)')
           .setStyle(ButtonStyle.Link)
           .setURL(`${getWebDashboardUrl()}/lost-found`)
-      );
+      ];
+
+      if (gdriveUrl || gdriveFileId) {
+        btnRowComponents.push(
+          new ButtonBuilder()
+            .setLabel('📁 เปิดใน Google Drive')
+            .setStyle(ButtonStyle.Link)
+            .setURL(gdriveUrl || `https://drive.google.com/file/d/${gdriveFileId}/view`)
+        );
+      } else {
+        btnRowComponents.push(
+          new ButtonBuilder()
+            .setLabel('📁 โฟลเดอร์ของหาย Drive')
+            .setStyle(ButtonStyle.Link)
+            .setURL('https://drive.google.com/drive/folders/1que123Zlr8ewcC5KD4Gx5DLZSbyJeapQ')
+        );
+      }
+
+      const btnRow = new ActionRowBuilder().addComponents(btnRowComponents);
 
       await interaction.editReply({ embeds: [successEmbed], components: [btnRow] });
       return;
