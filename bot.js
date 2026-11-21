@@ -45,8 +45,15 @@ const { generateCardHTML } = require('./card_template');
 const { processAttendancePhoto, buildAttendanceDiscordCard } = require('./attendance_manager');
 const { uploadToGoogleDrive } = require('./services/gdrive_service');
 const { initLogger, logError, logWarn } = require('./services/logger');
-const { checkRateLimit } = require('./services/rateLimiter');
-const stateStore = require('./services/stateStore');
+const rateLimiterPath = fs.existsSync(path.join(__dirname, 'services', 'rateLimiter.js'))
+  ? path.join(__dirname, 'services', 'rateLimiter')
+  : path.join(__dirname, 'bot', 'services', 'rateLimiter');
+const { checkRateLimit } = require(rateLimiterPath);
+
+const stateStorePath = fs.existsSync(path.join(__dirname, 'services', 'stateStore.js'))
+  ? path.join(__dirname, 'services', 'stateStore')
+  : path.join(__dirname, 'bot', 'services', 'stateStore');
+const stateStore = require(stateStorePath);
 
 const PORT = process.env.PORT || 10000;
 
@@ -284,6 +291,39 @@ const pendingPhotoConfirmations = new Map(); // memberId -> { member, photoUrl, 
 const activeServicePhotoSessions = new Map(); // userId -> { member, timestamp }
 const pendingPromptMessages = new Map(); // memberId -> { channelId, messageId, timestamp }
 
+// ล้างหน่วยความจำ Map แคชชั่วคราวที่ค้างเกินกำหนดทุก 10 นาที (ป้องกัน Memory Leak)
+const mapTtlSweeperTimer = setInterval(() => {
+  const now = Date.now();
+  for (const [userId, item] of pendingAttendanceUploads.entries()) {
+    if (item?.timestamp && (now - item.timestamp > 15 * 60 * 1000)) {
+      pendingAttendanceUploads.delete(userId);
+    }
+  }
+  for (const [id, item] of pendingPhotoUploads.entries()) {
+    if (item?.timestamp && (now - item.timestamp > 15 * 60 * 1000)) {
+      pendingPhotoUploads.delete(id);
+    }
+  }
+  for (const [userId, item] of activeServicePhotoSessions.entries()) {
+    if (item?.timestamp && (now - item.timestamp > 15 * 60 * 1000)) {
+      activeServicePhotoSessions.delete(userId);
+    }
+  }
+  for (const [id, item] of pendingPhotoConfirmations.entries()) {
+    if (item?.timestamp && (now - item.timestamp > 20 * 60 * 1000)) {
+      pendingPhotoConfirmations.delete(id);
+    }
+  }
+  if (typeof inspectionDrafts !== 'undefined') {
+    for (const [userId, draft] of inspectionDrafts.entries()) {
+      if (draft?.updatedAt && (now - draft.updatedAt > 30 * 60 * 1000)) {
+        inspectionDrafts.delete(userId);
+      }
+    }
+  }
+}, 10 * 60 * 1000);
+if (mapTtlSweeperTimer.unref) mapTtlSweeperTimer.unref();
+
 function getUploadDir() {
   const dir1 = path.join(__dirname, '..', 'web', 'public', 'uploads');
   if (fs.existsSync(path.join(__dirname, '..', 'web'))) return dir1;
@@ -334,7 +374,48 @@ function getWebDashboardUrl() {
   return 'http://localhost:10001';
 }
 
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
+function createSafeSupabaseClient(url, key, context = 'BOT') {
+  if (url && key) {
+    try {
+      return createClient(url, key);
+    } catch (e) {
+      console.warn(`[${context}] ⚠️ ไม่สามารถเชื่อมต่อ Supabase:`, e.message);
+    }
+  } else {
+    console.warn(`[${context}] ⚠️ ขาดค่า SUPABASE_URL หรือ SUPABASE_SERVICE_ROLE_KEY - ใช้งาน Safe Mock Fallback`);
+  }
+
+  const dummyChain = {
+    select: () => dummyChain,
+    insert: () => dummyChain,
+    update: () => dummyChain,
+    delete: () => dummyChain,
+    eq: () => dummyChain,
+    neq: () => dummyChain,
+    in: () => dummyChain,
+    is: () => dummyChain,
+    or: () => dummyChain,
+    order: () => dummyChain,
+    limit: () => dummyChain,
+    range: () => dummyChain,
+    single: async () => ({ data: null, error: new Error('Supabase unconfigured') }),
+    maybeSingle: async () => ({ data: null, error: null }),
+    then: (resolve) => resolve({ data: [], error: null })
+  };
+
+  return {
+    from: () => dummyChain,
+    storage: {
+      from: () => ({
+        upload: async () => ({ data: null, error: new Error('Supabase storage unconfigured') }),
+        getPublicUrl: () => ({ data: { publicUrl: '' } }),
+        remove: async () => ({ data: null, error: null })
+      })
+    }
+  };
+}
+
+const supabase = createSafeSupabaseClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, 'BOT');
 
 const client = new Client({
   intents: [
