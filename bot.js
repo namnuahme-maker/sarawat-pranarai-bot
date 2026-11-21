@@ -1909,42 +1909,52 @@ async function broadcastConsolidatedShiftLeaveCard(guild, dutyDay, newLeave = nu
   });
   const shiftLabel = getShiftLabel(dutyDay);
 
-  // รูปแบบรายการผู้ลา
+  // รูปแบบรายการผู้ลา (ลดอีโมจิที่ไม่จำเป็น)
   const leaveListFormatted = leaves.map((l, idx) => {
     const mem = l.members || shiftMembers.find(m => m.id === l.member_id) || {};
-    const name = `[${mem.duty_id || 'สารวัตร'}] คุณ${mem.nickname || mem.first_name} (${mem.grade_class || 'ม.ปลาย'})`;
+    const nick = String(mem.nickname || mem.first_name || '').replace(/^คุณ/, '');
+    const name = `[${mem.duty_id || 'สารวัตร'}] คุณ${nick}${mem.grade_class ? ` (${mem.grade_class})` : ''}`;
     const period = l.shift_period || 'ทั้งวัน';
     const type = l.leave_type || 'ลากิจ';
     const reason = l.reason || '-';
     const sub = (l.substitute_name && l.substitute_name !== '-') ? ` | คนแทน: **${l.substitute_name}**` : '';
-    return `**${idx + 1}. ${name}**\n   └ 🏷️ **${type}** (${period}) • *${reason}*${sub}`;
+    return `**${idx + 1}. ${name}**\n   └ **${type}** (${period}) • *${reason}*${sub}`;
   }).join('\n\n');
 
-  // รูปแบบรายชื่อผู้พร้อมปฏิบัติหน้าที่
-  const onDutyFormatted = activeOnDuty.map(m => `\`[${m.duty_id || "เวร"}] ${m.nickname}\``).join(' ') || '_ไม่มีสารวัตรพร้อมปฏิบัติหน้าที่_';
+  // จัดเรียงและจัดรูปแบบรายชื่อผู้พร้อมปฏิบัติหน้าที่แบบ List down ทีละคนตามรหัสเวร
+  const sortedOnDuty = [...activeOnDuty].sort((a, b) => {
+    return (a.duty_id || '').localeCompare(b.duty_id || '', undefined, { numeric: true, sensitivity: 'base' });
+  });
+
+  const onDutyFormatted = sortedOnDuty.length > 0
+    ? sortedOnDuty.map(m => {
+        const nick = String(m.nickname || m.first_name || '').replace(/^คุณ/, '');
+        return `• \`[${m.duty_id || 'เวร'}]\` คุณ${nick}`;
+      }).join('\n')
+    : '_ไม่มีสารวัตรพร้อมปฏิบัติหน้าที่_';
 
   const cardColor = leaveCount === 0 ? '#2ECC71' : (onDutyCount > 0 ? '#F39C12' : '#E74C3C');
 
   const consolidatedEmbed = new EmbedBuilder()
-    .setTitle(`📋 [รายงานสถานะกำลังพล] สรุปยอดการลาเวรประจำผลัด`)
+    .setTitle('สรุปยอดการลาเวรประจำผลัด')
     .setDescription(
-      `# 📅 เวร${DAY_NAMES[baseDay] || dutyDay} (${shiftLabel})\n` +
-      `📅 **ประจำวันที่:** **${todayThaiDate}**\n` +
-      `⚡ **อัปเดตแบบ Realtime:** <t:${Math.floor(Date.now() / 1000)}:R>\n\n` +
+      `# เวร${DAY_NAMES[baseDay] || dutyDay} (${shiftLabel})\n` +
+      `• **ประจำวันที่:** **${todayThaiDate}**\n` +
+      `• **อัปเดตล่าสุด:** <t:${Math.floor(Date.now() / 1000)}:R>\n\n` +
       `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-      `### 📊 สรุปความพร้อมกำลังพล\n` +
-      `• 👥 **กำลังพลตามตารางทั้งหมด:** **${total}** นาย\n` +
-      `• ⚠️ **ขอยอดลาเวร:** **${leaveCount}** นาย\n` +
-      `• 👮 **พร้อมปฏิบัติหน้าที่จริง:** **${onDutyCount}** นาย (${readinessPct}%)\n` +
+      `### สรุปความพร้อมกำลังพล\n` +
+      `• กำลังพลตามตารางทั้งหมด: **${total}** นาย\n` +
+      `• ขอยอดลาเวร: **${leaveCount}** นาย\n` +
+      `• พร้อมปฏิบัติหน้าที่จริง: **${onDutyCount}** นาย (${readinessPct}%)\n` +
       `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
-      `### 📝 รายชื่อสารวัตรที่ขอลาเวร (${leaveCount} นาย):\n` +
-      `${leaveListFormatted || '✅ ไม่มีสารวัตรขอลาเวรในผลัดนี้ (กำลังพลพร้อม 100%)'}\n\n` +
+      `### รายชื่อสารวัตรที่ขอลาเวร (${leaveCount} นาย):\n` +
+      `${leaveListFormatted || 'ไม่มีสารวัตรขอลาเวรในผลัดนี้ (กำลังพลพร้อม 100%)'}\n\n` +
       `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-      `### 🛡️ สารวัตรที่พร้อมปฏิบัติหน้าที่ (${onDutyCount} นาย):\n` +
+      `### สารวัตรที่พร้อมปฏิบัติหน้าที่ (${onDutyCount} นาย):\n` +
       `${onDutyFormatted}`
     )
     .setColor(cardColor)
-    .setFooter({ text: `กลุ่มงานสารวัตรนักเรียน โรงเรียนพระนารายณ์ • Real-time Duty Roster` })
+    .setFooter({ text: 'กลุ่มงานสารวัตรนักเรียน โรงเรียนพระนารายณ์ • Real-time Duty Roster' })
     .setTimestamp();
 
   const webUrl = getWebDashboardUrl();
