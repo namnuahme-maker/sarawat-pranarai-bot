@@ -1,297 +1,458 @@
 /**
- * 🚨 GOOGLE APPS SCRIPT: ระบบแจ้งเตือนเหตุ สารวัตรนักเรียน โรงเรียนพระนารายณ์
- * บันทึกลงฐานข้อมูล Supabase อัตโนมัติ + ส่งแจ้งเตือนเข้า Discord Webhook ทันที
+ * ==============================================================================
+ * 🌟 SARAWAT PRANARAI - ALL-IN-ONE MASTER GOOGLE APPS SCRIPT (V2.0)
+ * ระบบศูนย์บัญชาการสารวัตรนักเรียน โรงเรียนพระนารายณ์
  * 
- * คอลัมน์ใน Google Sheets (เชื่อมต่อกับ Google Form):
- * [A] Timestamp (ประทับเวลา)
- * [B] Email Address (ที่อยู่อีเมล)
- * [C] ชื่อผู้ส่งเหตุ
- * [D] ชั้น
- * [E] เรื่อง + บอกวันที่ ที่เกิดเหตุ
- * [F] หลักฐาน
- * [G] ข้อมูลติดต่อกลับ
- * 
- * -------------------------------------------------------------
- * 📌 ขั้นตอนการติดตั้งใช้งาน:
- * 1. ใน Google Sheets ไปที่แถบเมนู: "ส่วนขยาย" (Extensions) -> "Apps Script"
- * 2. ลบโค้ดเดิมทั้งหมดในหน้าต่าง แล้วคัดลอกโค้ดนี้ทั้งหมดไปวางแทน
- * 3. กดไอคอน "บันทึกโครงการ" (รูปแผ่นดิสก์ 💾 หรือกด Ctrl+S)
- * 4. [สำคัญมาก] ตั้งค่าทริกเกอร์อัตโนมัติ:
- *    - คลิกเมนูซ้ายมือรูปนาฬิกา "ทริกเกอร์" (Triggers / นาฬิกา)
- *    - กดปุ่ม "+ เพิ่มทริกเกอร์" (+ Add Trigger) ด้านขวาล่าง
- *    - เลือกฟังก์ชัน: onFormSubmit
- *    - เลือกแหล่งที่มาของเหตุการณ์: จากสเปรดชีต (From spreadsheet)
- *    - เลือกประเภทเหตุการณ์: เมื่อส่งแบบฟอร์ม (On form submit)
- *    - การแจ้งเตือนความล้มเหลว: แจ้งทันที
- *    - กด "บันทึก" (Save) และกดยอมรับสิทธิ์ (Advanced -> Go to ... -> Allow)
- * 5. ทดสอบการทำงาน:
- *    - เลือกฟังก์ชัน testSendIncident จากดรอปดาวน์ด้านบน แล้วกด "เรียกใช้" (Run)
- *    - ข้อความจะเด้งเข้าห้อง Discord ทันที พร้อมบอทเปิดเธรดติดตามคดีอัตโนมัติ!
- * -------------------------------------------------------------
+ * รวมทุกการทำงานไว้ในไฟล์เดียว 100%:
+ * 1. 📁 จัดระเบียบไดรฟ์อัตโนมัติ (กวาดไฟล์ที่กระจัดกระจายเข้าโฟลเดอร์ 01-04 ทันที)
+ * 2. 🌐 Webhook Gateway กลาง (รับอัปโหลดรูปจาก Bot / Web ไปยังโฟลเดอร์ที่ถูกต้อง)
+ * 3. 📦 ดูดรูปสิ่งของที่พบเจอ (lost_items) จาก Supabase เข้าโฟลเดอร์ 03_สิ่งของที่พบเจอ
+ * 4. 📝 รับฟอร์มแจ้งของหาย (Google Forms) ซิงค์เข้าฐานข้อมูลและขึ้นเว็บอัตโนมัติ
+ * 5. 🔄 ซิงค์คำร้องย้อนหลังทั้งหมดในคลิกเดียว
+ * ==============================================================================
  */
 
-// 🌐 1. ตั้งค่า Discord Webhook & Supabase REST API
-const DISCORD_WEBHOOK_URL = "YOUR_DISCORD_WEBHOOK_URL";
-const SUPABASE_URL = "YOUR_SUPABASE_URL";
-const SUPABASE_SERVICE_KEY = "YOUR_SUPABASE_SERVICE_ROLE_KEY";
+// ⚙️ ตั้งค่าการเชื่อมต่อระบบ
+const MASTER_CONFIG = {
+  // ฐานข้อมูล Supabase
+  SUPABASE_URL: "https://cxrakrsyxvsrbpgphgtt.supabase.co",
+  SUPABASE_KEY: "YOUR_SUPABASE_SERVICE_ROLE_KEY",
 
-/**
- * ฟังก์ชันหลักที่ทำงานอัตโนมัติเมื่อมีคนส่ง Google Form
- */
-function onFormSubmit(e) {
-  try {
-    let timestamp = "";
-    let email = "";
-    let reporterName = "";
-    let grade = "";
-    let incidentDetails = "";
-    let evidenceUrl = "";
-    let contactInfo = "";
+  // เว็บศูนย์บัญชาการสารวัตร Promax บน Render
+  WEB_API_URL: "https://sarawat-promax.onrender.com",
+  WEB_CLAIMS_URL: "https://sarawat-promax.onrender.com/api/lost-found/claims",
 
-    // ระดับ 1: ดึงจาก e.namedValues (มาตรฐาน Google Form Trigger)
-    if (e && e.namedValues) {
-      const named = e.namedValues;
-      const getFromNamed = function(headers) {
-        for (let i = 0; i < headers.length; i++) {
-          const h = headers[i];
-          if (named[h] && named[h][0] !== undefined && String(named[h][0]).trim() !== "") {
-            return String(named[h][0]).trim();
-          }
-        }
-        return "";
-      };
+  // โฟลเดอร์เป้าหมาย 4 หมวดหลัก
+  FOLDERS: {
+    ROOT: "SARAWAT",
+    PROFILES: "01_รูปโปรไฟล์สารวัตร",
+    EVIDENCE: "02_หลักฐานคดี",
+    LOST_FOUND: "03_สิ่งของที่พบเจอ",
+    ATTENDANCE: "04_ใบเช็คชื่อและลงเวลา"
+  },
 
-      timestamp = getFromNamed(["Timestamp", "ประทับเวลา"]);
-      email = getFromNamed(["Email Address", "ที่อยู่อีเมล", "อีเมล"]);
-      reporterName = getFromNamed(["ชื่อผู้ส่งเหตุ", "ชื่อ-นามสกุล ผู้แจ้ง", "ชื่อผู้แจ้ง"]);
-      grade = getFromNamed(["ชั้น", "ระดับชั้น"]);
-      incidentDetails = getFromNamed(["เรื่อง + บอกวันที่ ที่เกิดเหตุ", "เรื่อง + บอกวันที่ที่เกิดเหตุ", "รายละเอียด"]);
-      evidenceUrl = getFromNamed(["หลักฐาน", "แนบรูปถ่าย / วิดีโอหลักฐาน"]);
-      contactInfo = getFromNamed(["ข้อมูลติดต่อกลับ", "เบอร์โทร", "ช่องทางติดต่อ"]);
+  // ID โฟลเดอร์สิ่งของที่พบเจอ (สำรองกรณีค้นหาตามชื่อไม่พบ)
+  FALLBACK_LOST_FOLDER_ID: "1que123Zlr8ewcC5KD4Gx5DLZSbyJeapQ"
+};
+
+// ==============================================================================
+// 1. 🧹 ฟังก์ชันจัดระเบียบไฟล์ใน Google Drive ทันที (แก้ปัญหาไฟล์กองรก)
+// วิธีใช้: เลือกฟังก์ชัน "organizeAndCleanDrive" ด้านบน แล้วกดปุ่ม "Run"
+// ==============================================================================
+function organizeAndCleanDrive() {
+  Logger.log("🧹 กำลังสแกนและจัดระเบียบไฟล์ในโฟลเดอร์ SARAWAT...");
+
+  const rootFolders = DriveApp.getFoldersByName(MASTER_CONFIG.FOLDERS.ROOT);
+  if (!rootFolders.hasNext()) {
+    Logger.log("❌ ไม่พบโฟลเดอร์ชื่อ 'SARAWAT' ในไดรฟ์");
+    return "ไม่พบโฟลเดอร์ SARAWAT";
+  }
+
+  const sarawatRoot = rootFolders.next();
+  const files = sarawatRoot.getFiles();
+
+  let countProfiles = 0;
+  let countEvidences = 0;
+  let countLostItems = 0;
+  let countAttendance = 0;
+
+  while (files.hasNext()) {
+    const file = files.next();
+    const name = file.getName();
+    const lower = name.toLowerCase();
+
+    let targetFolder = null;
+
+    if (lower.startsWith("profile_") || lower.includes("โปรไฟล์")) {
+      targetFolder = getOrCreateTargetFolder(MASTER_CONFIG.FOLDERS.PROFILES, sarawatRoot);
+      countProfiles++;
+    } else if (lower.startsWith("evidence_") || lower.includes("case-") || lower.includes("bodycam")) {
+      targetFolder = getOrCreateTargetFolder(MASTER_CONFIG.FOLDERS.EVIDENCE, sarawatRoot);
+      countEvidences++;
+    } else if (lower.startsWith("lf-") || lower.includes("lost_") || lower.includes("ของหาย")) {
+      targetFolder = getOrCreateTargetFolder(MASTER_CONFIG.FOLDERS.LOST_FOUND, sarawatRoot);
+      countLostItems++;
+    } else if (lower.includes("attendance") || lower.includes("เช็คชื่อ") || lower.includes("ลงเวลา")) {
+      targetFolder = getOrCreateTargetFolder(MASTER_CONFIG.FOLDERS.ATTENDANCE, sarawatRoot);
+      countAttendance++;
     }
 
-    // ระดับ 2: ดึงจาก e.values (เมื่อ namedValues ว่าง)
-    if ((!reporterName || !incidentDetails) && e && e.values && e.values.length > 0) {
-      const v = e.values;
-      if (!timestamp && v[0]) timestamp = String(v[0]).trim();
-      if (!email && v[1]) email = String(v[1]).trim();
-      if (!reporterName && v[2]) reporterName = String(v[2]).trim();
-      if (!grade && v[3]) grade = String(v[3]).trim();
-      if (!incidentDetails && v[4]) incidentDetails = String(v[4]).trim();
-      if (!evidenceUrl && v[5]) evidenceUrl = String(v[5]).trim();
-      if (!contactInfo && v[6]) contactInfo = String(v[6]).trim();
-    }
-
-    // ระดับ 3 (ระบบป้องกันข้อมูลสูญหาย 100%): อ่านแถวล่าสุดจาก Google Sheets โดยตรง
-    if (!reporterName || !incidentDetails) {
+    if (targetFolder && targetFolder.getId() !== sarawatRoot.getId()) {
       try {
-        const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
-        const lastRow = sheet.getLastRow();
-        if (lastRow >= 2) {
-          const rowData = sheet.getRange(lastRow, 1, 1, 7).getValues()[0];
-          if (!timestamp && rowData[0]) timestamp = String(rowData[0]).trim();
-          if (!email && rowData[1]) email = String(rowData[1]).trim();
-          if (!reporterName && rowData[2]) reporterName = String(rowData[2]).trim();
-          if (!grade && rowData[3]) grade = String(rowData[3]).trim();
-          if (!incidentDetails && rowData[4]) incidentDetails = String(rowData[4]).trim();
-          if (!evidenceUrl && rowData[5]) evidenceUrl = String(rowData[5]).trim();
-          if (!contactInfo && rowData[6]) contactInfo = String(rowData[6]).trim();
+        if (typeof file.moveTo === 'function') {
+          file.moveTo(targetFolder);
+        } else {
+          targetFolder.addFile(file);
+          sarawatRoot.removeFile(file);
         }
-      } catch (sheetErr) {
-        Logger.log("Direct sheet fallback warning: " + sheetErr);
+        Logger.log("📦 ย้ายเรียบร้อย: " + name + " ➡️ [" + targetFolder.getName() + "]");
+      } catch (e) {
+        Logger.log("⚠️ ย้ายไฟล์ " + name + " ล้มเหลว: " + e.message);
       }
     }
-
-    // กำหนดค่าเริ่มต้นหากช่องใดว่าง
-    if (!timestamp) timestamp = new Date().toLocaleString("th-TH", { timeZone: "Asia/Bangkok" });
-    if (!email) email = "anonymous@pranarai.ac.th";
-    if (!reporterName) reporterName = "ไม่ประสงค์ออกนาม";
-    if (!grade) grade = "-";
-    if (!incidentDetails) incidentDetails = "ไม่มีรายละเอียดเหตุ";
-    if (!contactInfo) contactInfo = "-";
-
-    // 2. สร้างรหัสคดีแบบสุ่ม เช่น CASE-4821
-    const caseId = "CASE-" + Math.floor(1000 + Math.random() * 9000);
-
-    // 3. ตรวจจับคำสำคัญเร่งด่วน
-    const isUrgent = incidentDetails.includes("บุหรี่") || incidentDetails.includes("ยา") || 
-                     incidentDetails.includes("สารเสพติด") || incidentDetails.includes("ตีกัน") || 
-                     incidentDetails.includes("ทะเลาะ") || incidentDetails.includes("อาวุธ") ||
-                     incidentDetails.includes("มีด") || incidentDetails.includes("ขโมย");
-
-    const category = isUrgent ? "เหตุด่วนความปลอดภัย" : "แจ้งเหตุทั่วไป";
-    const embedColor = isUrgent ? 12597547 : 15158332; // แดงเข้ม (#C0392B) หรือ แดงสด (#E74C3C)
-    const urgentTag = isUrgent ? "🔥 [เหตุด่วนความปลอดภัย]" : "🚨 [แจ้งเหตุใหม่]";
-
-    // 4. บันทึกตรงเข้าฐานข้อมูล Supabase REST API
-    try {
-      const supabasePayload = {
-        case_id: caseId,
-        reporter_email: email,
-        reporter_name: `${reporterName} (ชั้น ${grade})`,
-        incident_date_time: new Date().toISOString(),
-        location: (contactInfo && contactInfo !== '-' && String(contactInfo).trim() !== '') ? String(contactInfo).trim() : 'ไม่ระบุ',
-        category: category,
-        description: incidentDetails,
-        evidence_urls: (evidenceUrl && evidenceUrl.startsWith("http")) ? [evidenceUrl] : [],
-        status: "PENDING"
-      };
-
-      UrlFetchApp.fetch(SUPABASE_URL + "/rest/v1/cases", {
-        method: "post",
-        contentType: "application/json",
-        headers: {
-          "apikey": SUPABASE_SERVICE_KEY,
-          "Authorization": "Bearer " + SUPABASE_SERVICE_KEY,
-          "Prefer": "return=minimal"
-        },
-        payload: JSON.stringify(supabasePayload),
-        muteHttpExceptions: true
-      });
-      Logger.log("Supabase insert completed for " + caseId);
-    } catch (dbErr) {
-      Logger.log("Supabase direct insert error: " + dbErr);
-    }
-
-    // 5. เตรียมข้อความแจ้งเตือน Discord Webhook
-    const fields = [
-      { name: "👤 ผู้ส่งเหตุ", value: `${reporterName} (ชั้น ${grade})`, inline: true },
-      { name: "📧 อีเมล", value: email, inline: true },
-      { name: "📞 ข้อมูลติดต่อกลับ", value: contactInfo, inline: true },
-      { name: "📝 เรื่อง + บอกวันที่ ที่เกิดเหตุ", value: incidentDetails.length > 900 ? incidentDetails.substring(0, 897) + "..." : incidentDetails, inline: false },
-      { name: "⏳ สถานะระบบ", value: "รอดำเนินการ (รอสารวัตร/หัวหน้าเวรรับเรื่อง)", inline: true }
-    ];
-
-    if (evidenceUrl && (evidenceUrl.startsWith("http://") || evidenceUrl.startsWith("https://"))) {
-      fields.push({
-        name: "📂 หลักฐานแนบ",
-        value: `[คลิกเพื่อเปิดดูไฟล์หลักฐานใน Google Drive](${evidenceUrl})`,
-        inline: false
-      });
-    }
-
-    const discordPayload = {
-      content: `@here มีรายงานแจ้งเหตุใหม่จาก Google Form กรุณาตรวจสอบและมอบหมายเวร`,
-      embeds: [
-        {
-          title: `${urgentTag} รหัสคดี: ${caseId}`,
-          color: embedColor,
-          fields: fields,
-          footer: {
-            text: `ระบบรับเรื่องร้องเรียน สารวัตรนักเรียน โรงเรียนพระนารายณ์ • เวลา: ${timestamp}`
-          }
-        }
-      ]
-    };
-
-    // 6. ส่งเข้า Discord Webhook ทันที
-    const response = UrlFetchApp.fetch(DISCORD_WEBHOOK_URL, {
-      method: "post",
-      contentType: "application/json",
-      payload: JSON.stringify(discordPayload),
-      muteHttpExceptions: true
-    });
-
-    Logger.log("Discord Webhook status: " + response.getResponseCode());
-  } catch (fatalErr) {
-    Logger.log("Fatal onFormSubmit error: " + fatalErr);
   }
+
+  const result = "🎉 จัดระเบียบ Google Drive สำเร็จ!\n" +
+    "- ย้ายรูปโปรไฟล์สารวัตรเข้า '01_รูปโปรไฟล์สารวัตร': " + countProfiles + " ไฟล์\n" +
+    "- ย้ายหลักฐานคดีเข้า '02_หลักฐานคดี': " + countEvidences + " ไฟล์\n" +
+    "- ย้ายของหายเข้า '03_สิ่งของที่พบเจอ': " + countLostItems + " ไฟล์\n" +
+    "- ย้ายงานเช็คชื่อเข้า '04_ใบเช็คชื่อและลงเวลา': " + countAttendance + " ไฟล์";
+  Logger.log(result);
+  return result;
 }
 
-/**
- * 🧪 ฟังก์ชันทดสอบ: กดปุ่ม 'เรียกใช้' (Run) ฟังก์ชันนี้เพื่อทดสอบระบบได้ทันที
- */
-function testSendIncident() {
-  const dummyEvent = {
-    namedValues: {
-      "Timestamp": [new Date().toLocaleString("th-TH", { timeZone: "Asia/Bangkok" })],
-      "Email Address": ["student.test@pranarai.ac.th"],
-      "ชื่อผู้ส่งเหตุ": ["นายทดสอบ ระบบแจ้งเหตุ"],
-      "ชั้น": ["ม.5/7"],
-      "เรื่อง + บอกวันที่ ที่เกิดเหตุ": ["พบบุคคลต้องสงสัยบริเวณหลังอาคาร 3 เวลา 12:45 น."],
-      "หลักฐาน": ["https://drive.google.com/"],
-      "ข้อมูลติดต่อกลับ": ["081-234-5678"]
-    }
-  };
-  onFormSubmit(dummyEvent);
-}
-
-/**
- * 🌐 Health Check & Webhook Test Endpoint
- */
-function doGet(e) {
-  return ContentService.createTextOutput(JSON.stringify({
-    success: true,
-    status: "online",
-    service: "SARAWAT Google Drive Gateway",
-    lost_folder_id: "1que123Zlr8ewcC5KD4Gx5DLZSbyJeapQ",
-    bodycam_folder_id: "1lcAN_otZ7RPOax6J1oodV-LjQ4hou_ez",
-    timestamp: new Date().toISOString()
-  })).setMimeType(ContentService.MimeType.JSON);
-}
-
-/**
- * 📹 Web App Endpoint: รองรับการรับไฟล์ Bodycam จาก Web Dashboard เพื่อบันทึกลง Google Drive อัตโนมัติ
- * 
- * 📌 วิธีเปิดใช้งาน Web App ใน Google Apps Script:
- * 1. กดปุ่มสีน้ำเงินด้านขวาบน: "ทำให้ใช้งานได้" (Deploy) -> "การทำให้ใช้งานได้รายการใหม่" (New deployment)
- * 2. คลิกรูปฟันเฟือง ⚙️ ด้านซ้าย เลือก "เว็บแอป" (Web app)
- * 3. กำหนดค่า:
- *    - คำอธิบาย: Bodycam Auto Uploader
- *    - ดำเนินการในฐานะ (Execute as): "ฉัน" (Me / บัญชี Google ของคุณ)
- *    - ผู้ที่มีสิทธิ์เข้าถึง (Who has access): "ทุกคน" (Anyone)
- * 4. กด "ทำให้ใช้งานได้" (Deploy) และกดยอมรับสิทธิ์
- * 5. คัดลอก "URL ของเว็บแอป" (Web App URL) ไปใส่ในไฟล์ .env:
- *    GOOGLE_DRIVE_WEBAPP_URL=https://script.google.com/macros/s/.../exec
- */
+// ==============================================================================
+// 2. 🌐 WEBHOOK GATEWAY (doPost) - รับอัปโหลดรูปจาก Bot และ Web Dashboard
+// ส่งรูปเข้าโฟลเดอร์ 01-04 อัตโนมัติ ไม่กองในโฟลเดอร์หลักอีกต่อไป
+// ==============================================================================
 function doPost(e) {
   try {
     if (!e || !e.postData || !e.postData.contents) {
-      return ContentService.createTextOutput(JSON.stringify({ success: false, error: "No post data received" }))
-        .setMimeType(ContentService.MimeType.JSON);
+      return jsonResponse({ success: false, error: "No post data received" });
     }
 
-    var data = JSON.parse(e.postData.contents);
+    const data = JSON.parse(e.postData.contents);
+    const category = (data.category || "").toLowerCase();
+    const filename = data.filename || ("file_" + Date.now() + ".jpg");
 
-    // 1. ตรวจสอบหรือสร้างโฟลเดอร์สำหรับเก็บไฟล์ใน Google Drive อัตโนมัติ
-    var folder;
-    if (data.folderId) {
-      try {
-        folder = DriveApp.getFolderById(data.folderId);
-      } catch (fErr) {}
-    }
-    if (!folder && data.category === 'lost_found') {
-      try {
-        folder = DriveApp.getFolderById('1que123Zlr8ewcC5KD4Gx5DLZSbyJeapQ');
-      } catch (fErr) {}
-    }
-    if (!folder) {
-      var folderName = data.category === 'lost_found' ? "03_สิ่งของที่พบเจอ" : "📹 คลังคลิป Bodycam สารวัตรนักเรียน โรงเรียนพระนารายณ์";
-      var folders = DriveApp.getFoldersByName(folderName);
-      folder = folders.hasNext() ? folders.next() : DriveApp.createFolder(folderName);
+    // เลือกโฟลเดอร์เป้าหมายอัตโนมัติตามประเภทและชื่อไฟล์
+    let targetFolder = null;
+    const rootFolders = DriveApp.getFoldersByName(MASTER_CONFIG.FOLDERS.ROOT);
+    const sarawatRoot = rootFolders.hasNext() ? rootFolders.next() : null;
+
+    if (category === "profile" || filename.toLowerCase().startsWith("profile_")) {
+      targetFolder = getOrCreateTargetFolder(MASTER_CONFIG.FOLDERS.PROFILES, sarawatRoot);
+    } else if (category === "case" || category === "evidence" || filename.toLowerCase().startsWith("evidence_") || filename.includes("CASE-")) {
+      targetFolder = getOrCreateTargetFolder(MASTER_CONFIG.FOLDERS.EVIDENCE, sarawatRoot);
+    } else if (category === "lost_found" || filename.toLowerCase().startsWith("lf-")) {
+      targetFolder = getOrCreateTargetFolder(MASTER_CONFIG.FOLDERS.LOST_FOUND, sarawatRoot);
+    } else if (category === "attendance") {
+      targetFolder = getOrCreateTargetFolder(MASTER_CONFIG.FOLDERS.ATTENDANCE, sarawatRoot);
+    } else if (data.folderId) {
+      try { targetFolder = DriveApp.getFolderById(data.folderId); } catch (fErr) {}
     }
 
-    // 2. แปลง Base64 เป็นไฟล์และบันทึกลง Google Drive
-    var decodedBytes = Utilities.base64Decode(data.base64Data);
-    var filename = data.filename || ("[" + (data.caseId || "GENERAL") + "] " + (data.filename || "file.jpg"));
-    var blob = Utilities.newBlob(decodedBytes, data.mimeType || "image/jpeg", filename);
+    if (!targetFolder) {
+      targetFolder = sarawatRoot || DriveApp.getRootFolder();
+    }
 
-    var file = folder.createFile(blob);
-    // กำหนดสิทธิ์ให้ผู้มีลิงก์สามารถเปิดดูได้
+    // แปลง Base64 เป็นไฟล์และเซฟลงไดรฟ์
+    const decodedBytes = Utilities.base64Decode(data.base64Data);
+    const blob = Utilities.newBlob(decodedBytes, data.mimeType || "image/jpeg", filename);
+    const file = targetFolder.createFile(blob);
     file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
 
-    return ContentService.createTextOutput(JSON.stringify({
+    Logger.log("✅ บันทึกไฟล์สำเร็จ: " + filename + " ➡️ [" + targetFolder.getName() + "]");
+
+    return jsonResponse({
       success: true,
       fileId: file.getId(),
       fileUrl: file.getUrl(),
       webViewLink: file.getUrl(),
-      filename: filename
-    })).setMimeType(ContentService.MimeType.JSON);
+      filename: filename,
+      folderName: targetFolder.getName()
+    });
 
   } catch (err) {
-    return ContentService.createTextOutput(JSON.stringify({
-      success: false,
-      error: err.toString()
-    })).setMimeType(ContentService.MimeType.JSON);
+    Logger.log("❌ Error in doPost: " + err.toString());
+    return jsonResponse({ success: false, error: err.toString() });
   }
+}
+
+function doGet(e) {
+  return jsonResponse({
+    status: "online",
+    service: "SARAWAT PRANARAI All-in-One Master Gateway",
+    version: "2.0",
+    timestamp: new Date().toISOString()
+  });
+}
+
+// ==============================================================================
+// 3. 📦 ดูดรูปสิ่งของที่พบเจอจาก Supabase เข้าโฟลเดอร์ "03_สิ่งของที่พบเจอ" ทันที
+// วิธีใช้: เลือกฟังก์ชัน "syncPhotosToDriveFolder" ด้านบน แล้วกดปุ่ม "Run"
+// ==============================================================================
+function syncPhotosToDriveFolder() {
+  Logger.log("📦 เริ่มต้นดึงรูปสิ่งของที่พบเจอจาก Supabase เข้า Google Drive...");
+
+  let folder = getOrCreateTargetFolder(MASTER_CONFIG.FOLDERS.LOST_FOUND);
+  if (!folder) {
+    try { folder = DriveApp.getFolderById(MASTER_CONFIG.FALLBACK_LOST_FOLDER_ID); } catch (e) {}
+  }
+  if (!folder) {
+    Logger.log("❌ ไม่พบโฟลเดอร์ 03_สิ่งของที่พบเจอ");
+    return "ไม่พบโฟลเดอร์";
+  }
+
+  Logger.log("📁 ปลายทางโฟลเดอร์: " + folder.getName());
+
+  const endpoint = MASTER_CONFIG.SUPABASE_URL + "/rest/v1/lost_items?select=id,item_code,title,image_url";
+  const res = UrlFetchApp.fetch(endpoint, {
+    method: "GET",
+    headers: {
+      "apikey": MASTER_CONFIG.SUPABASE_KEY,
+      "Authorization": "Bearer " + MASTER_CONFIG.SUPABASE_KEY
+    },
+    muteHttpExceptions: true
+  });
+
+  if (res.getResponseCode() !== 200) {
+    Logger.log("❌ เชื่อมต่อ Supabase ไม่สำเร็จ: " + res.getContentText());
+    return;
+  }
+
+  const items = JSON.parse(res.getContentText());
+  Logger.log("📦 พบสิ่งของใน Supabase ทั้งหมด: " + items.length + " ชิ้น");
+
+  let uploadedCount = 0;
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    if (!item.image_url || !item.image_url.startsWith("http")) continue;
+
+    const filename = (item.item_code || "LF-" + (i + 1)) + ".jpg";
+
+    if (folder.getFilesByName(filename).hasNext()) {
+      Logger.log("⏩ ไฟล์ " + filename + " มีอยู่ใน Drive แล้ว (ข้าม)");
+      continue;
+    }
+
+    try {
+      const imgRes = UrlFetchApp.fetch(item.image_url, { muteHttpExceptions: true });
+      if (imgRes.getResponseCode() === 200) {
+        const blob = imgRes.getBlob().setName(filename);
+        const file = folder.createFile(blob);
+        file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+        Logger.log("✅ บันทึกเข้า Drive สำเร็จ: " + filename + " (ID: " + file.getId() + ")");
+        uploadedCount++;
+      }
+    } catch (err) {
+      Logger.log("❌ เกิดข้อผิดพลาดในการโหลดรูป " + filename + ": " + err.message);
+    }
+  }
+
+  const msg = "🎉 ซิงค์รูปภาพสิ่งของเข้า Google Drive สำเร็จ: " + uploadedCount + " ไฟล์";
+  Logger.log(msg);
+  return msg;
+}
+
+// ==============================================================================
+// 4. 📝 ฟังก์ชันรับฟอร์ม Google Form และซิงค์คำร้องของหาย
+// ==============================================================================
+function onFormSubmit(e) {
+  try {
+    let namedValues = null;
+    let values = null;
+
+    if (e && e.response) {
+      const itemResponses = e.response.getItemResponses();
+      namedValues = {};
+      for (let j = 0; j < itemResponses.length; j++) {
+        const item = itemResponses[j];
+        const title = item.getItem().getTitle().trim();
+        const val = item.getResponse();
+        namedValues[title] = Array.isArray(val) ? val : [val];
+      }
+    } else if (e && e.namedValues) {
+      namedValues = e.namedValues;
+      values = e.values;
+    }
+
+    const row = parseFormData({ namedValues: namedValues, values: values });
+    const claimCode = "CLM-" + new Date().getFullYear() + "-" + Math.floor(1000 + Math.random() * 9000);
+
+    let chars = row.characteristics || "ไม่มีรายละเอียด";
+    if (row.photo_url) chars += "\n📷 รูปแนบ: " + row.photo_url;
+
+    const payload = {
+      claim_code: claimCode,
+      category: row.category || "อื่นๆ",
+      item_type: row.item_type || "ไม่ระบุชื่อสิ่งของ",
+      characteristics: chars,
+      lost_location: row.lost_location || "ไม่ระบุสถานที่",
+      lost_date: row.lost_date,
+      claimant_name: row.claimant_name,
+      claimant_class: row.claimant_class,
+      claimant_contact: row.claimant_contact,
+      status: "PENDING",
+      created_at: new Date().toISOString()
+    };
+
+    // ส่งเข้า Supabase
+    UrlFetchApp.fetch(MASTER_CONFIG.SUPABASE_URL.replace(/\/+$/, '') + "/rest/v1/lost_claims", {
+      method: "POST",
+      headers: {
+        "apikey": MASTER_CONFIG.SUPABASE_KEY,
+        "Authorization": "Bearer " + MASTER_CONFIG.SUPABASE_KEY,
+        "Content-Type": "application/json",
+        "Prefer": "return=minimal"
+      },
+      payload: JSON.stringify(payload),
+      muteHttpExceptions: true
+    });
+
+    // ส่งเข้า Web Render
+    UrlFetchApp.fetch(MASTER_CONFIG.WEB_CLAIMS_URL, {
+      method: "POST",
+      contentType: "application/json",
+      payload: JSON.stringify(payload),
+      muteHttpExceptions: true
+    });
+
+  } catch (err) {
+    Logger.log("Error onFormSubmit: " + err.message);
+  }
+}
+
+function syncAllPastResponses() {
+  const entries = [];
+  try {
+    const form = FormApp.getActiveForm();
+    if (form) {
+      const responses = form.getResponses();
+      for (let i = 0; i < responses.length; i++) {
+        const fResp = responses[i];
+        const itemResponses = fResp.getItemResponses();
+        const namedValues = {};
+        for (let j = 0; j < itemResponses.length; j++) {
+          const item = itemResponses[j];
+          namedValues[item.getItem().getTitle().trim()] = [item.getResponse()];
+        }
+        entries.push({ timestamp: fResp.getTimestamp(), namedValues: namedValues });
+      }
+    }
+  } catch (e) {}
+
+  if (entries.length === 0) {
+    try {
+      const ss = SpreadsheetApp.getActiveSpreadsheet();
+      if (ss) {
+        const data = ss.getActiveSheet().getDataRange().getValues();
+        if (data && data.length >= 2) {
+          const headers = data[0].map(h => String(h).trim());
+          for (let r = 1; r < data.length; r++) {
+            const row = data[r];
+            if (!row || row.every(c => String(c).trim() === "")) continue;
+            const nv = {};
+            for (let c = 0; c < headers.length; c++) nv[headers[c]] = [row[c]];
+            entries.push({ timestamp: row[0], namedValues: nv });
+          }
+        }
+      }
+    } catch (e) {}
+  }
+
+  let count = 0;
+  for (let idx = 0; idx < entries.length; idx++) {
+    const entry = entries[idx];
+    const parsed = parseFormData({ namedValues: entry.namedValues });
+    const claimCode = "CLM-" + new Date().getFullYear() + "-" + String(1001 + idx);
+    let chars = parsed.characteristics || "ไม่มีรายละเอียด";
+    if (parsed.photo_url) chars += "\n📷 รูปแนบ: " + parsed.photo_url;
+
+    const payload = {
+      claim_code: claimCode,
+      category: parsed.category || "อื่นๆ",
+      item_type: parsed.item_type || "ไม่ระบุชื่อสิ่งของ",
+      characteristics: chars,
+      lost_location: parsed.lost_location || "ไม่ระบุสถานที่",
+      lost_date: parsed.lost_date,
+      claimant_name: parsed.claimant_name,
+      claimant_class: parsed.claimant_class,
+      claimant_contact: parsed.claimant_contact,
+      status: "PENDING",
+      created_at: entry.timestamp ? new Date(entry.timestamp).toISOString() : new Date().toISOString()
+    };
+
+    try {
+      UrlFetchApp.fetch(MASTER_CONFIG.SUPABASE_URL.replace(/\/+$/, '') + "/rest/v1/lost_claims", {
+        method: "POST",
+        headers: {
+          "apikey": MASTER_CONFIG.SUPABASE_KEY,
+          "Authorization": "Bearer " + MASTER_CONFIG.SUPABASE_KEY,
+          "Content-Type": "application/json",
+          "Prefer": "return=minimal"
+        },
+        payload: JSON.stringify(payload),
+        muteHttpExceptions: true
+      });
+      count++;
+    } catch (e) {}
+  }
+
+  Logger.log("🎉 ซิงค์คำร้องย้อนหลังเสร็จสิ้น: " + count + " รายการ");
+}
+
+// ==============================================================================
+// 🛠️ ฟังก์ชันช่วยเหลือ (Helper Utilities)
+// ==============================================================================
+function getOrCreateTargetFolder(folderName, parentFolder) {
+  const folders = DriveApp.getFoldersByName(folderName);
+  if (folders.hasNext()) return folders.next();
+
+  const prefix = folderName.substring(0, 3);
+  const matching = DriveApp.searchFolders("name contains '" + prefix + "' and trashed = false");
+  if (matching.hasNext()) return matching.next();
+
+  if (parentFolder) {
+    return parentFolder.createFolder(folderName);
+  }
+
+  const rootFolders = DriveApp.getFoldersByName(MASTER_CONFIG.FOLDERS.ROOT);
+  if (rootFolders.hasNext()) {
+    return rootFolders.next().createFolder(folderName);
+  }
+
+  return DriveApp.createFolder(folderName);
+}
+
+function parseFormData(e) {
+  let claimant_name = "ไม่ประสงค์ออกนาม", claimant_class = "-", claimant_contact = "-";
+  let item_type = "ไม่ระบุชื่อสิ่งของ", category = "อื่นๆ", lost_location = "ไม่ระบุสถานที่";
+  let lost_date = new Date().toISOString().slice(0, 10), characteristics = "", rawPhoto = "";
+
+  if (e && e.namedValues) {
+    const nv = e.namedValues;
+    const getCol = (name, list) => {
+      if (nv[name] && nv[name][0]) return String(nv[name][0]).trim();
+      for (let k in nv) {
+        if (list.some(sub => k.includes(sub)) && nv[k][0]) return String(nv[k][0]).trim();
+      }
+      return "";
+    };
+    claimant_name = getCol("ชื่อ-นามสกุล นักเรียนผู้แจ้ง", ["ชื่อ-นามสกุล", "ผู้แจ้ง"]) || claimant_name;
+    claimant_class = getCol("ระดับชั้น / ห้อง", ["ระดับชั้น", "ห้อง"]) || claimant_class;
+    claimant_contact = getCol("เบอร์โทรศัพท์ หรือช่องทางติดต่อกลับ", ["เบอร์โทร", "ติดต่อ"]) || claimant_contact;
+    item_type = getCol("ชื่อสิ่งของที่ทำหาย", ["ชื่อสิ่งของ", "สิ่งของ"]) || item_type;
+    category = getCol("หมวดหมู่สิ่งของ", ["หมวดหมู่"]) || category;
+    lost_location = getCol("จุดหรือบริเวณที่คาดว่าทำหาย", ["จุด", "สถานที่"]) || lost_location;
+    lost_date = getCol("วันที่ทำหาย", ["วันที่"]) || lost_date;
+    characteristics = getCol("ลักษณะเด่น / ตำหนิ / รายละเอียดเพิ่มเติม", ["ลักษณะเด่น", "ตำหนิ"]) || characteristics;
+    rawPhoto = getCol("รูปประกอบของ ของสิ่งนั้น", ["รูป", "ภาพ"]) || rawPhoto;
+  }
+
+  let photo_url = "";
+  if (rawPhoto) {
+    const ids = String(rawPhoto).match(/[-\w]{25,}/g);
+    if (ids && ids[0]) {
+      try {
+        const f = DriveApp.getFileById(ids[0]);
+        f.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+      } catch (x) {}
+      photo_url = "https://drive.google.com/thumbnail?id=" + ids[0] + "&sz=w1000";
+    }
+  }
+
+  const dmy = String(lost_date).match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+  if (dmy) {
+    let y = parseInt(dmy[3], 10);
+    if (y > 2400) y -= 543;
+    lost_date = y + "-" + ("0" + dmy[2]).slice(-2) + "-" + ("0" + dmy[1]).slice(-2);
+  }
+
+  return { claimant_name, claimant_class, claimant_contact, item_type, category, lost_location, lost_date, characteristics, photo_url };
+}
+
+function jsonResponse(obj) {
+  return ContentService.createTextOutput(JSON.stringify(obj))
+    .setMimeType(ContentService.MimeType.JSON);
 }
