@@ -465,3 +465,116 @@ function testSendToDatabase() {
   };
   onFormSubmit(mockEvent);
 }
+
+/**
+ * 📁 ดูดรูปภาพสิ่งของที่พบเจอ (lost_items) จาก Supabase Storage เข้า Google Drive โฟลเดอร์ 03_สิ่งของที่พบเจอ ทันที!
+ * วิธีใช้: เลือกฟังก์ชัน "syncPhotosToDriveFolder" ด้านบน แล้วกดปุ่ม "Run" (เรียกใช้)
+ */
+function syncPhotosToDriveFolder() {
+  const folderId = '1que123Zlr8ewcC5KD4Gx5DLZSbyJeapQ';
+  let folder;
+  try {
+    folder = DriveApp.getFolderById(folderId);
+  } catch (e) {
+    Logger.log("❌ ไม่พบโฟลเดอร์ Google Drive ID: " + folderId + " (" + e.message + ")");
+    return "ไม่พบโฟลเดอร์ใน Drive";
+  }
+
+  Logger.log("📁 เข้าถึงโฟลเดอร์ Google Drive สำเร็จ: " + folder.getName());
+
+  // ดึงรายการ lost_items จาก Supabase
+  const endpoint = CONFIG.SUPABASE_URL.replace(/\/+$/, '') + "/rest/v1/lost_items?select=id,item_code,title,image_url";
+  const res = UrlFetchApp.fetch(endpoint, {
+    method: "GET",
+    headers: {
+      "apikey": CONFIG.SUPABASE_KEY,
+      "Authorization": "Bearer " + CONFIG.SUPABASE_KEY
+    },
+    muteHttpExceptions: true
+  });
+
+  if (res.getResponseCode() !== 200) {
+    Logger.log("❌ ดึงข้อมูล Supabase ล้มเหลว: " + res.getContentText());
+    return "ดึงข้อมูลจาก Supabase ไม่สำเร็จ";
+  }
+
+  const items = JSON.parse(res.getContentText());
+  Logger.log("📦 พบสิ่งของใน Supabase ทั้งหมด: " + items.length + " ชิ้น กำลังตรวจสอบรูปภาพ...");
+
+  let uploadedCount = 0;
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    if (!item.image_url || !item.image_url.startsWith('http')) continue;
+
+    const filename = (item.item_code || "LF-" + (i + 1)) + ".jpg";
+
+    // ตรวจสอบว่ามีไฟล์ชื่อนี้ในโฟลเดอร์แล้วหรือยัง
+    const existing = folder.getFilesByName(filename);
+    if (existing.hasNext()) {
+      Logger.log("⏩ ไฟล์ " + filename + " มีอยู่ใน Drive เรียบร้อยแล้ว (ข้าม)");
+      continue;
+    }
+
+    try {
+      const imgRes = UrlFetchApp.fetch(item.image_url, { muteHttpExceptions: true });
+      if (imgRes.getResponseCode() === 200) {
+        const blob = imgRes.getBlob().setName(filename);
+        const file = folder.createFile(blob);
+        file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+        Logger.log("✅ บันทึกเข้า Google Drive สำเร็จ: " + filename + " (ID: " + file.getId() + ")");
+        uploadedCount++;
+      }
+    } catch (err) {
+      Logger.log("❌ เกิดข้อผิดพลาดในการโหลดรูป " + filename + ": " + err.message);
+    }
+  }
+
+  const msg = "🎉 ซิงค์รูปภาพเข้า Google Drive สำเร็จ! เพิ่มรูปใหม่ " + uploadedCount + " ไฟล์";
+  Logger.log(msg);
+  return msg;
+}
+
+/**
+ * 🌐 Webhook รับอัปโหลดรูปภาพอัตโนมัติจาก Bot และ Web Dashboard (Gateway ไปยัง Google Drive)
+ */
+function doPost(e) {
+  try {
+    if (!e || !e.postData || !e.postData.contents) {
+      return ContentService.createTextOutput(JSON.stringify({ success: false, error: "No post data received" }))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+
+    const data = JSON.parse(e.postData.contents);
+    let folder;
+    const targetFolderId = data.folderId || '1que123Zlr8ewcC5KD4Gx5DLZSbyJeapQ';
+    try {
+      folder = DriveApp.getFolderById(targetFolderId);
+    } catch (fErr) {}
+
+    if (!folder) {
+      const folders = DriveApp.getFoldersByName("03_สิ่งของที่พบเจอ");
+      folder = folders.hasNext() ? folders.next() : DriveApp.createFolder("03_สิ่งของที่พบเจอ");
+    }
+
+    const decodedBytes = Utilities.base64Decode(data.base64Data);
+    const filename = data.filename || "file_" + Date.now() + ".jpg";
+    const blob = Utilities.newBlob(decodedBytes, data.mimeType || "image/jpeg", filename);
+
+    const file = folder.createFile(blob);
+    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+
+    return ContentService.createTextOutput(JSON.stringify({
+      success: true,
+      fileId: file.getId(),
+      fileUrl: file.getUrl(),
+      webViewLink: file.getUrl(),
+      filename: filename
+    })).setMimeType(ContentService.MimeType.JSON);
+
+  } catch (err) {
+    return ContentService.createTextOutput(JSON.stringify({
+      success: false,
+      error: err.toString()
+    })).setMimeType(ContentService.MimeType.JSON);
+  }
+}
