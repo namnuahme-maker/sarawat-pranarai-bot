@@ -1,18 +1,10 @@
 /**
- * 📦 สคริปต์เชื่อมต่อ Google Sheets (จาก Google Form ที่มีอยู่แล้ว) เข้าสู่ฐานข้อมูล Supabase & ศูนย์บัญชาการสารวัตร
+ * 📦 สคริปต์เชื่อมต่อ Google Forms / Google Sheets เข้าสู่ฐานข้อมูล Supabase & ศูนย์บัญชาการสารวัตร
  * โรงเรียนพระนารายณ์ • ฝ่ายบริหารงานสารวัตรนักเรียน
  * 
- * คอลัมน์ที่รองรับตรงกัน 100%:
- * [A] Timestamp (ประทับเวลา)
- * [B] ชื่อ-นามสกุล นักเรียนผู้แจ้ง
- * [C] ระดับชั้น / ห้อง
- * [D] เบอร์โทรศัพท์ หรือช่องทางติดต่อกลับ
- * [E] ชื่อสิ่งของที่ทำหาย
- * [F] หมวดหมู่สิ่งของ
- * [G] จุดหรือบริเวณที่คาดว่าทำหาย
- * [H] วันที่ทำหาย
- * [I] ลักษณะเด่น / ตำหนิ / รายละเอียดเพิ่มเติม
- * [J] รูปประกอบของ ของสิ่งนั้น
+ * รองรับการติดตั้งทั้ง 2 รูปแบบ:
+ * 1. ติดตั้งใน Google Forms โดยตรง (FormApp)
+ * 2. ติดตั้งใน Google Sheets ที่เชื่อมกับฟอร์ม (SpreadsheetApp)
  */
 
 // ⚙️ ตั้งค่าการเชื่อมต่อฐานข้อมูลและแจ้งเตือน
@@ -30,37 +22,83 @@ const CONFIG = {
 };
 
 /**
- * 🔄 ซิงค์ข้อมูลคำร้องย้อนหลังทั้งหมดที่มีในชีต เข้า Supabase และหน้าเว็บในคลิกเดียว!
- * วิธีใช้: ในหน้า Apps Script ให้เลือกฟังก์ชัน "syncAllPastResponses" ด้านบน แล้วกดปุ่ม "Run" (เรียกใช้)
+ * 🔄 ซิงค์ข้อมูลคำร้องย้อนหลังทั้งหมด เข้า Supabase และหน้าเว็บในคลิกเดียว!
+ * รองรับทั้ง Google Forms และ Google Sheets อัตโนมัติ
+ * วิธีใช้: เลือกฟังก์ชัน "syncAllPastResponses" ด้านบน แล้วกดปุ่ม "Run" (เรียกใช้)
  */
 function syncAllPastResponses() {
-  const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
-  const data = sheet.getDataRange().getValues();
-  if (!data || data.length < 2) {
-    Logger.log("❌ ไม่พบข้อมูลคำร้องในชีต (มีแต่หัวตารางหรือว่างเปล่า)");
-    return "ไม่พบข้อมูลในชีต";
+  const entries = [];
+  let sourceName = "";
+
+  // 1. ตรวจสอบว่าเปิดสคริปต์จากใน Google Form หรือไม่
+  try {
+    const form = FormApp.getActiveForm();
+    if (form) {
+      sourceName = "Google Form: " + form.getTitle();
+      Logger.log("📋 กำลังอ่านข้อมูลจาก " + sourceName);
+      const responses = form.getResponses();
+      for (let i = 0; i < responses.length; i++) {
+        const fResp = responses[i];
+        const itemResponses = fResp.getItemResponses();
+        const namedValues = {};
+        for (let j = 0; j < itemResponses.length; j++) {
+          const item = itemResponses[j];
+          const title = item.getItem().getTitle().trim();
+          const val = item.getResponse();
+          namedValues[title] = Array.isArray(val) ? val : [val];
+        }
+        entries.push({
+          timestamp: fResp.getTimestamp(),
+          namedValues: namedValues,
+          values: []
+        });
+      }
+    }
+  } catch (err) {}
+
+  // 2. ถ้าไม่ได้เปิดจาก Form ให้ตรวจสอบใน Google Sheet
+  if (entries.length === 0) {
+    try {
+      const ss = SpreadsheetApp.getActiveSpreadsheet();
+      if (ss) {
+        sourceName = "Google Sheet: " + ss.getName();
+        Logger.log("📊 กำลังอ่านข้อมูลจาก " + sourceName);
+        const sheet = ss.getActiveSheet();
+        const data = sheet.getDataRange().getValues();
+        if (data && data.length >= 2) {
+          const headers = data[0].map(function(h) { return String(h).trim(); });
+          for (let r = 1; r < data.length; r++) {
+            const row = data[r];
+            if (!row || row.every(function(cell) { return String(cell).trim() === ""; })) continue;
+            const namedValues = {};
+            for (let c = 0; c < headers.length; c++) {
+              namedValues[headers[c]] = [row[c]];
+            }
+            entries.push({
+              timestamp: row[0],
+              namedValues: namedValues,
+              values: row
+            });
+          }
+        }
+      }
+    } catch (err) {}
   }
 
-  const headers = data[0].map(function(h) { return String(h).trim(); });
-  Logger.log("📌 Headers: " + JSON.stringify(headers));
+  if (entries.length === 0) {
+    Logger.log("❌ ไม่พบข้อมูลคำร้อง (หรือยังไม่มีใครส่งคำร้องเข้ามา)");
+    return "ไม่พบข้อมูลคำร้อง";
+  }
 
+  Logger.log("🔍 พบข้อมูลคำร้องทั้งหมด " + entries.length + " รายการ กำลังเริ่มซิงค์...");
   let successCount = 0;
   let failCount = 0;
 
-  for (let r = 1; r < data.length; r++) {
-    const row = data[r];
-    // ข้ามแถวที่ว่างเปล่า
-    if (!row || row.every(function(cell) { return String(cell).trim() === ""; })) continue;
-
-    // สร้าง Map จากชื่อคอลัมน์
-    const namedValues = {};
-    for (let c = 0; c < headers.length; c++) {
-      namedValues[headers[c]] = [row[c]];
-    }
-
-    const parsed = parseFormData({ namedValues: namedValues, values: row });
+  for (let idx = 0; idx < entries.length; idx++) {
+    const entry = entries[idx];
+    const parsed = parseFormData({ namedValues: entry.namedValues, values: entry.values });
     const currentYear = new Date().getFullYear();
-    const claimCode = "CLM-" + currentYear + "-" + String(1000 + r);
+    const claimCode = "CLM-" + currentYear + "-" + String(1001 + idx);
 
     let chars = parsed.characteristics || "ไม่มีรายละเอียด";
     if (parsed.photo_url) {
@@ -78,10 +116,10 @@ function syncAllPastResponses() {
       claimant_class: parsed.claimant_class || "-",
       claimant_contact: parsed.claimant_contact || "-",
       status: "PENDING",
-      created_at: row[0] ? new Date(row[0]).toISOString() : new Date().toISOString()
+      created_at: entry.timestamp ? new Date(entry.timestamp).toISOString() : new Date().toISOString()
     };
 
-    // 1. บันทึกตรงเข้า Supabase lost_claims
+    // ยิงตรงเข้า Supabase
     try {
       const endpoint = CONFIG.SUPABASE_URL.replace(/\/+$/, '') + "/rest/v1/lost_claims";
       const res = UrlFetchApp.fetch(endpoint, {
@@ -98,17 +136,17 @@ function syncAllPastResponses() {
 
       if (res.getResponseCode() >= 200 && res.getResponseCode() < 300) {
         successCount++;
-        Logger.log("✅ แถวที่ " + (r + 1) + " บันทึกเข้า Supabase สำเร็จ: " + claimCode);
+        Logger.log("✅ รายการที่ " + (idx + 1) + " บันทึกเข้า Supabase สำเร็จ: " + claimCode + " (" + payload.item_type + ")");
       } else {
         failCount++;
-        Logger.log("⚠️ แถวที่ " + (r + 1) + " Supabase error (" + res.getResponseCode() + "): " + res.getContentText());
+        Logger.log("⚠️ รายการที่ " + (idx + 1) + " Supabase error (" + res.getResponseCode() + "): " + res.getContentText());
       }
     } catch (err) {
       failCount++;
-      Logger.log("❌ แถวที่ " + (r + 1) + " Error: " + err.message);
+      Logger.log("❌ รายการที่ " + (idx + 1) + " Error: " + err.message);
     }
 
-    // 2. ส่งเข้า Web API
+    // ยิงเข้า Web API บน Render
     try {
       UrlFetchApp.fetch(CONFIG.WEB_API_URL, {
         method: "POST",
@@ -127,11 +165,30 @@ function syncAllPastResponses() {
 }
 
 /**
- * ฟังก์ชันหลักที่ทำงานอัตโนมัติเมื่อมีคนส่ง Google Form เข้าสเปรดชีต
+ * ฟังก์ชันหลักที่ทำงานอัตโนมัติเมื่อมีคนส่ง Google Form เข้ามาใหม่
  */
 function onFormSubmit(e) {
   try {
-    const row = parseFormData(e);
+    let namedValues = null;
+    let values = null;
+
+    // 1. กรณีผูก Trigger จาก Google Form โดยตรง
+    if (e && e.response) {
+      const itemResponses = e.response.getItemResponses();
+      namedValues = {};
+      for (let j = 0; j < itemResponses.length; j++) {
+        const item = itemResponses[j];
+        const title = item.getItem().getTitle().trim();
+        const val = item.getResponse();
+        namedValues[title] = Array.isArray(val) ? val : [val];
+      }
+    } else if (e && e.namedValues) {
+      // 2. กรณีผูก Trigger จาก Google Sheet
+      namedValues = e.namedValues;
+      values = e.values;
+    }
+
+    const row = parseFormData({ namedValues: namedValues, values: values });
     Logger.log("Parsed Form Data: " + JSON.stringify(row));
 
     const currentYear = new Date().getFullYear();
@@ -159,7 +216,6 @@ function onFormSubmit(e) {
     };
 
     // 1. บันทึกตรงเข้า Supabase lost_claims
-    let dbSuccess = false;
     try {
       const endpoint = CONFIG.SUPABASE_URL.replace(/\/+$/, '') + "/rest/v1/lost_claims";
       const res = UrlFetchApp.fetch(endpoint, {
@@ -186,7 +242,6 @@ function onFormSubmit(e) {
         muteHttpExceptions: true
       });
       if (res.getResponseCode() >= 200 && res.getResponseCode() < 300) {
-        dbSuccess = true;
         Logger.log("Saved to Supabase successfully: " + claimCode);
       } else {
         Logger.log("Supabase response: " + res.getContentText());
@@ -218,7 +273,7 @@ function onFormSubmit(e) {
 }
 
 /**
- * ดึงข้อมูลตามชื่อคอลัมน์ของชีต
+ * ดึงข้อมูลตามชื่อคำถามของฟอร์ม หรือชื่อคอลัมน์ของชีต
  */
 function parseFormData(e) {
   let claimant_name = "ไม่ประสงค์ออกนาม";
@@ -258,7 +313,6 @@ function parseFormData(e) {
     characteristics = getCol("ลักษณะเด่น / ตำหนิ / รายละเอียดเพิ่มเติม", ["ลักษณะเด่น", "ตำหนิ", "รายละเอียด"]) || characteristics;
     rawPhoto = getCol("รูปประกอบของ ของสิ่งนั้น", ["รูปประกอบของ ของสิ่งนั้น", "รูปประกอบ", "ของสิ่งนั้น", "รูป", "ภาพ"]) || rawPhoto;
   } else if (e && e.values && Array.isArray(e.values)) {
-    // รองรับกรณีดึงจากลำดับคอลัมน์ A-J โดยตรง
     const v = e.values;
     claimant_name = v[1] || claimant_name;
     claimant_class = v[2] || claimant_class;
@@ -274,7 +328,7 @@ function parseFormData(e) {
   // แปลงไฟล์ Google Drive และเปิดสิทธิ์ Anyone with link อัตโนมัติ
   const photos = processDriveFiles(rawPhoto);
 
-  // แปลงรูปแบบวันที่เป็น YYYY-MM-DD (ค.ศ.) ป้องกันปัญหา PostgreSQL out of range (เช่น พ.ศ. 2569 -> ค.ศ. 2026)
+  // แปลงรูปแบบวันที่เป็น YYYY-MM-DD (ค.ศ.) ป้องกันปัญหา PostgreSQL out of range
   const normalizeDate = function(str) {
     if (!str) return new Date().toISOString().slice(0, 10);
     str = String(str).trim();
@@ -368,13 +422,6 @@ function sendDiscordCard(payload) {
       embed.image = { url: payload.photo_url };
     }
 
-    if (payload.photo_urls && payload.photo_urls.length > 1) {
-      embed.fields = [{
-        name: "🖼️ รูปประกอบทั้งหมด (" + payload.photo_urls.length + " ไฟล์)",
-        value: payload.photo_urls.map(function(u, idx) { return "[ดูรูปที่ " + (idx + 1) + "](" + u + ")"; }).join(" • ")
-      }];
-    }
-
     UrlFetchApp.fetch(CONFIG.DISCORD_WEBHOOK_URL, {
       method: "POST",
       contentType: "application/json",
@@ -399,7 +446,7 @@ function sendDiscordCard(payload) {
 }
 
 /**
- * ฟังก์ชันสำหรับกดทดสอบส่งข้อมูลเข้าฐานข้อมูลทันที (กดปุ่ม Run ได้เลย)
+ * ทดสอบส่งข้อมูลเข้าฐานข้อมูลทันที
  */
 function testSendToDatabase() {
   const mockEvent = {
