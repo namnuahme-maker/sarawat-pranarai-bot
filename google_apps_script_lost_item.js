@@ -1,9 +1,9 @@
 /**
- * 📦 สคริปต์เชื่อมต่อ Google Sheets (จาก Google Form ที่มีอยู่แล้ว) เข้าสู่ฐานข้อมูล Supabase
+ * 📦 สคริปต์เชื่อมต่อ Google Sheets (จาก Google Form ที่มีอยู่แล้ว) เข้าสู่ฐานข้อมูล Supabase & ศูนย์บัญชาการสารวัตร
  * โรงเรียนพระนารายณ์ • ฝ่ายบริหารงานสารวัตรนักเรียน
  * 
  * คอลัมน์ที่รองรับตรงกัน 100%:
- * [A] Timestamp
+ * [A] Timestamp (ประทับเวลา)
  * [B] ชื่อ-นามสกุล นักเรียนผู้แจ้ง
  * [C] ระดับชั้น / ห้อง
  * [D] เบอร์โทรศัพท์ หรือช่องทางติดต่อกลับ
@@ -21,13 +21,110 @@ const CONFIG = {
   SUPABASE_URL: "https://cxrakrsyxvsrbpgphgtt.supabase.co",
   SUPABASE_KEY: "YOUR_SUPABASE_SERVICE_ROLE_KEY",
 
-  // 2. Web API Endpoint (สำรองและส่งแจ้งเตือน)
-  WEB_API_URL: "https://sarawat-pranarai-web.onrender.com/api/lost-found/claims",
-  WEB_DASHBOARD_URL: "https://sarawat-pranarai-web.onrender.com/lost-found",
+  // 2. Web API Endpoint (ซิงค์ขึ้นเว็บสารวัตร Promax บน Render)
+  WEB_API_URL: "https://sarawat-promax.onrender.com/api/lost-found/claims",
+  WEB_DASHBOARD_URL: "https://sarawat-promax.onrender.com/lost-found",
 
   // 3. Discord Webhook URL (ใส่ Webhook ของห้อง #📦│แจ้งพบของหาย ถ้ามี)
-  DISCORD_WEBHOOK_URL: "YOUR_DISCORD_WEBHOOK_URL"
+  DISCORD_WEBHOOK_URL: ""
 };
+
+/**
+ * 🔄 ซิงค์ข้อมูลคำร้องย้อนหลังทั้งหมดที่มีในชีต เข้า Supabase และหน้าเว็บในคลิกเดียว!
+ * วิธีใช้: ในหน้า Apps Script ให้เลือกฟังก์ชัน "syncAllPastResponses" ด้านบน แล้วกดปุ่ม "Run" (เรียกใช้)
+ */
+function syncAllPastResponses() {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  const data = sheet.getDataRange().getValues();
+  if (!data || data.length < 2) {
+    Logger.log("❌ ไม่พบข้อมูลคำร้องในชีต (มีแต่หัวตารางหรือว่างเปล่า)");
+    return "ไม่พบข้อมูลในชีต";
+  }
+
+  const headers = data[0].map(function(h) { return String(h).trim(); });
+  Logger.log("📌 Headers: " + JSON.stringify(headers));
+
+  let successCount = 0;
+  let failCount = 0;
+
+  for (let r = 1; r < data.length; r++) {
+    const row = data[r];
+    // ข้ามแถวที่ว่างเปล่า
+    if (!row || row.every(function(cell) { return String(cell).trim() === ""; })) continue;
+
+    // สร้าง Map จากชื่อคอลัมน์
+    const namedValues = {};
+    for (let c = 0; c < headers.length; c++) {
+      namedValues[headers[c]] = [row[c]];
+    }
+
+    const parsed = parseFormData({ namedValues: namedValues, values: row });
+    const currentYear = new Date().getFullYear();
+    const claimCode = "CLM-" + currentYear + "-" + String(1000 + r);
+
+    let chars = parsed.characteristics || "ไม่มีรายละเอียด";
+    if (parsed.photo_url) {
+      chars += "\n📷 รูปแนบ: " + parsed.photo_url;
+    }
+
+    const payload = {
+      claim_code: claimCode,
+      category: parsed.category || "อื่นๆ",
+      item_type: parsed.item_type || "ไม่ระบุชื่อสิ่งของ",
+      characteristics: chars,
+      lost_location: parsed.lost_location || "ไม่ระบุสถานที่",
+      lost_date: parsed.lost_date || new Date().toISOString().slice(0, 10),
+      claimant_name: parsed.claimant_name || "ไม่ประสงค์ออกนาม",
+      claimant_class: parsed.claimant_class || "-",
+      claimant_contact: parsed.claimant_contact || "-",
+      status: "PENDING",
+      created_at: row[0] ? new Date(row[0]).toISOString() : new Date().toISOString()
+    };
+
+    // 1. บันทึกตรงเข้า Supabase lost_claims
+    try {
+      const endpoint = CONFIG.SUPABASE_URL.replace(/\/+$/, '') + "/rest/v1/lost_claims";
+      const res = UrlFetchApp.fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "apikey": CONFIG.SUPABASE_KEY,
+          "Authorization": "Bearer " + CONFIG.SUPABASE_KEY,
+          "Content-Type": "application/json",
+          "Prefer": "return=minimal"
+        },
+        payload: JSON.stringify(payload),
+        muteHttpExceptions: true
+      });
+
+      if (res.getResponseCode() >= 200 && res.getResponseCode() < 300) {
+        successCount++;
+        Logger.log("✅ แถวที่ " + (r + 1) + " บันทึกเข้า Supabase สำเร็จ: " + claimCode);
+      } else {
+        failCount++;
+        Logger.log("⚠️ แถวที่ " + (r + 1) + " Supabase error (" + res.getResponseCode() + "): " + res.getContentText());
+      }
+    } catch (err) {
+      failCount++;
+      Logger.log("❌ แถวที่ " + (r + 1) + " Error: " + err.message);
+    }
+
+    // 2. ส่งเข้า Web API
+    try {
+      UrlFetchApp.fetch(CONFIG.WEB_API_URL, {
+        method: "POST",
+        contentType: "application/json",
+        payload: JSON.stringify(payload),
+        muteHttpExceptions: true
+      });
+    } catch (wErr) {
+      Logger.log("Web API notice: " + wErr.message);
+    }
+  }
+
+  const resultMsg = "🎉 ซิงค์ข้อมูลเสร็จสิ้น! สำเร็จ " + successCount + " รายการ, ไม่ผ่าน " + failCount + " รายการ";
+  Logger.log(resultMsg);
+  return resultMsg;
+}
 
 /**
  * ฟังก์ชันหลักที่ทำงานอัตโนมัติเมื่อมีคนส่ง Google Form เข้าสเปรดชีต
@@ -40,11 +137,16 @@ function onFormSubmit(e) {
     const currentYear = new Date().getFullYear();
     const claimCode = "CLM-" + currentYear + "-" + Math.floor(1000 + Math.random() * 9000);
 
+    let chars = row.characteristics || "ไม่มีรายละเอียด";
+    if (row.photo_url) {
+      chars += "\n📷 รูปแนบ: " + row.photo_url;
+    }
+
     const payload = {
       claim_code: claimCode,
       category: row.category || "อื่นๆ",
       item_type: row.item_type || "ไม่ระบุชื่อสิ่งของ",
-      characteristics: row.characteristics || "ไม่มีรายละเอียด",
+      characteristics: chars,
       lost_location: row.lost_location || "ไม่ระบุสถานที่",
       lost_date: row.lost_date || new Date().toISOString().slice(0, 10),
       claimant_name: row.claimant_name || "ไม่ประสงค์ออกนาม",
