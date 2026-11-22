@@ -472,6 +472,9 @@ function testSendToDatabase() {
  */
 function syncPhotosToDriveFolder() {
   const folderId = '1que123Zlr8ewcC5KD4Gx5DLZSbyJeapQ';
+  const supabaseUrl = (typeof CONFIG !== 'undefined' && CONFIG.SUPABASE_URL) ? CONFIG.SUPABASE_URL : 'https://cxrakrsyxvsrbpgphgtt.supabase.co';
+  const supabaseKey = (typeof CONFIG !== 'undefined' && CONFIG.SUPABASE_KEY) ? CONFIG.SUPABASE_KEY : 'YOUR_SUPABASE_SERVICE_ROLE_KEY';
+
   let folder;
   try {
     folder = DriveApp.getFolderById(folderId);
@@ -483,12 +486,12 @@ function syncPhotosToDriveFolder() {
   Logger.log("📁 เข้าถึงโฟลเดอร์ Google Drive สำเร็จ: " + folder.getName());
 
   // ดึงรายการ lost_items จาก Supabase
-  const endpoint = CONFIG.SUPABASE_URL.replace(/\/+$/, '') + "/rest/v1/lost_items?select=id,item_code,title,image_url";
+  const endpoint = supabaseUrl.replace(/\/+$/, '') + "/rest/v1/lost_items?select=id,item_code,title,image_url";
   const res = UrlFetchApp.fetch(endpoint, {
     method: "GET",
     headers: {
-      "apikey": CONFIG.SUPABASE_KEY,
-      "Authorization": "Bearer " + CONFIG.SUPABASE_KEY
+      "apikey": supabaseKey,
+      "Authorization": "Bearer " + supabaseKey
     },
     muteHttpExceptions: true
   });
