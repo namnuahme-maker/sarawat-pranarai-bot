@@ -370,7 +370,7 @@ function getWebDashboardUrl() {
   if (process.env.WEB_URL) return process.env.WEB_URL.replace(/\/$/, '');
   if (process.env.RENDER_WEB_URL) return process.env.RENDER_WEB_URL.replace(/\/$/, '');
   if (process.env.NODE_ENV === 'production') {
-    return 'https://sarawat-pranarai-web.onrender.com';
+    return 'https://sarawat-promax.onrender.com';
   }
   return 'http://localhost:10001';
 }
@@ -3653,7 +3653,18 @@ async function finalizeAndSaveLostItem(report, interaction) {
 
   // 1. ซิงค์ลง Supabase Database
   try {
-    await supabase.from('lost_items').insert(newItem);
+    const dbItem = { ...newItem };
+    delete dbItem.gdrive_file_id;
+    delete dbItem.gdrive_url;
+    if (dbItem.id && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(dbItem.id)) {
+      delete dbItem.id;
+    }
+    const { error: sbErr } = await supabase.from('lost_items').insert(dbItem);
+    if (sbErr) {
+      console.error('[SUPABASE INSERT LOST ITEM ERROR]:', sbErr.message || sbErr);
+    } else {
+      console.log(`[SUPABASE INSERT LOST ITEM SUCCESS]: ${itemCode}`);
+    }
   } catch (e) {
     console.error('[SUPABASE INSERT LOST ITEM ERROR]:', e?.message || e);
   }
@@ -3661,6 +3672,7 @@ async function finalizeAndSaveLostItem(report, interaction) {
   // 2. ซิงค์ยิงตรงเข้า Web Dashboard API ผ่าน HTTP POST
   const webTargets = [
     getWebDashboardUrl(),
+    'https://sarawat-promax.onrender.com',
     'https://sarawat-pranarai-web.onrender.com',
     'http://localhost:10001'
   ];
@@ -7004,7 +7016,18 @@ client.on('interactionCreate', async (interaction) => {
 
       // 1. ซิงค์ลง Supabase Database (หากสร้างตารางไว้แล้ว)
       try {
-        await supabase.from('lost_items').insert(newItem);
+        const dbItem = { ...newItem };
+        delete dbItem.gdrive_file_id;
+        delete dbItem.gdrive_url;
+        if (dbItem.id && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(dbItem.id)) {
+          delete dbItem.id;
+        }
+        const { error: sbErr } = await supabase.from('lost_items').insert(dbItem);
+        if (sbErr) {
+          console.error('[SUPABASE INSERT LOST ITEM ERROR]:', sbErr.message || sbErr);
+        } else {
+          console.log(`[SUPABASE INSERT LOST ITEM SUCCESS]: ${itemCode}`);
+        }
       } catch (e) {
         console.error('[SUPABASE INSERT LOST ITEM ERROR]:', e?.message || e);
       }
@@ -7012,6 +7035,7 @@ client.on('interactionCreate', async (interaction) => {
       // 2. ซิงค์ยิงตรงเข้า Web Dashboard API ผ่าน HTTP POST (ทั้ง Render & Localhost)
       const webTargets = [
         getWebDashboardUrl(),
+        'https://sarawat-promax.onrender.com',
         'https://sarawat-pranarai-web.onrender.com',
         'http://localhost:10001'
       ];
