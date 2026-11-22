@@ -386,20 +386,34 @@ function syncAllPastResponses() {
 // 🛠️ ฟังก์ชันช่วยเหลือ (Helper Utilities)
 // ==============================================================================
 function getOrCreateTargetFolder(folderName, parentFolder) {
-  const folders = DriveApp.getFoldersByName(folderName);
-  if (folders.hasNext()) return folders.next();
-
-  const prefix = folderName.substring(0, 3);
-  const matching = DriveApp.searchFolders("name contains '" + prefix + "' and trashed = false");
-  if (matching.hasNext()) return matching.next();
-
   if (parentFolder) {
+    const sub = parentFolder.getFolders();
+    while (sub.hasNext()) {
+      const f = sub.next();
+      if (f.getName() === folderName) return f;
+    }
+    const prefix = folderName.substring(0, 3);
+    const sub2 = parentFolder.getFolders();
+    while (sub2.hasNext()) {
+      const f = sub2.next();
+      if (f.getName().startsWith(prefix) || f.getName().includes(prefix)) return f;
+    }
     return parentFolder.createFolder(folderName);
   }
 
+  const folders = DriveApp.getFoldersByName(folderName);
+  if (folders.hasNext()) return folders.next();
+
   const rootFolders = DriveApp.getFoldersByName(MASTER_CONFIG.FOLDERS.ROOT);
   if (rootFolders.hasNext()) {
-    return rootFolders.next().createFolder(folderName);
+    const root = rootFolders.next();
+    const prefix = folderName.substring(0, 3);
+    const sub = root.getFolders();
+    while (sub.hasNext()) {
+      const f = sub.next();
+      if (f.getName().startsWith(prefix) || f.getName().includes(prefix)) return f;
+    }
+    return root.createFolder(folderName);
   }
 
   return DriveApp.createFolder(folderName);
