@@ -6085,12 +6085,55 @@ client.on('interactionCreate', async (interaction) => {
     }
 
     // ==========================================================
-    // 🚨 TACTICAL DISPATCH ACKNOWLEDGMENT BUTTON
+    // 🚨 TACTICAL DISPATCH ACKNOWLEDGMENT BUTTON (Multi-Tier Resilient)
     // ==========================================================
     if (interaction.isButton() && interaction.customId.startsWith('btn_dispatch_ack_')) {
       const logId = interaction.customId.replace('btn_dispatch_ack_', '');
       const user = interaction.user;
       const member = interaction.member;
+
+      // Helper functions for dispatch cache
+      const getDispatchCachePaths = () => [
+        path.join(__dirname, '..', 'data', 'dispatch_logs_cache.json'),
+        path.join(__dirname, '..', 'web', 'data', 'dispatch_logs_cache.json'),
+        path.join(__dirname, 'data', 'dispatch_logs_cache.json'),
+        path.join(process.cwd(), 'data', 'dispatch_logs_cache.json'),
+        path.join(process.cwd(), 'web', 'data', 'dispatch_logs_cache.json')
+      ];
+
+      const readDispatchCache = (id) => {
+        for (const p of getDispatchCachePaths()) {
+          try {
+            if (fs.existsSync(p)) {
+              const list = JSON.parse(fs.readFileSync(p, 'utf8') || '[]');
+              const found = list.find(item => item && item.id === id);
+              if (found) return found;
+            }
+          } catch (e) {}
+        }
+        return null;
+      };
+
+      const saveDispatchCache = (record) => {
+        if (!record || !record.id) return;
+        const targetPath = getDispatchCachePaths()[0];
+        try {
+          const dir = path.dirname(targetPath);
+          if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+          let list = [];
+          if (fs.existsSync(targetPath)) {
+            list = JSON.parse(fs.readFileSync(targetPath, 'utf8') || '[]');
+          }
+          const idx = list.findIndex(item => item && item.id === record.id);
+          if (idx >= 0) {
+            list[idx] = { ...list[idx], ...record };
+          } else {
+            list.unshift(record);
+            if (list.length > 100) list = list.slice(0, 100);
+          }
+          fs.writeFileSync(targetPath, JSON.stringify(list, null, 2), 'utf8');
+        } catch (e) {}
+      };
 
       // 1. ตรวจสอบสิทธิ์ (ต้องมี ROLE_VERIFIED หรือเป็นสมาชิกในฐานข้อมูล)
       const hasVerifiedRole = (ROLE_IDS?.VERIFIED && member?.roles?.cache?.has(ROLE_IDS.VERIFIED)) ||
@@ -6110,12 +6153,44 @@ client.on('interactionCreate', async (interaction) => {
         return;
       }
 
-      // 2. ดึงข้อมูลบันทึกคำสั่งการจาก dispatch_logs
+      // 2. ดึงข้อมูลบันทึกคำสั่งการ: Layer 1 = Supabase, Layer 2 = Cache, Layer 3 = Recover จาก Discord Embed
       let logRecord = null;
       try {
-        const { data } = await supabase.from('dispatch_logs').select('*').eq('id', logId).maybeSingle();
-        if (data) logRecord = data;
+        const { data, error } = await supabase.from('dispatch_logs').select('*').eq('id', logId).maybeSingle();
+        if (!error && data) logRecord = data;
       } catch (e) {}
+
+      if (!logRecord) {
+        logRecord = readDispatchCache(logId);
+      }
+
+      const currentMsg = interaction.message;
+      const currentEmbed = currentMsg && currentMsg.embeds && currentMsg.embeds[0] ? EmbedBuilder.from(currentMsg.embeds[0]) : null;
+
+      // Layer 3 Fallback: หากตารางใน Supabase ยังไม่ถูกสร้างหรือยังไม่มีในแคช กู้คืนรายชื่อจาก Embed โดยตรง
+      if (!logRecord && currentEmbed) {
+        const fields = currentEmbed.data.fields || [];
+        const ackField = fields.find(f => f.name && f.name.includes('รายชื่อผู้รับทราบภารกิจ'));
+        const recoveredOfficers = [];
+        if (ackField && ackField.value && !ackField.value.includes('ยังไม่มีผู้กดรับทราบภารกิจ')) {
+          const lines = ackField.value.split('\n');
+          for (const line of lines) {
+            const match = line.match(/\*\*(.*?)\*\*/);
+            if (match && match[1]) {
+              recoveredOfficers.push({
+                discord_id: null,
+                name: match[1].trim(),
+                role: 'OFFICER'
+              });
+            }
+          }
+        }
+        logRecord = {
+          id: logId,
+          fallback_from_embed: true,
+          acknowledged_officers: recoveredOfficers
+        };
+      }
 
       if (!logRecord) {
         await interaction.reply({
@@ -6125,9 +6200,14 @@ client.on('interactionCreate', async (interaction) => {
         return;
       }
 
-      // 3. ตรวจสอบว่าเคยกดรับทราบไปแล้วหรือไม่ (Idempotency)
+      // 3. ตรวจสอบว่าเคยกดรับทราบไปแล้วหรือไม่ (Idempotency ทั้ง discord_id และ name)
       const ackList = Array.isArray(logRecord.acknowledged_officers) ? [...logRecord.acknowledged_officers] : [];
-      const alreadyAck = ackList.some(o => o.discord_id === user.id);
+      const officerDisplayName = member?.displayName || (memberRecord ? `${memberRecord.first_name} (${memberRecord.nickname || ''})`.trim() : (user.globalName || user.username));
+      
+      const alreadyAck = ackList.some(o => 
+        (o.discord_id && o.discord_id === user.id) ||
+        (o.name && (o.name === officerDisplayName || o.name === user.username || o.name === user.globalName))
+      );
 
       if (alreadyAck) {
         await interaction.reply({
@@ -6138,7 +6218,6 @@ client.on('interactionCreate', async (interaction) => {
       }
 
       // 4. บันทึกข้อมูลผู้รับทราบใหม่
-      const officerDisplayName = member?.displayName || (memberRecord ? `${memberRecord.first_name} (${memberRecord.nickname || ''})`.trim() : (user.globalName || user.username));
       const newEntry = {
         discord_id: user.id,
         name: officerDisplayName,
@@ -6146,22 +6225,24 @@ client.on('interactionCreate', async (interaction) => {
         timestamp: new Date().toISOString()
       };
       ackList.push(newEntry);
+      logRecord.acknowledged_officers = ackList;
 
+      // พยายามซิงค์ไปยัง Supabase
       try {
         await supabase.from('dispatch_logs').update({ acknowledged_officers: ackList }).eq('id', logId);
       } catch (dbErr) {
         console.warn('[DISPATCH_ACK_DB_WARN]', dbErr.message);
       }
 
+      // บันทึกลง Local Cache
+      saveDispatchCache(logRecord);
+
       // 5. อัปเดต Discord Message (Embed และ Button Label)
       try {
-        const currentMsg = interaction.message;
-        const currentEmbed = currentMsg.embeds && currentMsg.embeds[0] ? EmbedBuilder.from(currentMsg.embeds[0]) : null;
-
         if (currentEmbed) {
           const previewList = ackList.slice(0, 10).map((o, idx) => {
             const timeStr = o.timestamp ? new Date(o.timestamp).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }) : '';
-            return `${idx + 1}. **${o.name}** ${timeStr ? `(${timeStr})` : ''}`;
+            return `${idx + 1}. **${o.name}** ${timeStr ? `(${timeStr})` : ''}`.trim();
           });
           if (ackList.length > 10) {
             previewList.push(`*...และอีก ${ackList.length - 10} นาย*`);
@@ -6170,7 +6251,7 @@ client.on('interactionCreate', async (interaction) => {
           const fields = [...currentEmbed.data.fields || []];
           const ackFieldIndex = fields.findIndex(f => f.name && f.name.includes('รายชื่อผู้รับทราบภารกิจ'));
           const newFieldName = `👥 รายชื่อผู้รับทราบภารกิจ (${ackList.length} นาย)`;
-          const newFieldValue = previewList.join('\n');
+          const newFieldValue = previewList.length > 0 ? previewList.join('\n') : 'ยังไม่มีผู้กดรับทราบภารกิจ';
 
           if (ackFieldIndex !== -1) {
             fields[ackFieldIndex] = { name: newFieldName, value: newFieldValue, inline: false };
