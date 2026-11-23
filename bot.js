@@ -6201,10 +6201,12 @@ client.on('interactionCreate', async (interaction) => {
         console.warn('[DISPATCH_ACK_UPDATE_ERR]', msgErr.message);
       }
 
-      await interaction.reply({
-        content: `✅ **รับทราบภารกิจสำเร็จ:** ขอบคุณสารวัตร ${officerDisplayName}`,
-        ephemeral: true
-      });
+      if (!interaction.replied && !interaction.deferred) {
+        await interaction.reply({
+          content: `✅ **รับทราบภารกิจสำเร็จ:** ขอบคุณสารวัตร ${officerDisplayName}`,
+          ephemeral: true
+        });
+      }
       return;
     }
 
