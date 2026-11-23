@@ -6085,6 +6085,130 @@ client.on('interactionCreate', async (interaction) => {
     }
 
     // ==========================================================
+    // 🚨 TACTICAL DISPATCH ACKNOWLEDGMENT BUTTON
+    // ==========================================================
+    if (interaction.isButton() && interaction.customId.startsWith('btn_dispatch_ack_')) {
+      const logId = interaction.customId.replace('btn_dispatch_ack_', '');
+      const user = interaction.user;
+      const member = interaction.member;
+
+      // 1. ตรวจสอบสิทธิ์ (ต้องมี ROLE_VERIFIED หรือเป็นสมาชิกในฐานข้อมูล)
+      const hasVerifiedRole = (ROLE_IDS?.VERIFIED && member?.roles?.cache?.has(ROLE_IDS.VERIFIED)) ||
+                              member?.permissions?.has(PermissionsBitField.Flags.Administrator);
+      
+      let memberRecord = null;
+      try {
+        const { data } = await supabase.from('members').select('id, duty_id, first_name, last_name, nickname, role, shift_role').eq('discord_id', user.id).maybeSingle();
+        if (data) memberRecord = data;
+      } catch (e) {}
+
+      if (!hasVerifiedRole && !memberRecord) {
+        await interaction.reply({
+          content: '⛔ **ขออภัย:** เฉพาะสารวัตรนักเรียนที่ผ่านการยืนยันตัวตนแล้วเท่านั้นที่สามารถกดรับทราบภารกิจนี้ได้',
+          ephemeral: true
+        });
+        return;
+      }
+
+      // 2. ดึงข้อมูลบันทึกคำสั่งการจาก dispatch_logs
+      let logRecord = null;
+      try {
+        const { data } = await supabase.from('dispatch_logs').select('*').eq('id', logId).maybeSingle();
+        if (data) logRecord = data;
+      } catch (e) {}
+
+      if (!logRecord) {
+        await interaction.reply({
+          content: '⚠️ ไม่พบข้อมูลคำสั่งการนี้ในฐานข้อมูล (อาจถูกลบหรือหมดอายุแล้ว)',
+          ephemeral: true
+        });
+        return;
+      }
+
+      // 3. ตรวจสอบว่าเคยกดรับทราบไปแล้วหรือไม่ (Idempotency)
+      const ackList = Array.isArray(logRecord.acknowledged_officers) ? [...logRecord.acknowledged_officers] : [];
+      const alreadyAck = ackList.some(o => o.discord_id === user.id);
+
+      if (alreadyAck) {
+        await interaction.reply({
+          content: 'ℹ️ **ท่านได้รับทราบภารกิจนี้ไปแล้ว** ขอขอบคุณสำหรับการปฏิบัติหน้าที่อย่างรวดเร็ว',
+          ephemeral: true
+        });
+        return;
+      }
+
+      // 4. บันทึกข้อมูลผู้รับทราบใหม่
+      const officerDisplayName = member?.displayName || (memberRecord ? `${memberRecord.first_name} (${memberRecord.nickname || ''})`.trim() : (user.globalName || user.username));
+      const newEntry = {
+        discord_id: user.id,
+        name: officerDisplayName,
+        role: memberRecord?.shift_role || memberRecord?.role || 'OFFICER',
+        timestamp: new Date().toISOString()
+      };
+      ackList.push(newEntry);
+
+      try {
+        await supabase.from('dispatch_logs').update({ acknowledged_officers: ackList }).eq('id', logId);
+      } catch (dbErr) {
+        console.warn('[DISPATCH_ACK_DB_WARN]', dbErr.message);
+      }
+
+      // 5. อัปเดต Discord Message (Embed และ Button Label)
+      try {
+        const currentMsg = interaction.message;
+        const currentEmbed = currentMsg.embeds && currentMsg.embeds[0] ? EmbedBuilder.from(currentMsg.embeds[0]) : null;
+
+        if (currentEmbed) {
+          const previewList = ackList.slice(0, 10).map((o, idx) => {
+            const timeStr = o.timestamp ? new Date(o.timestamp).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }) : '';
+            return `${idx + 1}. **${o.name}** ${timeStr ? `(${timeStr})` : ''}`;
+          });
+          if (ackList.length > 10) {
+            previewList.push(`*...และอีก ${ackList.length - 10} นาย*`);
+          }
+
+          const fields = [...currentEmbed.data.fields || []];
+          const ackFieldIndex = fields.findIndex(f => f.name && f.name.includes('รายชื่อผู้รับทราบภารกิจ'));
+          const newFieldName = `👥 รายชื่อผู้รับทราบภารกิจ (${ackList.length} นาย)`;
+          const newFieldValue = previewList.join('\n');
+
+          if (ackFieldIndex !== -1) {
+            fields[ackFieldIndex] = { name: newFieldName, value: newFieldValue, inline: false };
+          } else {
+            fields.push({ name: newFieldName, value: newFieldValue, inline: false });
+          }
+          currentEmbed.setFields(fields);
+
+          const newRow = new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+              .setCustomId(`btn_dispatch_ack_${logId}`)
+              .setLabel(`📌 รับทราบภารกิจ (${ackList.length} นาย)`)
+              .setStyle(ButtonStyle.Primary)
+          );
+
+          await interaction.update({
+            embeds: [currentEmbed],
+            components: [newRow]
+          });
+
+          await interaction.followUp({
+            content: `✅ **รับทราบภารกิจสำเร็จ:** บันทึกการรายงานตัวของท่าน (${officerDisplayName}) เรียบร้อยแล้ว`,
+            ephemeral: true
+          });
+          return;
+        }
+      } catch (msgErr) {
+        console.warn('[DISPATCH_ACK_UPDATE_ERR]', msgErr.message);
+      }
+
+      await interaction.reply({
+        content: `✅ **รับทราบภารกิจสำเร็จ:** ขอบคุณสารวัตร ${officerDisplayName}`,
+        ephemeral: true
+      });
+      return;
+    }
+
+    // ==========================================================
     // 🗑️ KILLFILE BUTTON HANDLING (ล้างระบบของหาย เริ่มใหม่แต่ 0)
     // ==========================================================
     if (interaction.isButton() && interaction.customId === 'btn_killfile_cancel') {
