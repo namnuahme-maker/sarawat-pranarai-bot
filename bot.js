@@ -6185,6 +6185,18 @@ client.on('interactionCreate', async (interaction) => {
             }
           }
         }
+
+        // หากมีมากกว่า 10 คนและถูกย่อความ รักษาจำนวนรวมจากชื่อ Field
+        const countMatch = ackField?.name ? ackField.name.match(/\((\d+)\s*นาย\)/) : null;
+        const headerCount = countMatch ? parseInt(countMatch[1], 10) : recoveredOfficers.length;
+        while (recoveredOfficers.length < headerCount) {
+          recoveredOfficers.push({
+            discord_id: null,
+            name: `สารวัตรนักเรียน #${recoveredOfficers.length + 1}`,
+            role: 'OFFICER'
+          });
+        }
+
         logRecord = {
           id: logId,
           fallback_from_embed: true,
