@@ -2140,7 +2140,30 @@ async function sendDailyDutyReminders(guild, options = { dryRun: false, forceDay
       .setFooter({ text: `เวร${DAY_NAMES[baseDay] || m.duty_day} • กลุ่มงานสารวัตรนักเรียน โรงเรียนพระนารายณ์` })
       .setTimestamp();
 
+    // 🔐 สร้าง Signature Token สำหรับเชื่อมต่อเว็บเช็คชื่อของตนเองโดยตรง
+    const authPayload = {
+      id: m.id,
+      member_id: m.id,
+      duty_id: m.duty_id,
+      first_name: m.first_name,
+      last_name: m.last_name,
+      nickname: m.nickname,
+      duty_day: m.duty_day,
+      discord_id: m.discord_id,
+      grade_class: m.grade_class,
+      student_no: m.student_no,
+      action: 'attendance_checkin',
+      exp: Math.floor(Date.now() / 1000) + 86400
+    };
+    const authToken = signAuthToken(authPayload);
+    const checkinUrl = `${getWebDashboardUrl()}/attendance-checkin.html?auth=${authToken}`;
+
     const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setLabel('เช็คชื่อ')
+        .setStyle(ButtonStyle.Link)
+        .setURL(checkinUrl)
+        .setEmoji('📸'),
       new ButtonBuilder()
         .setCustomId(`btn_dm_quick_leave_${m.id}`)
         .setLabel('📝 ขอลาเวรวันนี้')
@@ -6045,6 +6068,60 @@ client.on('interactionCreate', async (interaction) => {
     }
 
     // ==========================================================
+    // ==========================================================
+    // 📸 ATTENDANCE SELFIE APPROVAL BUTTONS (HEAD & DEPUTY)
+    // ==========================================================
+    if (interaction.isButton() && (
+      interaction.customId.startsWith('btn_att_approve_') ||
+      interaction.customId.startsWith('btn_att_late_') ||
+      interaction.customId.startsWith('btn_att_reject_')
+    )) {
+      await interaction.deferUpdate();
+      const parts = interaction.customId.split('_');
+      const actionType = parts[2]; // approve, late, reject
+      const dutyId = parts[3];
+      const dutyDate = parts[4];
+
+      let newStatus = 'PRESENT';
+      let statusTitle = '✅ อนุมัติการเข้าเวรแล้ว (มาปฏิบัติหน้าที่)';
+      let statusColor = '#2ECC71';
+
+      if (actionType === 'late') {
+        newStatus = 'LATE';
+        statusTitle = '⏰ บันทึกสถานะ: มาสาย';
+        statusColor = '#E67E22';
+      } else if (actionType === 'reject') {
+        newStatus = 'ABSENT';
+        statusTitle = '❌ ปฏิเสธคำขอ (ขาดเวร)';
+        statusColor = '#E74C3C';
+      }
+
+      try {
+        await supabase.from('attendance_records').update({
+          status: newStatus,
+          was_manually_edited: true
+        }).eq('duty_id', dutyId).eq('duty_date', dutyDate);
+      } catch (e) {
+        console.warn('[ATTENDANCE-APPROVE-DB-ERR]', e.message);
+      }
+
+      const originalEmbed = interaction.message.embeds && interaction.message.embeds[0];
+      if (originalEmbed) {
+        const updatedEmbed = EmbedBuilder.from(originalEmbed)
+          .setColor(statusColor)
+          .addFields({
+            name: '📌 ผลการตรวจสอบจากผู้นำเวร',
+            value: `${statusTitle}\nโดย: <@${interaction.user.id}> เมื่อ ${new Date().toLocaleTimeString('th-TH')} น.`
+          });
+
+        await interaction.editReply({
+          embeds: [updatedEmbed],
+          components: []
+        });
+      }
+      return;
+    }
+
     // 🚨 TACTICAL DISPATCH ACKNOWLEDGMENT BUTTON (Multi-Tier Resilient)
     // ==========================================================
     if (interaction.isButton() && interaction.customId.startsWith('btn_dispatch_ack_')) {
