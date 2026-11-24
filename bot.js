@@ -1091,52 +1091,8 @@ async function sendPhotoPanel(channel) {
 }
 
 async function sendAttendancePanel(channel) {
-  if (!channel) return null;
-
-  // เปลี่ยนชื่อช่องอัตโนมัติหากยังเป็นชื่อเดิม
-  if (channel.name && (channel.name.includes('บริการ') || channel.name.includes('บริการเวรและใบเช็คชื่อ'))) {
-    await channel.setName('📑│เช็คชื่อ').catch(() => {});
-  }
-
-  const embed = new EmbedBuilder()
-    .setTitle('📑 ระบบเช็คชื่อและใบลงเวลาปฏิบัติหน้าที่ (ATTENDANCE & ROSTER)')
-    .setDescription(
-      'ยินดีต้อนรับสู่ระบบเช็คชื่อและงานเอกสารสารวัตรนักเรียน โรงเรียนพระนารายณ์\n\n' +
-      '━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n' +
-      '⚡ **1. เช็คชื่อด้วยภาพถ่าย AI (OMR Scanner)**\n' +
-      'สแกนภาพถ่ายใบเช็คชื่อประจำเวร ตรวจจับจุดฝน OMR อัตโนมัติ รวดเร็วและแม่นยำ\n\n' +
-      '📄 **2. ขอใบเช็คชื่อ A4 มาตรฐาน**\n' +
-      'ขอใบตารางเช็คชื่อลงเวลาประจำเวร 12 สัปดาห์ ขนาดกระดาษ A4 พร้อมสั่งพิมพ์ใช้งานได้ทันที\n\n' +
-      '📝 **3. แจ้งขอลาเวรปฏิบัติหน้าที่**\n' +
-      'แจ้งขอลาเวรด่วน พร้อมระบุผู้ปฏิบัติหน้าที่แทน ระบบจะส่งข้อความแจ้งเตือนหาหัวหน้าเวรทันที\n' +
-      '━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
-    )
-    .setColor('#1ABC9C')
-    .setFooter({ text: 'กลุ่มงานสารวัตรนักเรียน • โรงเรียนพระนารายณ์' });
-
-  const files = [];
-  const bannerPath = path.join(__dirname, 'assets', 'panel_all_in_one.jpg');
-  if (fs.existsSync(bannerPath)) {
-    files.push(new AttachmentBuilder(bannerPath, { name: 'panel_all_in_one.jpg' }));
-    embed.setImage('attachment://panel_all_in_one.jpg');
-  }
-
-  const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId('btn_start_attendance_scan')
-      .setLabel('⚡ เช็คชื่อด้วยภาพถ่าย AI')
-      .setStyle(ButtonStyle.Success),
-    new ButtonBuilder()
-      .setCustomId('btn_request_attendance')
-      .setLabel('📄 ขอใบเช็คชื่อ A4')
-      .setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder()
-      .setCustomId('btn_request_leave')
-      .setLabel('📝 แจ้งขอลาเวร')
-      .setStyle(ButtonStyle.Danger)
-  );
-
-  return await channel.send({ embeds: [embed], components: [row], files });
+  // ช่องเช็คชื่อและปุ่มเช็คชื่อด้วยภาพถ่าย AI ถูกยกเลิกแล้วตามคำสั่งผู้ใช้งาน
+  return null;
 }
 
 async function sendInspectorServicePanel(channel) {
@@ -1156,7 +1112,9 @@ async function sendInspectorServicePanel(channel) {
       'ส่งรายงานเหตุการณ์ บันทึกการตรวจพบสิ่งผิดระเบียบ หรือแนบภาพ/คลิป Bodycam หลักฐานคดี\n\n' +
       '✏️ **4. แก้ไขข้อมูลส่วนตัว (Edit Profile)**\n' +
       'เปลี่ยนรูปถ่ายหน้าตรง 1 นิ้ว (อัปเดตบัตรทันที) หรือยื่นแก้ไขข้อมูลตัวอักษรเพื่อส่งผู้บริหารอนุมัติ\n\n' +
-      '🌐 **5. เว็บไซต์ศูนย์บัญชาการ (Web Command Center)**\n' +
+      '📝 **5. แจ้งขอลาเวรปฏิบัติหน้าที่ (Leave Request)**\n' +
+      'แจ้งขอลาเวรด่วน พร้อมระบุผู้ปฏิบัติหน้าที่แทน ระบบจะส่งข้อความแจ้งเตือนหาหัวหน้าเวรทันที\n\n' +
+      '🌐 **6. เว็บไซต์ศูนย์บัญชาการ (Web Command Center)**\n' +
       'เข้าสู่ระบบเว็บศูนย์บัญชาการสารวัตรนักเรียน เพื่อดูสถิติ, คดี, และทำเนียบสารวัตรแบบ Real-time\n' +
       '━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
     )
@@ -1191,6 +1149,10 @@ async function sendInspectorServicePanel(channel) {
 
   const row2 = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
+      .setCustomId('btn_request_leave')
+      .setLabel('📝 แจ้งขอลาเวร')
+      .setStyle(ButtonStyle.Danger),
+    new ButtonBuilder()
       .setLabel('🌐 เว็บไซต์ระบบ')
       .setStyle(ButtonStyle.Link)
       .setURL(getWebDashboardUrl())
@@ -1212,6 +1174,8 @@ async function sendAppointPanel(channel) {
       'ปลดยศผู้นำกลับเป็นสมาชิกทั่วไป หรือปลดพ้นสภาพสารวัตรนักเรียน คืนรหัสเวร\n\n' +
       '👥 **ตรวจสอบทำเนียบสารวัตร**\n' +
       'ดูรายชื่อสารวัตรทั้งหมดที่ปฏิบัติหน้าที่อยู่ในปัจจุบัน แยกตามผลัดเวร\n\n' +
+      '📄 **ขอใบตารางเช็คชื่อ A4 มาตรฐาน**\n' +
+      'ขอใบตารางเช็คชื่อลงเวลาประจำเวร 12 สัปดาห์ ขนาดกระดาษ A4 พร้อมสั่งพิมพ์ใช้งานได้ทันที\n\n' +
       '🌐 **ศูนย์บัญชาการสารวัตรนักเรียน (Web Command)**\n' +
       'เปิดหน้าเว็บแดชบอร์ดสำหรับผู้บริหาร เพื่อจัดการข้อมูลและตรวจสอบสถิติเชิงลึก\n' +
       '━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
@@ -1226,7 +1190,7 @@ async function sendAppointPanel(channel) {
     embed.setImage('attachment://panel_all_in_one.jpg');
   }
 
-  const row = new ActionRowBuilder().addComponents(
+  const row1 = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId('btn_open_appoint_menu')
       .setLabel('👑 แต่งตั้งตำแหน่ง')
@@ -1242,14 +1206,21 @@ async function sendAppointPanel(channel) {
     new ButtonBuilder()
       .setCustomId('btn_set_semester')
       .setLabel('🎓 ภาคเรียน')
-      .setStyle(ButtonStyle.Primary),
+      .setStyle(ButtonStyle.Primary)
+  );
+
+  const row2 = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId('btn_request_attendance')
+      .setLabel('📄 ขอใบเช็คชื่อ A4')
+      .setStyle(ButtonStyle.Secondary),
     new ButtonBuilder()
       .setLabel('🌐 แดชบอร์ด (Web)')
       .setStyle(ButtonStyle.Link)
       .setURL(getWebDashboardUrl())
   );
 
-  return await channel.send({ embeds: [embed], components: [row], files });
+  return await channel.send({ embeds: [embed], components: [row1, row2], files });
 }
 
 async function purgeChannelMessages(channel, limit = 100) {
@@ -1640,11 +1611,10 @@ async function refreshAllChannelsAndPanels(guild, options = { purge: true }) {
     }
     const chAttendance = findChannel(guild, process.env.ATTENDANCE_CHANNEL_ID) ||
       findChannel(guild, '📑│เช็คชื่อ') ||
-      findChannel(guild, 'เช็คชื่อ') ||
-      findChannel(guild, '📑│บริการ') ||
-      guild.channels.cache.find(c => c.name.includes('เช็คชื่อ') || c.name.includes('บริการ'));
-    if (chAttendance && (chAttendance.name.includes('บริการ') || chAttendance.name.includes('บริการเวรและใบเช็คชื่อ'))) {
-      await chAttendance.setName('📑│เช็คชื่อ').catch(() => {});
+      findChannel(guild, 'เช็คชื่อ');
+    if (chAttendance) {
+      console.log(`[REFRESH] 🗑️ ลบห้องเช็คชื่อ #${chAttendance.name} ตามคำสั่งผู้ใช้งาน`);
+      await chAttendance.delete('ลบช่องเช็คชื่อตามคำสั่งผู้ใช้งาน').catch(() => {});
     }
     const chApproval = findChannel(guild, process.env.APPROVAL_CHANNEL_ID) || guild.channels.cache.find(c => c.name.includes('อนุมัติสมาชิก'));
     const chAllInOne = findChannel(guild, '👑│ผู้นำ-all-in-one') || findChannel(guild, '👑│ห้องประชุมหัวหน้า');
@@ -1689,11 +1659,7 @@ async function refreshAllChannelsAndPanels(guild, options = { purge: true }) {
       result.refreshedChannels++;
     }
 
-    if (chAttendance) {
-      if (options.purge) await purgeChannelMessages(chAttendance);
-      await sendAttendancePanel(chAttendance);
-      result.refreshedChannels++;
-    }
+    // ยกเลิกการรีเฟรชช่องเช็คชื่อ เนื่องจากลบช่องออกแล้ว
 
     if (chAllInOne) {
       if (options.purge) await purgeChannelMessages(chAllInOne);
@@ -2468,11 +2434,9 @@ async function executeDDay(guild, executorUser) {
       }
       const chAttendance = findChannel(guild, process.env.ATTENDANCE_CHANNEL_ID) ||
         findChannel(guild, '📑│เช็คชื่อ') ||
-        findChannel(guild, 'เช็คชื่อ') ||
-        findChannel(guild, '📑│บริการ') ||
-        guild.channels.cache.find(c => c.name.includes('เช็คชื่อ') || c.name.includes('บริการ'));
-      if (chAttendance && (chAttendance.name.includes('บริการ') || chAttendance.name.includes('บริการเวรและใบเช็คชื่อ'))) {
-        await chAttendance.setName('📑│เช็คชื่อ').catch(() => {});
+        findChannel(guild, 'เช็คชื่อ');
+      if (chAttendance) {
+        await chAttendance.delete('ลบช่องเช็คชื่อตามคำสั่งผู้ใช้งาน').catch(() => {});
       }
       const chApproval = findChannel(guild, process.env.APPROVAL_CHANNEL_ID) || guild.channels.cache.find(c => c.name.includes('อนุมัติสมาชิก'));
       const chAllInOne = findChannel(guild, '👑│ผู้นำ-all-in-one') || findChannel(guild, '👑│ห้องประชุมหัวหน้า');
@@ -2487,11 +2451,7 @@ async function executeDDay(guild, executorUser) {
         result.resetChannels++;
       }
 
-      if (chAttendance) {
-        await purgeChannelMessages(chAttendance);
-        await sendAttendancePanel(chAttendance);
-        result.resetChannels++;
-      }
+      // ยกเลิกช่องเช็คชื่อ
 
       if (chApproval) {
         await purgeChannelMessages(chApproval);
@@ -8982,22 +8942,8 @@ function buildPreApprovalEmbed(member, photoUrl, cropUrl) {
     // 📑 กระบวนการเช็คชื่อด้วยภาพถ่าย AI (Discord Bot Flow)
     // ----------------------------------------------------------
     if (interaction.isButton() && interaction.customId === 'btn_start_attendance_scan') {
-      const shiftMenu = new StringSelectMenuBuilder()
-        .setCustomId('select_attendance_scan_shift')
-        .setPlaceholder('📅 1. เลือกผลัดเวรประจำวันที่ต้องการเช็คชื่อ...')
-        .addOptions([
-          { label: 'วันจันทร์ (Shift M)', value: 'M', description: 'เช็คชื่อสารวัตรเวรวันจันทร์', emoji: '🔵' },
-          { label: 'วันอังคาร (Shift T)', value: 'T', description: 'เช็คชื่อสารวัตรเวรวันอังคาร', emoji: '🟣' },
-          { label: 'วันพุธ (Shift W)', value: 'W', description: 'เช็คชื่อสารวัตรเวรวันพุธ', emoji: '🟢' },
-          { label: 'วันพฤหัสบดี (Shift Th)', value: 'Th', description: 'เช็คชื่อสารวัตรเวรวันพฤหัสบดี', emoji: '🟠' },
-          { label: 'วันศุกร์ (Shift F)', value: 'F', description: 'เช็คชื่อสารวัตรเวรวันศุกร์', emoji: '🔴' },
-          { label: 'เวรพิเศษทุกวัน (Shift S)', value: 'S', description: 'เช็คชื่อสารวัตรเวรพิเศษ (ปฏิบัติหน้าที่ทุกวัน)', emoji: '⭐' }
-        ]);
-
-      const row = new ActionRowBuilder().addComponents(shiftMenu);
       await interaction.reply({
-        content: '🤖 **ขั้นตอนที่ 1/2:** กรุณาเลือกผลัดเวรที่ต้องการเช็คชื่อ:',
-        components: [row],
+        content: `❌ ปุ่มเช็คชื่อด้วยภาพถ่าย AI บน Discord ถูกยกเลิกแล้วตามคำสั่งผู้ใช้งาน\nหากต้องการสแกนเช็คชื่อ กรุณาใช้ระบบสแกนผ่านหน้าเว็บที่:\n👉 ${getWebDashboardUrl()}/attendance-scan`,
         ephemeral: true
       });
       return;
@@ -14518,6 +14464,7 @@ module.exports = {
   runSystemDiagnostics,
   purgeChannelMessages,
   findChannel,
+  sendInspectorServicePanel,
   sendVerifyPanel,
   sendPhotoPanel,
   sendAttendancePanel,
